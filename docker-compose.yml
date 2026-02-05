@@ -1,0 +1,27 @@
+services:
+  app:
+    build:
+      context: .
+      target: production
+    image: ws-branch:latest
+    container_name: ws-branch
+    volumes:
+      - ./data:/app/data
+      - ./output:/app/output
+    environment:
+      - PYTHONPATH=/app
+
+  dev:
+    build:
+      context: .
+      target: development
+    image: ws-branch:dev
+    container_name: ws-branch-dev
+    ports:
+      - "8888:8888"
+    volumes:
+      - .:/app
+      - ./data:/app/data
+      - ./output:/app/output
+    environment:
+      - PYTHONPATH=/app

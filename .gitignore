@@ -8,7 +8,7 @@ __pycache__/
 *.json
 *.parquet
 *.npy
-index_maps.json
+*.xlsx
 
 # OS
 .DS_Store

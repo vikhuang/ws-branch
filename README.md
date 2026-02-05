@@ -6,32 +6,91 @@
 
 ```
 ┌─────────────────┐
-│  2345.json      │  原始分點交易數據 (74MB)
+│  2345.json      │  原始分點交易數據 (164MB, 42萬筆)
 │  (券商API)      │
 └────────┬────────┘
-         │ etl.py (Module A)
+         │ etl.py (1.7s)
          ▼
 ┌─────────────────┐
 │ daily_trade_    │  每日交易摘要 (1.4MB)
-│ summary.parquet │  欄位: date, symbol_id, broker,
-└────────┬────────┘        total_buy_amount, total_sell_amount, net_shares
-         │
-         │ sync_prices.py (Module B)
+│ summary.parquet │
+└────────┬────────┘
+         │ sync_prices.py (3.3s, 含 BigQuery)
          ▼
 ┌─────────────────┐
 │ price_master.   │  收盤價快取 (2KB)
-│ parquet         │  欄位: coid, date, close_price
-└────────┬────────┘  來源: BigQuery tej_prices
-         │
-         │ pnl_engine.py (Module C+D)
+│ parquet         │
+└────────┬────────┘
+         │ pnl_engine.py (1.75s)
          ▼
 ┌─────────────────┐
 │ realized_pnl.npy│  已實現損益 3D 矩陣
 │ unrealized_pnl. │  未實現損益 3D 矩陣
-│ npy             │  Shape: (symbols, dates, brokers)
+│ npy             │  Shape: (1, 729, 940)
 │ index_maps.json │
 └─────────────────┘
 ```
+
+## 設計決策
+
+### 為什麼用 FIFO 而非加權平均成本？
+
+| 方法 | 做法 | 結果 |
+|------|------|------|
+| 加權平均 | 所有股票成本相同 | 已實現損益較平滑 |
+| **FIFO** | 先買先賣 | 符合實際交易邏輯 |
+
+範例（買 100@$10，再買 100@$20，賣 100@$25）：
+- 加權平均：100 × ($25 - $15) = **$1,000**
+- FIFO：100 × ($25 - $10) = **$1,500**（賣最早買的）
+
+產品需求選擇 FIFO。
+
+### 為什麼用 Dense Tensor 而非 Sparse？
+
+```
+資料特性：729天 × 940券商 = 685,260 cells
+實際交易：~50,000 筆（93% 是零）
+```
+
+| 方案 | 儲存 | Top N 查詢 | 點查詢 |
+|------|------|------------|--------|
+| **Dense Tensor** | 2.74 MB | O(B) 向量化 | O(1) |
+| Sparse Matrix | ~0.3 MB | O(nnz) | O(log n) |
+
+選擇 Dense 因為：
+1. Query A/B 需全掃描找 Top N，向量化更快
+2. 2.74 MB 完全放進 CPU cache
+3. O(1) 點查詢支援未來券商詳細分析
+
+### 為什麼不用 Rust 優化？
+
+目前 Python 已達 1.75s，瓶頸分析：
+
+| 環節 | 底層 | 說明 |
+|------|------|------|
+| Polars I/O | Rust | 已是原生速度 |
+| deque FIFO | C | CPython 原生實作 |
+| NumPy 運算 | C | 向量化操作 |
+
+Rust 重寫預估 0.5s，省 1.25s，但增加：
+- 雙語言維護成本
+- 編譯流程複雜度
+- FFI 資料轉換開銷
+
+**結論**：單股場景下 ROI 不划算。
+
+### 多股票規模化策略
+
+未來 1700 支股票時：
+
+| 方案 | 時間 | 說明 |
+|------|------|------|
+| 單線程 Python | 50 分鐘 | 1700 × 1.75s |
+| 單線程 Rust | 14 分鐘 | 1700 × 0.5s |
+| **Python 多進程** | **3 分鐘** | 16 核平行處理 |
+
+正確方向是**平行化**，不是單線程優化。
 
 ## 資料欄位說明
 
@@ -39,162 +98,91 @@
 
 | 欄位 | 型態 | 說明 |
 |------|------|------|
-| `date` | String | 交易日期 (YYYY-MM-DD)，已轉換為台灣時區 |
+| `date` | String | 交易日期 (YYYY-MM-DD)，台灣時區 |
 | `symbol_id` | String | 股票代碼 |
 | `broker` | String | 券商代碼 |
-| `buy_shares` | Int32 | 當日買入總股數 |
-| `sell_shares` | Int32 | 當日賣出總股數 |
-| `buy_amount` | Float32 | 當日買入總金額 |
-| `sell_amount` | Float32 | 當日賣出總金額 |
-
-### price_master.parquet
-
-| 欄位 | 型態 | 說明 |
-|------|------|------|
-| `coid` | String | 股票代碼 |
-| `date` | String | 交易日期 |
-| `close_price` | Float32 | 收盤價 |
+| `buy_shares` | Int32 | 當日買入股數 |
+| `sell_shares` | Int32 | 當日賣出股數 |
+| `buy_amount` | Float32 | 當日買入金額 |
+| `sell_amount` | Float32 | 當日賣出金額 |
 
 ### realized_pnl.npy / unrealized_pnl.npy
 
-| 檔案 | 內容 |
-|------|------|
-| `realized_pnl.npy` | 每日已實現損益（平倉鎖定） |
-| `unrealized_pnl.npy` | 每日未實現損益（帳面損益） |
-
 - **Shape**: `(n_symbols, n_dates, n_brokers)`
 - **Dtype**: `float32`
-- **索引對照**: `index_maps.json` 內含 `dates`, `symbols`, `brokers` 映射表
-- **總損益**: `realized.sum(axis=1) + unrealized[-1]`（累計已實現 + 最後一天未實現）
+- **索引對照**: `index_maps.json`
 
-## PNL 計算公式
+**總損益公式**：
+```python
+total_pnl = realized[:, :, broker_idx].sum() + unrealized[:, -1, broker_idx]
+#           ^^^^^^^^^^^^^^^^^^^^^^^^^^^        ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+#           累計已實現（所有日期加總）            最後一天未實現（快照）
+```
 
-### 核心概念
+⚠️ 錯誤做法：`(realized + unrealized).sum()` 會重複計算未實現損益。
 
-每個 **(股票, 券商)** 組合視為一個獨立帳戶，追蹤其持倉成本與損益。
+## PNL 計算邏輯 (FIFO)
 
-### 名詞定義
+每個 **(股票, 券商)** 視為獨立帳戶，使用 `deque` 追蹤每筆買入記錄（lot）。
 
-| 名詞 | 定義 |
+### 賣出時（平多倉）
+
+```python
+while remaining_sell > 0 and long_lots:
+    lot = long_lots.popleft()  # 取最早的 lot
+    realized += shares × (sell_price - lot.cost)
+```
+
+### 買入時（回補空倉）
+
+```python
+while remaining_buy > 0 and short_lots:
+    lot = short_lots.popleft()  # 取最早的空單
+    realized += shares × (short_price - buy_price)
+```
+
+### 邊界情況
+
+| 情況 | 處理 |
 |------|------|
-| **持倉 (position)** | 累計淨股數。正數=做多，負數=做空 |
-| **成本基礎 (cost basis)** | 持倉的加權平均成本價 |
-| **已實現損益 (realized PNL)** | 平倉時鎖定的損益，不再隨價格變動 |
-| **未實現損益 (unrealized PNL)** | 未平倉持股的帳面損益，隨收盤價變動 |
-
-### 計算邏輯
-
-#### 1. 做多情境 (position > 0)
-
-```
-avg_cost = 累計買入總額 / 累計買入股數
-
-已實現 = 賣出金額 - (賣出股數 × avg_cost)
-未實現 = 持倉股數 × (收盤價 - avg_cost)
-```
-
-**範例**：
-- 買 100 股 @ $10 → avg_cost = $10
-- 賣 60 股 @ $12 → 已實現 = 60×($12-$10) = $120
-- 剩 40 股，收盤 $11 → 未實現 = 40×($11-$10) = $40
-
-#### 2. 做空情境 (position < 0)
-
-```
-avg_short_price = 累計賣出總額 / 累計賣出股數
-
-已實現 = (買回股數 × avg_short_price) - 買回金額
-未實現 = |持倉| × (avg_short_price - 收盤價)
-```
-
-**範例**：
-- 先賣 100 股 @ $12（放空）→ avg_short_price = $12
-- 買回 60 股 @ $10 → 已實現 = 60×($12-$10) = $120
-- 剩空 40 股，收盤 $11 → 未實現 = 40×($12-$11) = $40
-
-#### 3. 邊界情況
-
-| 情況 | 處理方式 |
-|------|----------|
-| 第一天就賣出（無庫存） | 視為放空，avg_short_price = 當日賣出均價 |
-| 從多翻空 | 先平掉多倉（已實現），再建立空倉 |
-| 從空翻多 | 先平掉空倉（已實現），再建立多倉 |
-| 當日沖銷 | 全部計入已實現 |
-
-### 總損益
-
-```
-總 PNL = 已實現 PNL + 未實現 PNL
-```
+| 無庫存先賣 | 開空倉 |
+| 多翻空 | 先平多，再開空 |
+| 空翻多 | 先平空，再開多 |
 
 ## 使用方式
 
 ```bash
 uv sync
 
-# Step 1: JSON → Parquet (Module A)
+# 完整 Pipeline
 uv run python etl.py 2345.json
-
-# Step 2: 同步收盤價 (Module B, 需要 BigQuery 權限)
 uv run python sync_prices.py daily_trade_summary.parquet
-
-# Step 3: 計算 PNL Tensor (Module C+D)
 uv run python pnl_engine.py daily_trade_summary.parquet price_master.parquet
-```
 
-## 範例查詢
-
-```python
-import json
-import numpy as np
-
-realized = np.load('realized_pnl.npy')
-unrealized = np.load('unrealized_pnl.npy')
-with open('index_maps.json') as f:
-    maps = json.load(f)
-
-# O(1) 查詢特定券商的 PNL
-broker_idx = maps['brokers']['1021']
-sym_idx = maps['symbols']['2345']
-
-# 總損益 = 累計已實現 + 最後一天未實現
-cum_realized = realized[sym_idx, :, broker_idx].sum()
-final_unrealized = unrealized[sym_idx, -1, broker_idx]
-total_pnl = cum_realized + final_unrealized
-
-print(f'累計已實現: {cum_realized:,.0f}')
-print(f'最後未實現: {final_unrealized:,.0f}')
-print(f'總損益: {total_pnl:,.0f}')
-```
-
-## 排行榜查詢
-
-```bash
+# 排行榜
 uv run python query_ranking.py
 ```
 
-輸出：
-- Query A: 一年金額 Top 10（買賣總額）
-- Query B: 一年獲利 Top 10（已實現 + 未實現）
-- Excel: `ranking_report.xlsx`
+## 查詢輸出
 
-## 特定 Query 需求
+| Query | 說明 | 排序 |
+|-------|------|------|
+| A | 一年金額 | buy_amount + sell_amount |
+| B | 一年獲利 | realized.sum() + unrealized[-1] |
 
-> 此區塊記錄特定的查詢需求，供後續開發參考。
+輸出：`ranking_report.xlsx`
 
-| 需求 | 說明 | 狀態 |
+## 效能基準 (2345 單股)
+
+| 階段 | 時間 | 說明 |
 |------|------|------|
-| (待討論) | | |
+| ETL | 1.70s | JSON 164MB → Parquet 1.4MB |
+| 價格同步 | 3.33s | BigQuery 網路延遲 |
+| PNL 計算 | 1.75s | 729天 × 940券商 FIFO |
+| **總計** | **~7s** | |
 
-## Docker
+## BigQuery
 
-```bash
-docker build -t ws-branch .
-docker run -v $(pwd):/app ws-branch etl.py 2345.json
-```
-
-## BigQuery 資訊
-
-- **Project ID**: `gen-lang-client-0998197473`
+- **Project**: `gen-lang-client-0998197473`
 - **Dataset**: `wsai`
-- **Price Table**: `tej_prices` (分區: year, 聚類: coid)
+- **Table**: `tej_prices` (分區: year, 聚類: coid)

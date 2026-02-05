@@ -6,7 +6,7 @@
 
 ```bash
 uv sync
-uv run python etl.py 2345.json          # 輸出 2345.parquet
+uv run python etl.py 2345.json          # 輸出 daily_trade_summary.parquet
 uv run python tensor.py 2345.parquet    # 輸出 pnl_tensor.npy
 ```
 

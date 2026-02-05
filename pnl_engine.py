@@ -26,14 +26,32 @@ class Lot:
     """A single purchase lot."""
     shares: int
     cost_per_share: float
+    buy_date: str = ""  # YYYY-MM-DD
+
+
+@dataclass
+class ClosedTrade:
+    """Record of a closed position for Alpha analysis."""
+    symbol: str
+    broker: str
+    shares: int
+    buy_date: str
+    buy_price: float
+    sell_date: str
+    sell_price: float
+    realized_pnl: float
+    trade_type: str  # "long" or "short"
 
 
 @dataclass
 class FIFOAccount:
     """Tracks position and lots for a (symbol, broker) pair using FIFO."""
+    symbol: str = ""
+    broker: str = ""
     long_lots: deque = field(default_factory=deque)   # Lots for long position
     short_lots: deque = field(default_factory=deque)  # Lots for short position
     realized_pnl: float = 0.0
+    closed_trades: list = field(default_factory=list)  # ClosedTrade records
 
     @property
     def position(self) -> int:
@@ -42,7 +60,7 @@ class FIFOAccount:
         short_shares = sum(lot.shares for lot in self.short_lots)
         return long_shares - short_shares
 
-    def _close_long(self, shares_to_sell: int, sell_price: float) -> float:
+    def _close_long(self, shares_to_sell: int, sell_price: float, sell_date: str) -> float:
         """Close long position using FIFO. Returns realized PNL."""
         realized = 0.0
         remaining = shares_to_sell
@@ -52,7 +70,21 @@ class FIFOAccount:
             take = min(remaining, lot.shares)
 
             # Realized PNL = (sell price - cost) × shares
-            realized += take * (sell_price - lot.cost_per_share)
+            trade_pnl = take * (sell_price - lot.cost_per_share)
+            realized += trade_pnl
+
+            # Record closed trade
+            self.closed_trades.append(ClosedTrade(
+                symbol=self.symbol,
+                broker=self.broker,
+                shares=take,
+                buy_date=lot.buy_date,
+                buy_price=lot.cost_per_share,
+                sell_date=sell_date,
+                sell_price=sell_price,
+                realized_pnl=trade_pnl,
+                trade_type="long",
+            ))
 
             lot.shares -= take
             remaining -= take
@@ -62,7 +94,7 @@ class FIFOAccount:
 
         return realized
 
-    def _close_short(self, shares_to_cover: int, buy_price: float) -> float:
+    def _close_short(self, shares_to_cover: int, buy_price: float, cover_date: str) -> float:
         """Close short position using FIFO. Returns realized PNL."""
         realized = 0.0
         remaining = shares_to_cover
@@ -72,7 +104,21 @@ class FIFOAccount:
             take = min(remaining, lot.shares)
 
             # Realized PNL = (short price - buy price) × shares
-            realized += take * (lot.cost_per_share - buy_price)
+            trade_pnl = take * (lot.cost_per_share - buy_price)
+            realized += trade_pnl
+
+            # Record closed trade (short: sell_date is when short opened, buy_date is when covered)
+            self.closed_trades.append(ClosedTrade(
+                symbol=self.symbol,
+                broker=self.broker,
+                shares=take,
+                buy_date=lot.buy_date,      # Date short was opened
+                buy_price=lot.cost_per_share,  # Price short was opened at
+                sell_date=cover_date,        # Date short was covered
+                sell_price=buy_price,        # Price short was covered at
+                realized_pnl=trade_pnl,
+                trade_type="short",
+            ))
 
             lot.shares -= take
             remaining -= take
@@ -89,6 +135,7 @@ class FIFOAccount:
         buy_amount: float,
         sell_amount: float,
         close_price: float,
+        current_date: str,
     ) -> tuple[float, float]:
         """Process a day's transactions using FIFO.
 
@@ -108,12 +155,12 @@ class FIFOAccount:
             if current_long > 0:
                 # Close long positions first (FIFO)
                 shares_to_close = min(sell_shares, current_long)
-                realized_today += self._close_long(shares_to_close, avg_sell_price)
+                realized_today += self._close_long(shares_to_close, avg_sell_price, current_date)
                 sell_shares -= shares_to_close
 
             # Remaining sells open/add to short position
             if sell_shares > 0:
-                self.short_lots.append(Lot(shares=sell_shares, cost_per_share=avg_sell_price))
+                self.short_lots.append(Lot(shares=sell_shares, cost_per_share=avg_sell_price, buy_date=current_date))
 
         # Process buys
         if buy_shares > 0:
@@ -123,12 +170,12 @@ class FIFOAccount:
             if current_short > 0:
                 # Cover short positions first (FIFO)
                 shares_to_cover = min(buy_shares, current_short)
-                realized_today += self._close_short(shares_to_cover, avg_buy_price)
+                realized_today += self._close_short(shares_to_cover, avg_buy_price, current_date)
                 buy_shares -= shares_to_cover
 
             # Remaining buys open/add to long position
             if buy_shares > 0:
-                self.long_lots.append(Lot(shares=buy_shares, cost_per_share=avg_buy_price))
+                self.long_lots.append(Lot(shares=buy_shares, cost_per_share=avg_buy_price, buy_date=current_date))
 
         # Update cumulative realized PNL
         self.realized_pnl += realized_today
@@ -209,6 +256,7 @@ def calculate_pnl_tensor(
     # Process each (symbol, broker) pair
     print("Calculating PNL with FIFO...")
     dates_list = sorted(maps["dates"].keys())
+    all_closed_trades = []
 
     for sym in maps["symbols"]:
         sym_idx = maps["symbols"][sym]
@@ -219,7 +267,7 @@ def calculate_pnl_tensor(
 
         for broker in maps["brokers"]:
             broker_idx = maps["brokers"][broker]
-            account = FIFOAccount()
+            account = FIFOAccount(symbol=sym, broker=broker)
 
             broker_trades = sym_trades.filter(pl.col("broker") == broker)
             trade_dict = {row["date"]: row for row in broker_trades.iter_rows(named=True)}
@@ -241,6 +289,7 @@ def calculate_pnl_tensor(
                         buy_amount=row["buy_amount"] or 0.0,
                         sell_amount=row["sell_amount"] or 0.0,
                         close_price=close_price,
+                        current_date=date,
                     )
                 else:
                     # No trade today, just recalculate unrealized with current price
@@ -255,11 +304,33 @@ def calculate_pnl_tensor(
                 realized_tensor[sym_idx, date_idx, broker_idx] = realized
                 unrealized_tensor[sym_idx, date_idx, broker_idx] = unrealized
 
+            # Collect closed trades from this account
+            all_closed_trades.extend(account.closed_trades)
+
     # Save outputs
     np.save(output_dir / "realized_pnl.npy", realized_tensor)
     np.save(output_dir / "unrealized_pnl.npy", unrealized_tensor)
     with open(output_dir / "index_maps.json", "w") as f:
         json.dump(maps, f, indent=2, ensure_ascii=False)
+
+    # Save closed trades for Alpha analysis
+    if all_closed_trades:
+        closed_trades_df = pl.DataFrame([
+            {
+                "symbol": t.symbol,
+                "broker": t.broker,
+                "shares": t.shares,
+                "buy_date": t.buy_date,
+                "buy_price": t.buy_price,
+                "sell_date": t.sell_date,
+                "sell_price": t.sell_price,
+                "realized_pnl": t.realized_pnl,
+                "trade_type": t.trade_type,
+            }
+            for t in all_closed_trades
+        ])
+        closed_trades_df.write_parquet(output_dir / "closed_trades.parquet")
+        print(f"  closed_trades.parquet: {len(all_closed_trades):,} trades")
 
     # Stats
     print(f"\nOutputs saved to {output_dir}/")
@@ -268,6 +339,7 @@ def calculate_pnl_tensor(
     print(f"\nStats:")
     print(f"  Realized PNL range:   {realized_tensor.min():,.0f} ~ {realized_tensor.max():,.0f}")
     print(f"  Unrealized PNL range: {unrealized_tensor.min():,.0f} ~ {unrealized_tensor.max():,.0f}")
+    print(f"  Closed trades:        {len(all_closed_trades):,}")
 
     return realized_tensor, unrealized_tensor, maps
 

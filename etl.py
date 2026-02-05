@@ -15,7 +15,7 @@ def json_to_parquet(input_path: Path, output_path: Path | None = None) -> Path:
 
     Performs Intraday Aggregation per dev.md:
     - GroupBy (Date, Symbol, Broker)
-    - Outputs: total_buy_amount, total_sell_amount, net_shares
+    - Outputs: buy_shares, sell_shares, buy_amount, sell_amount
 
     Args:
         input_path: Path to input JSON file
@@ -32,8 +32,14 @@ def json_to_parquet(input_path: Path, output_path: Path | None = None) -> Path:
     tidy = (
         df.explode("data")
         .with_columns(
-            # Extract date (YYYY-MM-DD) from ISO string
-            pl.col("date").str.slice(0, 10).alias("date"),
+            # Convert UTC timestamp to Taiwan date (UTC+8)
+            # "2026-02-02T16:00:00.000Z" → 2026-02-03 in Taiwan
+            pl.col("date")
+              .str.to_datetime("%Y-%m-%dT%H:%M:%S%.fZ")
+              .dt.convert_time_zone("Asia/Taipei")
+              .dt.date()
+              .cast(pl.String)
+              .alias("date"),
             # Parse "1,170.00" → 1170.0
             pl.col("data").struct.field("price")
               .str.replace_all(",", "")
@@ -50,9 +56,10 @@ def json_to_parquet(input_path: Path, output_path: Path | None = None) -> Path:
         )
         .group_by(["date", "symbol_id", "broker"])
         .agg(
-            pl.col("buy_amount").sum().cast(pl.Float32).alias("total_buy_amount"),
-            pl.col("sell_amount").sum().cast(pl.Float32).alias("total_sell_amount"),
-            pl.col("net_shares_txn").sum().cast(pl.Int32).alias("net_shares"),
+            pl.col("buy").sum().cast(pl.Int32).alias("buy_shares"),
+            pl.col("sell").sum().cast(pl.Int32).alias("sell_shares"),
+            pl.col("buy_amount").sum().cast(pl.Float32).alias("buy_amount"),
+            pl.col("sell_amount").sum().cast(pl.Float32).alias("sell_amount"),
         )
         .sort(["date", "broker"])
     )

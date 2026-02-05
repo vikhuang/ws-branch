@@ -65,7 +65,7 @@
 - **Shape**: `(n_symbols, n_dates, n_brokers)`
 - **Dtype**: `float32`
 - **索引對照**: `index_maps.json` 內含 `dates`, `symbols`, `brokers` 映射表
-- **總損益**: `realized + unrealized`
+- **總損益**: `realized.sum(axis=1) + unrealized[-1]`（累計已實現 + 最後一天未實現）
 
 ## PNL 計算公式
 
@@ -157,17 +157,26 @@ with open('index_maps.json') as f:
 broker_idx = maps['brokers']['1021']
 sym_idx = maps['symbols']['2345']
 
-total_pnl = realized[sym_idx, :, broker_idx] + unrealized[sym_idx, :, broker_idx]
-
-# 計算勝率 (以總損益計)
-wins = np.sum(total_pnl > 0)
-total = np.sum(total_pnl != 0)
-print(f'勝率: {wins/total*100:.1f}%')
-
-# 累計已實現損益
+# 總損益 = 累計已實現 + 最後一天未實現
 cum_realized = realized[sym_idx, :, broker_idx].sum()
+final_unrealized = unrealized[sym_idx, -1, broker_idx]
+total_pnl = cum_realized + final_unrealized
+
 print(f'累計已實現: {cum_realized:,.0f}')
+print(f'最後未實現: {final_unrealized:,.0f}')
+print(f'總損益: {total_pnl:,.0f}')
 ```
+
+## 排行榜查詢
+
+```bash
+uv run python query_ranking.py
+```
+
+輸出：
+- Query A: 一年金額 Top 10（買賣總額）
+- Query B: 一年獲利 Top 10（已實現 + 未實現）
+- Excel: `ranking_report.xlsx`
 
 ## 特定 Query 需求
 

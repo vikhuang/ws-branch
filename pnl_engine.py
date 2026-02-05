@@ -2,36 +2,85 @@
 
 Module C & D of High-Speed PNL Analytics System (dev.md).
 - Module C: Dimension Mapping (string → int16 index)
-- Module D: PNL calculation with proper cost basis tracking
+- Module D: PNL calculation with FIFO cost basis tracking
 
-Cost Basis Logic:
+Cost Basis Logic (FIFO - First In First Out):
 - Each (symbol, broker) pair is treated as an independent account
-- Tracks position (net shares) and average cost
+- Tracks individual lots (purchase records) with their cost
+- When selling, sells from oldest lots first
 - Separates realized PNL (closed positions) from unrealized PNL (open positions)
 """
 
 import json
 import sys
 from pathlib import Path
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from collections import deque
 
 import numpy as np
 import polars as pl
 
 
 @dataclass
-class Account:
-    """Tracks position and cost basis for a (symbol, broker) pair."""
-    position: int = 0           # positive=long, negative=short
-    cost_basis: float = 0.0     # total cost for long, total proceeds for short
-    realized_pnl: float = 0.0   # cumulative realized PNL
+class Lot:
+    """A single purchase lot."""
+    shares: int
+    cost_per_share: float
+
+
+@dataclass
+class FIFOAccount:
+    """Tracks position and lots for a (symbol, broker) pair using FIFO."""
+    long_lots: deque = field(default_factory=deque)   # Lots for long position
+    short_lots: deque = field(default_factory=deque)  # Lots for short position
+    realized_pnl: float = 0.0
 
     @property
-    def avg_cost(self) -> float:
-        """Average cost per share (for long) or avg short price (for short)."""
-        if self.position == 0:
-            return 0.0
-        return abs(self.cost_basis / self.position)
+    def position(self) -> int:
+        """Net position: positive=long, negative=short."""
+        long_shares = sum(lot.shares for lot in self.long_lots)
+        short_shares = sum(lot.shares for lot in self.short_lots)
+        return long_shares - short_shares
+
+    def _close_long(self, shares_to_sell: int, sell_price: float) -> float:
+        """Close long position using FIFO. Returns realized PNL."""
+        realized = 0.0
+        remaining = shares_to_sell
+
+        while remaining > 0 and self.long_lots:
+            lot = self.long_lots[0]
+            take = min(remaining, lot.shares)
+
+            # Realized PNL = (sell price - cost) × shares
+            realized += take * (sell_price - lot.cost_per_share)
+
+            lot.shares -= take
+            remaining -= take
+
+            if lot.shares == 0:
+                self.long_lots.popleft()
+
+        return realized
+
+    def _close_short(self, shares_to_cover: int, buy_price: float) -> float:
+        """Close short position using FIFO. Returns realized PNL."""
+        realized = 0.0
+        remaining = shares_to_cover
+
+        while remaining > 0 and self.short_lots:
+            lot = self.short_lots[0]
+            take = min(remaining, lot.shares)
+
+            # Realized PNL = (short price - buy price) × shares
+            realized += take * (lot.cost_per_share - buy_price)
+
+            lot.shares -= take
+            remaining -= take
+
+            if lot.shares == 0:
+                self.short_lots.popleft()
+
+        return realized
 
     def process_day(
         self,
@@ -41,73 +90,59 @@ class Account:
         sell_amount: float,
         close_price: float,
     ) -> tuple[float, float]:
-        """Process a day's transactions and return (realized_pnl_today, unrealized_pnl).
+        """Process a day's transactions using FIFO.
 
         Returns:
             (realized_pnl_today, unrealized_pnl): Today's realized and current unrealized PNL
         """
         realized_today = 0.0
+        avg_buy_price = buy_amount / buy_shares if buy_shares > 0 else 0.0
+        avg_sell_price = sell_amount / sell_shares if sell_shares > 0 else 0.0
 
-        # Process sells first (reduces long or increases short)
+        # Current position before today's trades
+        current_long = sum(lot.shares for lot in self.long_lots)
+        current_short = sum(lot.shares for lot in self.short_lots)
+
+        # Process sells
         if sell_shares > 0:
-            if self.position > 0:
-                # Selling from long position
-                shares_to_close = min(sell_shares, self.position)
-                avg_cost = self.avg_cost
-                realized_today += shares_to_close * (sell_amount / sell_shares - avg_cost)
+            if current_long > 0:
+                # Close long positions first (FIFO)
+                shares_to_close = min(sell_shares, current_long)
+                realized_today += self._close_long(shares_to_close, avg_sell_price)
+                sell_shares -= shares_to_close
 
-                # Reduce position and cost basis proportionally
-                self.cost_basis -= shares_to_close * avg_cost
-                self.position -= shares_to_close
+            # Remaining sells open/add to short position
+            if sell_shares > 0:
+                self.short_lots.append(Lot(shares=sell_shares, cost_per_share=avg_sell_price))
 
-                # Remaining sells open short position
-                remaining_sells = sell_shares - shares_to_close
-                if remaining_sells > 0:
-                    short_price = sell_amount / sell_shares
-                    self.position -= remaining_sells
-                    self.cost_basis -= remaining_sells * short_price  # negative cost = proceeds
-            else:
-                # Adding to short position (or opening new short)
-                avg_sell_price = sell_amount / sell_shares
-                self.position -= sell_shares
-                self.cost_basis -= sell_shares * avg_sell_price
-
-        # Process buys (reduces short or increases long)
+        # Process buys
         if buy_shares > 0:
-            if self.position < 0:
-                # Buying to cover short position
-                shares_to_cover = min(buy_shares, abs(self.position))
-                avg_short_price = self.avg_cost  # avg price we shorted at
-                avg_buy_price = buy_amount / buy_shares
-                realized_today += shares_to_cover * (avg_short_price - avg_buy_price)
+            # Recalculate current short after sells
+            current_short = sum(lot.shares for lot in self.short_lots)
 
-                # Reduce short position
-                self.cost_basis += shares_to_cover * avg_short_price
-                self.position += shares_to_cover
+            if current_short > 0:
+                # Cover short positions first (FIFO)
+                shares_to_cover = min(buy_shares, current_short)
+                realized_today += self._close_short(shares_to_cover, avg_buy_price)
+                buy_shares -= shares_to_cover
 
-                # Remaining buys open long position
-                remaining_buys = buy_shares - shares_to_cover
-                if remaining_buys > 0:
-                    self.position += remaining_buys
-                    self.cost_basis += remaining_buys * (buy_amount / buy_shares)
-            else:
-                # Adding to long position (or opening new long)
-                avg_buy_price = buy_amount / buy_shares
-                self.position += buy_shares
-                self.cost_basis += buy_shares * avg_buy_price
+            # Remaining buys open/add to long position
+            if buy_shares > 0:
+                self.long_lots.append(Lot(shares=buy_shares, cost_per_share=avg_buy_price))
 
         # Update cumulative realized PNL
         self.realized_pnl += realized_today
 
         # Calculate unrealized PNL
-        if self.position > 0:
-            # Long: profit if price > avg_cost
-            unrealized = self.position * (close_price - self.avg_cost)
-        elif self.position < 0:
-            # Short: profit if price < avg_short_price
-            unrealized = abs(self.position) * (self.avg_cost - close_price)
-        else:
-            unrealized = 0.0
+        unrealized = 0.0
+
+        # Long positions: profit if price > cost
+        for lot in self.long_lots:
+            unrealized += lot.shares * (close_price - lot.cost_per_share)
+
+        # Short positions: profit if price < cost (short price)
+        for lot in self.short_lots:
+            unrealized += lot.shares * (lot.cost_per_share - close_price)
 
         return realized_today, unrealized
 
@@ -133,7 +168,7 @@ def calculate_pnl_tensor(
     price_path: Path,
     output_dir: Path | None = None,
 ) -> tuple[np.ndarray, np.ndarray, dict]:
-    """Calculate PNL tensors with realized/unrealized separation (Module D).
+    """Calculate PNL tensors with realized/unrealized separation using FIFO (Module D).
 
     Args:
         trade_path: Path to daily_trade_summary.parquet
@@ -158,65 +193,64 @@ def calculate_pnl_tensor(
 
     print(f"Tensor shape: ({n_symbols}, {n_dates}, {n_brokers})")
 
-    # Join with prices
-    trade_df = trade_df.join(price_df, on=["symbol_id", "date"], how="left")
-    trade_df = trade_df.sort(["symbol_id", "date"])
-    trade_df = trade_df.with_columns(
-        pl.col("close_price").forward_fill().over("symbol_id").fill_null(0.0)
-    )
+    # Build price lookup: {(symbol, date): price}
+    price_lookup = {
+        (row["symbol_id"], row["date"]): row["close_price"]
+        for row in price_df.iter_rows(named=True)
+    }
 
     # Initialize tensors
     realized_tensor = np.zeros((n_symbols, n_dates, n_brokers), dtype=np.float32)
     unrealized_tensor = np.zeros((n_symbols, n_dates, n_brokers), dtype=np.float32)
 
+    # Group trades by (symbol, broker) for efficient processing
+    trade_df = trade_df.sort(["symbol_id", "broker", "date"])
+
     # Process each (symbol, broker) pair
-    print("Calculating PNL...")
-    accounts: dict[tuple[str, str], Account] = {}
+    print("Calculating PNL with FIFO...")
     dates_list = sorted(maps["dates"].keys())
 
     for sym in maps["symbols"]:
         sym_idx = maps["symbols"][sym]
-        sym_data = trade_df.filter(pl.col("symbol_id") == sym)
+        sym_trades = trade_df.filter(pl.col("symbol_id") == sym)
+
+        # Pre-fetch prices for this symbol
+        sym_prices = {d: price_lookup.get((sym, d), 0.0) for d in dates_list}
 
         for broker in maps["brokers"]:
             broker_idx = maps["brokers"][broker]
-            key = (sym, broker)
-            accounts[key] = Account()
+            account = FIFOAccount()
 
-            broker_data = sym_data.filter(pl.col("broker") == broker)
-            broker_dict = {row["date"]: row for row in broker_data.iter_rows(named=True)}
+            broker_trades = sym_trades.filter(pl.col("broker") == broker)
+            trade_dict = {row["date"]: row for row in broker_trades.iter_rows(named=True)}
+
+            # Track last known price for days without price data
+            last_price = 0.0
 
             for date in dates_list:
                 date_idx = maps["dates"][date]
+                close_price = sym_prices.get(date, last_price)
+                if close_price > 0:
+                    last_price = close_price
 
-                if date in broker_dict:
-                    row = broker_dict[date]
-                    realized, unrealized = accounts[key].process_day(
+                if date in trade_dict:
+                    row = trade_dict[date]
+                    realized, unrealized = account.process_day(
                         buy_shares=row["buy_shares"] or 0,
                         sell_shares=row["sell_shares"] or 0,
                         buy_amount=row["buy_amount"] or 0.0,
                         sell_amount=row["sell_amount"] or 0.0,
-                        close_price=row["close_price"] or 0.0,
+                        close_price=close_price,
                     )
                 else:
-                    # No trade today, but unrealized PNL may change with price
-                    # Get close price for this date
-                    price_row = price_df.filter(
-                        (pl.col("symbol_id") == sym) & (pl.col("date") == date)
-                    )
-                    if len(price_row) > 0:
-                        close_price = price_row["close_price"][0]
-                    else:
-                        close_price = 0.0
-
+                    # No trade today, just recalculate unrealized with current price
                     realized = 0.0
-                    acc = accounts[key]
-                    if acc.position > 0:
-                        unrealized = acc.position * (close_price - acc.avg_cost)
-                    elif acc.position < 0:
-                        unrealized = abs(acc.position) * (acc.avg_cost - close_price)
-                    else:
-                        unrealized = 0.0
+                    unrealized = 0.0
+
+                    for lot in account.long_lots:
+                        unrealized += lot.shares * (close_price - lot.cost_per_share)
+                    for lot in account.short_lots:
+                        unrealized += lot.shares * (lot.cost_per_share - close_price)
 
                 realized_tensor[sym_idx, date_idx, broker_idx] = realized
                 unrealized_tensor[sym_idx, date_idx, broker_idx] = unrealized
@@ -228,14 +262,12 @@ def calculate_pnl_tensor(
         json.dump(maps, f, indent=2, ensure_ascii=False)
 
     # Stats
-    total_tensor = realized_tensor + unrealized_tensor
     print(f"\nOutputs saved to {output_dir}/")
     print(f"  realized_pnl.npy:   {realized_tensor.nbytes / 1e6:.2f} MB")
     print(f"  unrealized_pnl.npy: {unrealized_tensor.nbytes / 1e6:.2f} MB")
     print(f"\nStats:")
     print(f"  Realized PNL range:   {realized_tensor.min():,.0f} ~ {realized_tensor.max():,.0f}")
     print(f"  Unrealized PNL range: {unrealized_tensor.min():,.0f} ~ {unrealized_tensor.max():,.0f}")
-    print(f"  Total PNL range:      {total_tensor.min():,.0f} ~ {total_tensor.max():,.0f}")
 
     return realized_tensor, unrealized_tensor, maps
 

@@ -1,13 +1,11 @@
 """Query Module: Full-year ranking for brokers.
 
 Generates Top 10 rankings for:
-- Query A: 一年勝率 (win rate)
-- Query B: 一年金額 (total volume)
-- Query C: 一年獲利 (total PNL)
+- Query A: 一年金額 (total volume)
+- Query B: 一年獲利 (total PNL = cumulative realized + final unrealized)
 """
 
 import json
-import sys
 from pathlib import Path
 
 import numpy as np
@@ -20,11 +18,10 @@ def load_data(
     trade_path: Path = Path("daily_trade_summary.parquet"),
     maps_path: Path = Path("index_maps.json"),
     broker_names_path: Path = Path("broker_names.json"),
-) -> tuple[np.ndarray, pl.DataFrame, dict, dict]:
+) -> tuple[np.ndarray, np.ndarray, pl.DataFrame, dict, dict]:
     """Load all required data."""
     realized = np.load(realized_path)
     unrealized = np.load(unrealized_path)
-    total_pnl = realized + unrealized
 
     trade_df = pl.read_parquet(trade_path)
 
@@ -34,36 +31,35 @@ def load_data(
     with open(broker_names_path) as f:
         broker_names = json.load(f)
 
-    return total_pnl, trade_df, maps, broker_names
+    return realized, unrealized, trade_df, maps, broker_names
 
 
 def calculate_rankings(
-    total_pnl: np.ndarray,
+    realized: np.ndarray,
+    unrealized: np.ndarray,
     trade_df: pl.DataFrame,
     maps: dict,
     broker_names: dict,
     top_n: int = 10,
-    min_active_days: int = 50,
 ) -> dict[str, pl.DataFrame]:
     """Calculate full-year rankings.
 
     Args:
-        total_pnl: 3D tensor of total PNL (symbols, dates, brokers)
+        realized: 3D tensor of realized PNL (symbols, dates, brokers)
+        unrealized: 3D tensor of unrealized PNL (symbols, dates, brokers)
         trade_df: Daily trade summary DataFrame
         maps: Dimension index maps
         broker_names: Broker code to name mapping
         top_n: Number of top brokers to return (default 10)
-        min_active_days: Minimum active days for win rate ranking (default 50)
 
     Returns:
-        Dict with 'win_rate', 'volume', 'profit' DataFrames
+        Dict with 'volume', 'profit' DataFrames
     """
     dates_list = sorted(maps["dates"].keys())
     start_date = dates_list[0]
     end_date = dates_list[-1]
 
     print(f"期間: {start_date} ~ {end_date} ({len(dates_list)} 天)")
-    print(f"勝率篩選: 至少 {min_active_days} 天活躍")
 
     # Reverse maps for lookup
     idx_to_broker = {v: k for k, v in maps["brokers"].items()}
@@ -76,39 +72,7 @@ def calculate_rankings(
     # For single symbol (2345), sym_idx = 0
     sym_idx = 0
 
-    # === Query A: 一年勝率 (至少 min_active_days 天) ===
-    all_pnl = total_pnl[sym_idx, :, :]  # (all_dates, brokers)
-    wins = (all_pnl > 0).sum(axis=0)  # (brokers,)
-    active_days = (all_pnl != 0).sum(axis=0)  # (brokers,)
-
-    # Avoid division by zero
-    win_rate = np.where(active_days > 0, wins / active_days, 0)
-
-    # Get top N by win rate (only consider brokers with >= min_active_days)
-    active_mask = active_days >= min_active_days
-    broker_indices = np.arange(len(win_rate))
-
-    # Sort by win rate descending, then by active_days descending for ties
-    sorted_indices = sorted(
-        [i for i in broker_indices if active_mask[i]],
-        key=lambda i: (-win_rate[i], -active_days[i])
-    )[:top_n]
-
-    win_rate_data = []
-    for rank, broker_idx in enumerate(sorted_indices, 1):
-        broker_code = idx_to_broker[broker_idx]
-        win_rate_data.append({
-            "rank": rank,
-            "broker": broker_code,
-            "broker_name": get_broker_name(broker_code),
-            "win_rate": f"{win_rate[broker_idx] * 100:.1f}%",
-            "wins": int(wins[broker_idx]),
-            "active_days": int(active_days[broker_idx]),
-        })
-
-    results["win_rate"] = pl.DataFrame(win_rate_data)
-
-    # === Query B: 一年金額 ===
+    # === Query A: 一年金額 ===
     volume_df = (
         trade_df
         .group_by("broker")
@@ -126,8 +90,11 @@ def calculate_rankings(
 
     results["volume"] = volume_df
 
-    # === Query C: 一年獲利 ===
-    total_profit = all_pnl.sum(axis=0)  # Sum over all dates (brokers,)
+    # === Query B: 一年獲利 ===
+    # Correct calculation: cumulative realized PNL + final day unrealized PNL
+    realized_cumsum = realized[sym_idx, :, :].sum(axis=0)  # Sum over all dates (brokers,)
+    unrealized_final = unrealized[sym_idx, -1, :]  # Last day only (brokers,)
+    total_profit = realized_cumsum + unrealized_final
 
     sorted_profit_indices = np.argsort(total_profit)[::-1][:top_n]
 
@@ -138,6 +105,8 @@ def calculate_rankings(
             "rank": rank,
             "broker": broker_code,
             "broker_name": get_broker_name(broker_code),
+            "realized_pnl": float(realized_cumsum[broker_idx]),
+            "unrealized_pnl": float(unrealized_final[broker_idx]),
             "total_profit": float(total_profit[broker_idx]),
         })
 
@@ -156,9 +125,8 @@ def export_to_excel(
     workbook = xlsxwriter.Workbook(output_path)
 
     for sheet_name, df in [
-        ("勝率_QueryA", results["win_rate"]),
-        ("金額_QueryB", results["volume"]),
-        ("獲利_QueryC", results["profit"]),
+        ("金額_QueryA", results["volume"]),
+        ("獲利_QueryB", results["profit"]),
     ]:
         worksheet = workbook.add_worksheet(sheet_name)
 
@@ -178,19 +146,16 @@ def export_to_excel(
 def main():
     """Main function."""
     # Load data
-    total_pnl, trade_df, maps, broker_names = load_data()
+    realized, unrealized, trade_df, maps, broker_names = load_data()
 
     # Calculate rankings
-    results = calculate_rankings(total_pnl, trade_df, maps, broker_names)
+    results = calculate_rankings(realized, unrealized, trade_df, maps, broker_names)
 
     # Print results
-    print("\n=== Query A: 一年勝率 Top 10 ===")
-    print(results["win_rate"])
-
-    print("\n=== Query B: 一年金額 Top 10 ===")
+    print("\n=== Query A: 一年金額 Top 10 ===")
     print(results["volume"])
 
-    print("\n=== Query C: 一年獲利 Top 10 ===")
+    print("\n=== Query B: 一年獲利 Top 10 ===")
     print(results["profit"])
 
     # Export to Excel

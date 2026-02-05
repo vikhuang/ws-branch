@@ -1,63 +1,18 @@
 # ws-branch
 
-A data science project.
+高速 PNL 運算：JSON → Parquet → 3D Tensor
 
-## Requirements
-
-- Python 3.12+
-- [uv](https://github.com/astral-sh/uv) for dependency management
-- Docker (optional)
-
-## Setup
+## 使用
 
 ```bash
-# Install dependencies
 uv sync
-
-# Install with dev dependencies
-uv sync --dev
-```
-
-## Usage
-
-```bash
-# Run the application
-uv run python main.py
-
-# Run tests
-uv run pytest
-
-# Run linting
-uv run ruff check .
-
-# Run type checking
-uv run mypy src
+uv run python etl.py 2345.json          # 輸出 2345.parquet
+uv run python tensor.py 2345.parquet    # 輸出 pnl_tensor.npy
 ```
 
 ## Docker
 
 ```bash
-# Build and run production image
-docker compose up app
-
-# Run development environment with Jupyter
-docker compose up dev
+docker build -t ws-branch .
+docker run -v $(pwd):/app ws-branch etl.py 2345.json
 ```
-
-## Project Structure
-
-```
-ws-branch/
-├── src/ws_branch/    # Source code
-├── tests/            # Test files
-├── notebooks/        # Jupyter notebooks
-├── data/             # Data files (gitignored)
-├── output/           # Output files (gitignored)
-├── Dockerfile        # Docker configuration
-├── docker-compose.yml
-└── pyproject.toml    # Project configuration
-```
-
-## License
-
-MIT

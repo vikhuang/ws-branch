@@ -1,50 +1,18 @@
 # Python
 __pycache__/
 *.py[cod]
-*$py.class
-*.so
-.Python
 .venv/
-venv/
-ENV/
-.eggs/
 *.egg-info/
-*.egg
-dist/
-build/
 
-# Testing
-.pytest_cache/
-.coverage
-htmlcov/
-.tox/
+# Data files
+*.json
+*.parquet
+*.npy
+index_maps.json
 
-# Type checking
-.mypy_cache/
-
-# Linting
-.ruff_cache/
-
-# Jupyter
-.ipynb_checkpoints/
+# OS
+.DS_Store
 
 # IDE
 .idea/
 .vscode/
-*.swp
-*.swo
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Project specific
-data/*
-!data/.gitkeep
-output/*
-!output/.gitkeep
-*.log
-
-# Environment
-.env
-.env.local

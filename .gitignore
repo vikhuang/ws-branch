@@ -4,11 +4,16 @@ __pycache__/
 .venv/
 *.egg-info/
 
-# Data files
+# Data files (generated)
 *.json
 *.parquet
 *.npy
 *.xlsx
+*.csv
+~$*
+
+# Reference data (force add if needed)
+# !證券商基本資料.xls
 
 # OS
 .DS_Store

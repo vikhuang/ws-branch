@@ -8,4 +8,5 @@ dependencies = [
     "numpy>=2.0.0",
     "google-cloud-bigquery>=3.40.0",
     "xlsxwriter>=3.2.9",
+    "xlrd>=2.0.2",
 ]

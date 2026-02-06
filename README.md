@@ -159,8 +159,11 @@ uv run python etl.py 2345.json
 uv run python sync_prices.py daily_trade_summary.parquet
 uv run python pnl_engine.py daily_trade_summary.parquet price_master.parquet
 
-# 排行榜
-uv run python query_ranking.py
+# CLI 指令 (v0.12.0+)
+uv run python -m pnl_analytics ranking          # 生成排名報告
+uv run python -m pnl_analytics query 1440       # 查詢單一券商
+uv run python -m pnl_analytics scorecard 1440   # 券商評分卡
+uv run python -m pnl_analytics verify           # 資料驗證
 ```
 
 ## 查詢輸出

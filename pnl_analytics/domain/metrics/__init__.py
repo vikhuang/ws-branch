@@ -2,27 +2,9 @@
 
 This package provides metrics for evaluating broker trading performance:
 
-- Execution Alpha: Quality of trade execution vs market close
 - Timing Alpha: Ability to predict future price movements
 - Statistical: Hypothesis testing for metric significance
-
-Usage:
-    from pnl_analytics.domain.metrics import (
-        calculate_trade_alpha,
-        calculate_timing_alpha,
-        permutation_test,
-    )
 """
-
-# Execution Alpha
-from pnl_analytics.domain.metrics.execution_alpha import (
-    TradeAlpha,
-    BrokerExecutionAlpha,
-    calculate_trade_alpha,
-    add_alpha_columns,
-    calculate_broker_alpha,
-    calculate_all_broker_alphas,
-)
 
 # Timing Alpha
 from pnl_analytics.domain.metrics.timing_alpha import (
@@ -44,13 +26,6 @@ from pnl_analytics.domain.metrics.statistical import (
 )
 
 __all__ = [
-    # Execution Alpha
-    "TradeAlpha",
-    "BrokerExecutionAlpha",
-    "calculate_trade_alpha",
-    "add_alpha_columns",
-    "calculate_broker_alpha",
-    "calculate_all_broker_alphas",
     # Timing Alpha
     "TimingAlphaResult",
     "calculate_timing_alpha",

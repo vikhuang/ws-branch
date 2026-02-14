@@ -1,18 +1,28 @@
-# Python 平行化參考筆記：PNL Engine 案例
+# 資料 Pipeline 效能優化參考筆記
 
-> 這份文件記錄 `pnl_engine.py` 從單線程改為平行處理的思考過程。
-> 適合作為 Python multiprocessing 的入門案例學習。
+> 這份文件記錄本專案 pipeline 在效能優化過程中遇到的三類問題與解法。
+> 適合作為 Python 資料工程的入門案例學習。
 
 ---
 
 ## 目錄
 
+### A. PNL Engine 平行化（IPC 瓶頸）
 1. [問題定義](#1-問題定義)
 2. [為什麼 Python 需要特別處理平行化](#2-為什麼-python-需要特別處理平行化)
 3. [本專案的具體瓶頸](#3-本專案的具體瓶頸)
 4. [採用的解法：Pre-partition](#4-採用的解法pre-partition)
 5. [不採用的解法與原因](#5-不採用的解法與原因)
-6. [關鍵字與學習路線](#6-關鍵字與學習路線)
+
+### B. ETL 重複掃描
+6. [重複掃描問題](#6-重複掃描問題)
+7. [採用的解法：批次掃描](#7-採用的解法批次掃描)
+
+### C. Pipeline 更新策略
+8. [增量處理 vs 全量重跑](#8-增量處理-vs-全量重跑)
+
+### 附錄
+9. [關鍵字與學習路線](#9-關鍵字與學習路線)
 
 ---
 
@@ -278,7 +288,237 @@ Arrow mmap          中        小        是        ~0       8-10x
 
 ---
 
-## 6. 關鍵字與學習路線
+## 6. 重複掃描問題
+
+### 現象
+
+`etl.py` 將 10 GB 的 `broker_tx.parquet`（20.8 億筆）拆成 2,839 個 per-symbol 檔案。
+原本的做法：先掃一次取得 symbol 清單，再對每個 symbol 各掃一次全檔。
+
+```
+broker_tx.parquet (10 GB)
+
+  Scan 0:    取 unique symbols                     ← 掃全檔
+  Scan 1:    lf.filter(symbol == "0050").collect()  ← 又掃全檔
+  Scan 2:    lf.filter(symbol == "0051").collect()  ← 又掃全檔
+  ...
+  Scan 2839: lf.filter(symbol == "9958").collect()  ← 第 2,840 次
+
+  總掃描次數: 2,840
+  實測時間: 30-40 分鐘
+```
+
+### 為什麼這麼慢
+
+即使 Polars 有 **predicate pushdown**（利用 parquet row group 的 min/max 統計跳過不相關區塊），
+每次掃描仍有固定開銷：讀 metadata、檢查每個 row group、建構 lazy plan。
+
+```
+每次掃描的固定開銷: ~0.5-1 秒
+2,840 次 × 0.7 秒 ≈ 33 分鐘
+
+其中真正讀取和計算的時間可能只有 5 分鐘，
+剩下的 28 分鐘是重複的 metadata 解析和 I/O 排程。
+```
+
+### 核心問題
+
+這是 **N+1 查詢問題**的檔案版本：
+
+```
+SQL 版本 (N+1 query):
+  SELECT DISTINCT symbol FROM trades;          -- 1 次
+  SELECT * FROM trades WHERE symbol = '0050';  -- N 次
+  SELECT * FROM trades WHERE symbol = '0051';
+  ...
+
+Parquet 版本 (N+1 scan):
+  lf.select("symbol_id").unique().collect()    -- 1 次
+  lf.filter(symbol == "0050").collect()        -- N 次
+  lf.filter(symbol == "0051").collect()
+  ...
+
+解法相同: 一次讀取，批次處理。
+```
+
+### 為什麼不能一次 collect 全部？
+
+最直覺的修法是一次 streaming collect + group_by + partition_by：
+
+```python
+df = (
+    lf.group_by(["symbol_id", "broker", "date"])
+    .agg([...])
+    .collect(engine="streaming")   # ← 嘗試一次搞定
+)
+```
+
+**實測結果：OOM (exit code 137)**。
+
+原因：streaming group_by 需要維護一個 hash table，key 是所有 unique 的
+`(symbol_id, broker, date)` 組合。估算：
+
+```
+unique groups ≈ 574,596,937（實測值）
+每個 group 的 hash entry: ~36 bytes (key + 4 accumulators)
+hash table 大小: 574M × 36 ≈ 20 GB
+加上 hash table overhead (load factor ~2x): ~40 GB
+機器記憶體: 36 GB → OOM
+```
+
+---
+
+## 7. 採用的解法：批次掃描
+
+### 核心思路
+
+不是一次處理 1 個 symbol（太多次掃描），也不是一次處理全部（OOM），
+而是每次處理 500 個 symbol：
+
+```
+原本:     2,840 次掃描，每次 1 symbol      → 30-40 min
+一次全部:  1 次掃描，5.7 億 groups          → OOM
+批次:     7 次掃描，每次 500 symbols        → 2 min    ◄ 採用
+```
+
+### 程式碼骨架
+
+```python
+BATCH_SIZE = 500
+
+# Scan 1: 取 symbol 清單（輕量）
+symbols = lf.select("symbol_id").unique().collect(engine="streaming")
+
+# Scan 2-7: 每次處理 500 symbols
+for batch in batched(symbols, BATCH_SIZE):
+    batch_df = (
+        lf.filter(pl.col("symbol_id").is_in(batch))
+        .group_by(["symbol_id", "broker", "date"])
+        .agg([...])
+        .collect(engine="streaming")   # ~1 GB per batch, safe
+    )
+
+    # 分割寫出
+    for symbol_df in batch_df.partition_by("symbol_id"):
+        symbol_df.write_parquet(f"daily_summary/{symbol}.parquet")
+```
+
+### 實測結果
+
+| 指標 | 改動前 | 改動後 |
+|------|--------|--------|
+| 掃描次數 | 2,840 | 7 |
+| Wall time | 30-40 min | **2 min 5 sec** |
+| 記憶體峰值 | ~2 GB | ~2 GB |
+| 輸出行數 | 574,596,937 | 574,596,937（一致） |
+
+### 批次大小的取捨
+
+```
+BATCH_SIZE    掃描次數    記憶體/batch    總時間（估）
+─────────     ────────    ───────────    ──────────
+1             2,840       ~1 MB          30-40 min
+100           29          ~200 MB        ~5 min
+500           6           ~1 GB          ~2 min     ◄ 採用
+1000          3           ~2 GB          ~1.5 min
+ALL           1           ~20 GB         OOM
+```
+
+**經驗法則**：選一個讓每批記憶體在可用 RAM 的 10-20% 以內的 batch size。
+
+---
+
+## 8. 增量處理 vs 全量重跑
+
+### 問題
+
+資料每天更新。四個階段都要重跑嗎？能不能只處理「新的那一天」？
+
+### 逐階段分析
+
+```
+階段        能增量嗎？   為什麼？
+──────────  ──────────   ──────────────────────────────────────
+① ETL       可以         只抽新日期，append 到 daily_summary
+② Sync      可以         只從 BigQuery 抓新日期的價格
+③ PNL       不行         FIFO 是路徑依賴的（見下方說明）
+④ Query     —            讀 100 KB，已經瞬間完成
+```
+
+### 為什麼 FIFO 不能增量
+
+FIFO 損益取決於歷史上**每一筆交易的先後順序**：
+
+```
+假設券商 A 在三個時間點交易同一支股票：
+
+  2021: 買 100 張 @ $10   ← lot 1
+  2023: 買 100 張 @ $50   ← lot 2
+  2025: 賣 100 張 @ $60   ← 賣哪一批？
+
+FIFO: 先進先出，賣 lot 1 → 賺 100 × ($60 - $10) = $5,000
+LIFO: 後進先出，賣 lot 2 → 賺 100 × ($60 - $50) = $1,000
+
+如果只看 2025 的新資料，不知道要平的是 $10 還是 $50 的倉位。
+必須從 2021 年的第一筆交易開始重算。
+```
+
+這叫做 **路徑依賴（path dependency）**：結果取決於完整的歷史路徑，
+不能只看終點狀態。
+
+### 增量的理論可行性
+
+技術上可以透過**儲存中間狀態**來實現增量 PNL：
+
+```python
+# 每次跑完後存下 FIFO 帳戶的狀態
+state = {
+    ("2330", "1440"): FIFOAccount(long_lots=[Lot(100, 10.0), ...]),
+    ...
+}
+pickle.dump(state, open("fifo_state.pkl", "wb"))
+
+# 下次只處理新的一天
+state = pickle.load(open("fifo_state.pkl", "rb"))
+for new_trade in today_trades:
+    state[key].process_day(new_trade)
+```
+
+**為什麼不這樣做：**
+
+| 考量 | 全量重跑 | 增量 + 狀態 |
+|------|----------|-------------|
+| 正確性保證 | 冪等（跑兩次結果相同） | 狀態損壞 = 全部錯 |
+| 歷史修正 | 自動修復 | 需要偵測 + 重算 |
+| 程式碼複雜度 | 無狀態，簡單 | 狀態序列化 + 版本管理 |
+| Debug 難度 | 隨時可重現 | 需要保存完整狀態快照 |
+| 每日成本 | **9 分鐘** | ~5 分鐘（省 4 分鐘） |
+
+### 結論
+
+> **對目前的規模（9 分鐘/天），全量重跑是 best practice。**
+
+這在資料工程中叫 **idempotent full refresh**：
+
+- **冪等性（idempotent）**：跑 N 次結果都一樣
+- **全量刷新（full refresh）**：不依賴上次的狀態，每次從頭算
+- **自我修復（self-healing）**：供應商修正歷史資料時，下次跑自動修正
+
+增量處理是當全量重跑耗時 **數小時以上** 才值得引入的優化。
+引入的時機判斷標準：
+
+```
+全量重跑時間    建議策略
+─────────────   ──────────────────────────
+< 30 分鐘       全量重跑（現在的情況）
+30 min ~ 2 hr   考慮增量，但要有全量重跑的退路
+> 2 小時        增量處理 + 定期全量校驗
+> 1 天          必須增量，設計 checkpoint 機制
+```
+
+---
+
+## 9. 關鍵字與學習路線
 
 ### 第一層：理解問題（為什麼需要平行化）
 
@@ -309,9 +549,31 @@ Arrow mmap          中        小        是        ~0       8-10x
 | **Shared memory** | 進程間共享記憶體區段 | `multiprocessing.shared_memory` |
 | **Apache Arrow IPC** | 零拷貝跨進程資料格式 | Arrow 官方文件 |
 
+### 第四層：ETL 與資料處理模式
+
+| 關鍵字 | 說明 | 建議資源 |
+|--------|------|----------|
+| **N+1 query problem** | 對每筆資料各做一次查詢（本案的檔案版） | 搜尋 "N+1 query problem ORM" |
+| **Predicate pushdown** | 把 filter 條件下推到 I/O 層，跳過不需要的資料區塊 | Polars / Spark 文件 |
+| **Parquet row group** | Parquet 檔案的分塊單位，每個 row group 有獨立的統計資訊 | 搜尋 "parquet file format internals" |
+| **Streaming vs collect** | Polars 的兩種執行模式：全量載入 vs 串流處理 | Polars 官方文件 |
+| **partition_by** | 按欄位值分割 DataFrame，用於 fan-out 寫出多檔案 | Polars `DataFrame.partition_by` |
+
+### 第五層：Pipeline 架構決策
+
+| 關鍵字 | 說明 | 建議資源 |
+|--------|------|----------|
+| **Idempotent full refresh** | 每次從頭算，跑 N 次結果相同 | 搜尋 "idempotent data pipeline" |
+| **Incremental processing** | 只處理新增/變更的資料 | 搜尋 "incremental vs full refresh ETL" |
+| **Path dependency** | 結果取決於完整歷史路徑（如 FIFO） | 經濟學/物理學概念，金融常見 |
+| **Self-healing pipeline** | 上游修正資料時，下次重跑自動修復 | dbt 文件中常見此概念 |
+| **Checkpoint / state management** | 儲存中間狀態供增量使用 | Spark Structured Streaming 文件 |
+
 ### 建議學習順序
 
 ```
+--- 平行化 ---
+
 1. 先讀 concurrent.futures 官方文件（30 分鐘）
    → 理解 ProcessPoolExecutor 的基本用法
 
@@ -324,10 +586,33 @@ Arrow mmap          中        小        是        ~0       8-10x
 4. 讀 Amdahl's Law 的維基百科（15 分鐘）
    → 理解為什麼不是 12 核 = 12 倍
 
-5. (進階) 讀 Ray 的架構文件
-   → 理解大型系統如何用 shared object store 解決 IPC 問題
+--- ETL 模式 ---
+
+5. 讀 Polars User Guide 的 Lazy / Streaming 章節（30 分鐘）
+   → 理解 scan_parquet → lazy plan → collect 的執行模型
+
+6. 搜尋 "N+1 query problem" 並對照本案的 N+1 scan（15 分鐘）
+   → 同一個 anti-pattern 在 ORM、API、檔案處理中反覆出現
+
+7. 讀 Apache Parquet 格式規格的 row group 章節（30 分鐘）
+   → 理解 predicate pushdown 為什麼能跳過資料區塊
+
+--- Pipeline 架構 ---
+
+8. 搜尋 "idempotent data pipeline"（15 分鐘）
+   → 理解為什麼全量重跑比增量簡單、可靠
+
+9. (進階) 讀 dbt 的 incremental models 文件
+   → 理解增量處理在什麼規模才值得引入
+
+10. (進階) 讀 Ray 的架構文件
+    → 理解大型系統如何用 shared object store 解決 IPC 問題
 ```
 
-### 一句話總結
+### 三句話總結
 
 > **平行化不難，難的是搬運資料。減少搬運量，問題就解決了。**
+>
+> **不要掃描 N 次，掃描 1 次（或盡量少次）。這是 N+1 問題的通用解法。**
+>
+> **能全量重跑就全量重跑。增量是規模逼出來的，不是預設選項。**

@@ -13,13 +13,18 @@ Output:
 
 Notes:
     - Skips proprietary traders (price="-") as they lack price data
-    - Uses streaming to handle 10GB file with ~2GB memory
+    - Batched scan: groups symbols into batches to reduce scan count
+      (6 scans instead of 2,839, while staying within memory limits)
 """
 
 import sys
 from pathlib import Path
 
 import polars as pl
+
+# Number of symbols per batch scan.
+# Higher = fewer scans but more memory. 500 symbols ≈ ~1 GB per batch.
+BATCH_SIZE = 500
 
 
 def transform_broker_tx(
@@ -28,6 +33,9 @@ def transform_broker_tx(
     skip_proprietary: bool = True,
 ) -> dict[str, int]:
     """Transform broker_tx.parquet to per-symbol daily summaries.
+
+    Batched approach: scan once to get symbols, then process in batches
+    of BATCH_SIZE symbols per scan. Reduces 2,839 scans to ~6 scans.
 
     Args:
         input_path: Path to broker_tx.parquet
@@ -39,66 +47,67 @@ def transform_broker_tx(
     """
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Scan parquet (lazy, no memory load)
+    # Build lazy query: filter → parse → calculate amounts
     lf = pl.scan_parquet(input_path)
 
-    # Filter out proprietary traders if requested
     if skip_proprietary:
         lf = lf.filter(pl.col("price") != "-")
 
-    # Parse price and convert types
     lf = lf.with_columns([
-        # Parse price: "1,170.00" → 1170.0
         pl.col("price").str.replace_all(",", "").cast(pl.Float32).alias("price"),
-        # Convert date to Date type (from Datetime)
         pl.col("date").dt.date().alias("date"),
     ])
 
-    # Calculate amounts
     lf = lf.with_columns([
         (pl.col("buy") * pl.col("price")).alias("buy_amount"),
         (pl.col("sell") * pl.col("price")).alias("sell_amount"),
     ])
 
-    # Get unique symbols first (streaming collect)
+    # Scan 1: get unique symbols (lightweight streaming scan)
     print("Scanning symbols...")
     symbols = (
         lf.select("symbol_id")
         .unique()
         .collect(engine="streaming")
     )["symbol_id"].to_list()
+    print(f"  Found {len(symbols)} symbols")
 
-    print(f"Found {len(symbols)} symbols")
+    # Process in batches
+    total_batches = (len(symbols) + BATCH_SIZE - 1) // BATCH_SIZE
+    print(f"Processing in {total_batches} batches ({BATCH_SIZE} symbols/batch)...")
 
-    # Process each symbol
     results = {}
-    total = len(symbols)
+    for batch_idx in range(0, len(symbols), BATCH_SIZE):
+        batch = symbols[batch_idx : batch_idx + BATCH_SIZE]
+        batch_num = batch_idx // BATCH_SIZE + 1
+        print(f"  Batch {batch_num}/{total_batches}: {len(batch)} symbols")
 
-    for i, symbol in enumerate(symbols):
-        if (i + 1) % 100 == 0 or i == 0:
-            print(f"Processing {i + 1}/{total}: {symbol}")
-
-        # Filter and aggregate for this symbol
-        symbol_df = (
-            lf.filter(pl.col("symbol_id") == symbol)
-            .group_by(["broker", "date"])
+        # One scan per batch: filter to batch symbols, aggregate
+        batch_df = (
+            lf.filter(pl.col("symbol_id").is_in(batch))
+            .group_by(["symbol_id", "broker", "date"])
             .agg([
                 pl.col("buy").sum().cast(pl.Int32).alias("buy_shares"),
                 pl.col("sell").sum().cast(pl.Int32).alias("sell_shares"),
                 pl.col("buy_amount").sum().cast(pl.Float32).alias("buy_amount"),
                 pl.col("sell_amount").sum().cast(pl.Float32).alias("sell_amount"),
             ])
-            .sort(["broker", "date"])
-            .with_columns([
-                pl.col("broker").cast(pl.Categorical),
-            ])
             .collect(engine="streaming")
         )
 
-        # Write output
-        output_path = output_dir / f"{symbol}.parquet"
-        symbol_df.write_parquet(output_path)
-        results[symbol] = len(symbol_df)
+        # Partition batch result by symbol and write
+        for symbol_df in batch_df.partition_by("symbol_id", maintain_order=False):
+            symbol = symbol_df["symbol_id"][0]
+            symbol_df = (
+                symbol_df
+                .drop("symbol_id")
+                .sort(["broker", "date"])
+                .with_columns(pl.col("broker").cast(pl.Categorical))
+            )
+
+            output_path = output_dir / f"{symbol}.parquet"
+            symbol_df.write_parquet(output_path)
+            results[symbol] = len(symbol_df)
 
     return results
 

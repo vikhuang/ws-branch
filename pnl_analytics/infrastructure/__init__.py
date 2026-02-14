@@ -15,7 +15,6 @@ from pnl_analytics.infrastructure.repositories import (
     Repository,
     RepositoryError,
     TradeRepository,
-    PriceRepository,
     BrokerRepository,
     RankingRepository,
 )
@@ -30,7 +29,6 @@ __all__ = [
     "Repository",
     "RepositoryError",
     "TradeRepository",
-    "PriceRepository",
     "BrokerRepository",
     "RankingRepository",
 ]

@@ -96,8 +96,7 @@
 | `total_pnl` | Float64 | 總損益（2023+ 已實現 + 最終未實現）|
 | `total_buy_amount` | Float64 | 總買入金額 |
 | `total_sell_amount` | Float64 | 總賣出金額 |
-| `win_count` | Int32 | 獲利平倉次數 |
-| `loss_count` | Int32 | 虧損平倉次數 |
+| `timing_alpha` | Float64 | 擇時能力：Σ((net_buy[t-1] - avg) × return[t]) |
 
 **總損益公式**：
 ```python

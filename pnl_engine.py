@@ -1,8 +1,7 @@
-"""PNL Engine: FIFO-based PNL calculation with parallel processing.
+"""PNL Engine: FIFO-based PNL calculation with timing alpha.
 
 Processes daily_summary/{symbol}.parquet files and outputs:
-1. pnl/{symbol}.parquet - Per-symbol PNL results
-2. derived/broker_ranking.parquet - Pre-aggregated broker rankings
+- derived/broker_ranking.parquet - Pre-aggregated broker rankings with timing alpha
 
 FIFO Logic:
 - Each (symbol, broker) pair is an independent account
@@ -10,9 +9,13 @@ FIFO Logic:
 - Buys cover short positions first, then open long
 - Tracks realized PNL (closed trades) and unrealized PNL (open positions)
 
+Timing Alpha:
+- Measures timing ability: Σ((net_buy[t-1] - avg) × return[t])
+- Positive = buys before price rises, sells before price falls
+
 Backtest Window:
 - FIFO state accumulates from 2021-01-01
-- Performance (PNL) only counts from 2023-01-01
+- Performance (PNL, timing alpha) only counts from 2023-01-01
 """
 
 import sys
@@ -125,14 +128,14 @@ class BrokerResult(NamedTuple):
     unrealized_pnl: float   # Final unrealized
     total_buy: float
     total_sell: float
-    win_count: int
-    loss_count: int
+    timing_alpha: float     # Σ((net_buy[t-1] - avg) × return[t])
 
 
 def process_symbol(
     symbol: str,
     paths: DataPaths,
     price_lookup: dict[tuple[str, date], float],
+    returns_lookup: dict[tuple[str, date], float],
     backtest_start: date,
 ) -> list[BrokerResult]:
     """Process a single symbol and return broker results.
@@ -141,6 +144,7 @@ def process_symbol(
         symbol: Stock symbol
         paths: Data paths configuration
         price_lookup: {(symbol, date): close_price}
+        returns_lookup: {(symbol, date): daily_return}
         backtest_start: Start date for performance calculation
 
     Returns:
@@ -158,6 +162,9 @@ def process_symbol(
     dates = sorted(df["date"].unique().to_list())
     brokers = df["broker"].unique().to_list()
 
+    # Filter dates for timing alpha (only after backtest_start)
+    backtest_dates = [d for d in dates if d >= backtest_start]
+
     results = []
 
     for broker in brokers:
@@ -168,10 +175,12 @@ def process_symbol(
         realized_after_start = 0.0
         total_buy = 0.0
         total_sell = 0.0
-        win_count = 0
-        loss_count = 0
         last_unrealized = 0.0
         last_price = 0.0
+
+        # Collect net_buy series for timing alpha
+        net_buy_series: list[int] = []
+        return_series: list[float] = []
 
         for d in dates:
             # Get close price
@@ -197,10 +206,10 @@ def process_symbol(
                     realized_after_start += realized
                     total_buy += buy_amount
                     total_sell += sell_amount
-                    if realized > 0:
-                        win_count += 1
-                    elif realized < 0:
-                        loss_count += 1
+
+                    # Collect for timing alpha
+                    net_buy_series.append(buy_shares - sell_shares)
+                    return_series.append(returns_lookup.get((symbol, d), 0.0))
 
                 last_unrealized = unrealized
             else:
@@ -212,8 +221,20 @@ def process_symbol(
                     unrealized += lot.shares * (lot.cost_per_share - price)
                 last_unrealized = unrealized
 
+                # Still collect for timing alpha (net_buy = 0 on no-trade days)
+                if d >= backtest_start:
+                    net_buy_series.append(0)
+                    return_series.append(returns_lookup.get((symbol, d), 0.0))
+
         # Total PNL = realized (after start) + final unrealized
         total_pnl = realized_after_start + last_unrealized
+
+        # Calculate timing alpha: Σ((net_buy[t-1] - avg) × return[t])
+        timing_alpha = 0.0
+        if len(net_buy_series) >= 2:
+            avg_net_buy = sum(net_buy_series) / len(net_buy_series)
+            for t in range(1, len(net_buy_series)):
+                timing_alpha += (net_buy_series[t - 1] - avg_net_buy) * return_series[t]
 
         results.append(BrokerResult(
             broker=broker,
@@ -222,8 +243,7 @@ def process_symbol(
             unrealized_pnl=last_unrealized,
             total_buy=total_buy,
             total_sell=total_sell,
-            win_count=win_count,
-            loss_count=loss_count,
+            timing_alpha=timing_alpha,
         ))
 
     return results
@@ -250,6 +270,33 @@ def load_price_lookup(paths: DataPaths) -> dict[tuple[str, date], float]:
     return lookup
 
 
+def calculate_returns(
+    price_lookup: dict[tuple[str, date], float],
+) -> dict[tuple[str, date], float]:
+    """Calculate daily returns from price lookup.
+
+    Returns:
+        {(symbol, date): daily_return} where return = (price[t] - price[t-1]) / price[t-1]
+    """
+    # Group by symbol
+    by_symbol: dict[str, list[tuple[date, float]]] = defaultdict(list)
+    for (symbol, d), price in price_lookup.items():
+        by_symbol[symbol].append((d, price))
+
+    # Calculate returns
+    returns_lookup = {}
+    for symbol, prices in by_symbol.items():
+        prices.sort(key=lambda x: x[0])  # Sort by date
+        for i in range(1, len(prices)):
+            prev_date, prev_price = prices[i - 1]
+            curr_date, curr_price = prices[i]
+            if prev_price > 0:
+                ret = (curr_price - prev_price) / prev_price
+                returns_lookup[(symbol, curr_date)] = ret
+
+    return returns_lookup
+
+
 def calculate_all_pnl(
     paths: DataPaths = DEFAULT_PATHS,
     config: AnalysisConfig = DEFAULT_CONFIG,
@@ -271,10 +318,14 @@ def calculate_all_pnl(
     # Ensure output directories exist
     paths.ensure_dirs()
 
-    # Load prices
+    # Load prices and calculate returns
     print("Loading prices...")
     price_lookup = load_price_lookup(paths)
     print(f"  Loaded {len(price_lookup):,} price records")
+
+    print("Calculating returns...")
+    returns_lookup = calculate_returns(price_lookup)
+    print(f"  Calculated {len(returns_lookup):,} daily returns")
 
     # Get symbols
     symbols = paths.list_symbols()
@@ -282,7 +333,7 @@ def calculate_all_pnl(
         print("Error: No symbols found in daily_summary/")
         return pl.DataFrame()
 
-    print(f"Processing {len(symbols)} symbols with {workers} workers...")
+    print(f"Processing {len(symbols)} symbols...")
 
     # Aggregate results by broker
     broker_totals: dict[str, dict] = defaultdict(lambda: {
@@ -291,17 +342,15 @@ def calculate_all_pnl(
         "unrealized_pnl": 0.0,
         "total_buy": 0.0,
         "total_sell": 0.0,
-        "win_count": 0,
-        "loss_count": 0,
+        "timing_alpha": 0.0,
     })
 
-    # Process symbols (can be parallelized, but keeping simple for now)
-    # TODO: Add ProcessPoolExecutor for true parallelism
+    # Process symbols
     for i, symbol in enumerate(symbols):
         if (i + 1) % 100 == 0 or i == 0:
             print(f"  {i + 1}/{len(symbols)}: {symbol}")
 
-        results = process_symbol(symbol, paths, price_lookup, backtest_start)
+        results = process_symbol(symbol, paths, price_lookup, returns_lookup, backtest_start)
 
         for r in results:
             b = broker_totals[r.broker]
@@ -310,17 +359,11 @@ def calculate_all_pnl(
             b["unrealized_pnl"] += r.unrealized_pnl
             b["total_buy"] += r.total_buy
             b["total_sell"] += r.total_sell
-            b["win_count"] += r.win_count
-            b["loss_count"] += r.loss_count
+            b["timing_alpha"] += r.timing_alpha
 
     # Build ranking DataFrame
     rows = []
     for broker, stats in broker_totals.items():
-        win = stats["win_count"]
-        loss = stats["loss_count"]
-        total_trades = win + loss
-        win_rate = win / total_trades if total_trades > 0 else 0.0
-
         rows.append({
             "broker": broker,
             "total_pnl": stats["total_pnl"],
@@ -329,10 +372,7 @@ def calculate_all_pnl(
             "total_buy_amount": stats["total_buy"],
             "total_sell_amount": stats["total_sell"],
             "total_amount": stats["total_buy"] + stats["total_sell"],
-            "win_count": win,
-            "loss_count": loss,
-            "trade_count": total_trades,
-            "win_rate": win_rate,
+            "timing_alpha": stats["timing_alpha"],
         })
 
     df = pl.DataFrame(rows)
@@ -370,7 +410,7 @@ def main() -> None:
 
     if len(df) > 0:
         print("\nTop 10 brokers by PNL:")
-        print(df.head(10).select(["rank", "broker", "total_pnl", "win_rate"]))
+        print(df.head(10).select(["rank", "broker", "total_pnl", "timing_alpha"]))
 
 
 if __name__ == "__main__":

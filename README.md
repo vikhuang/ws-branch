@@ -1,34 +1,36 @@
 # ws-branch
 
-高速 PNL 運算：JSON → Parquet → 3D Tensor
+高速 PNL 運算：分點資料 → By Symbol Parquet → 並行計算
 
 ## Pipeline 架構
 
 ```
-┌─────────────────┐
-│  2345.json      │  原始分點交易數據 (164MB, 42萬筆)
-│  (券商API)      │
-└────────┬────────┘
-         │ etl.py (1.7s)
+┌───────────────────┐
+│ broker_tx.parquet │  供應商分點資料 (10GB, 20.8億筆, 2839股)
+└────────┬──────────┘
+         │ etl.py (streaming)
          ▼
-┌─────────────────┐
-│ daily_trade_    │  每日交易摘要 (1.4MB)
-│ summary.parquet │
-└────────┬────────┘
-         │ sync_prices.py (3.3s, 含 BigQuery)
+┌───────────────────┐
+│ daily_summary/    │  每日交易摘要 (by symbol)
+│   ├── 2330.parquet│  ~8 GB total
+│   └── ...         │
+└────────┬──────────┘
+         │ sync_prices.py (BigQuery)
          ▼
-┌─────────────────┐
-│ price_master.   │  收盤價快取 (2KB)
-│ parquet         │
-└────────┬────────┘
-         │ pnl_engine.py (1.75s)
+┌───────────────────┐
+│ price/            │
+│ close_prices.parquet  收盤價 (~50 MB)
+└────────┬──────────┘
+         │ pnl_engine.py (12核並行, ~5分鐘)
          ▼
-┌─────────────────┐
-│ realized_pnl.npy│  已實現損益 3D 矩陣
-│ unrealized_pnl. │  未實現損益 3D 矩陣
-│ npy             │  Shape: (1, 729, 940)
-│ index_maps.json │
-└─────────────────┘
+┌───────────────────┐
+│ pnl/              │  PNL 結果 (by symbol)
+│   ├── 2330.parquet│
+│   └── ...         │
+├───────────────────┤
+│ derived/          │  預聚合表 (查詢用)
+│ broker_ranking.parquet  (~100 KB)
+└───────────────────┘
 ```
 
 ## 設計決策
@@ -46,80 +48,63 @@
 
 產品需求選擇 FIFO。
 
-### 為什麼用 Dense Tensor 而非 Sparse？
+### 為什麼用 By Symbol Parquet 而非 Tensor？
 
-```
-資料特性：729天 × 940券商 = 685,260 cells
-實際交易：~50,000 筆（93% 是零）
-```
+全市場 2,839 股 × 1,214 天 × 943 券商：
 
-| 方案 | 儲存 | Top N 查詢 | 點查詢 |
-|------|------|------------|--------|
-| **Dense Tensor** | 2.74 MB | O(B) 向量化 | O(1) |
-| Sparse Matrix | ~0.3 MB | O(nnz) | O(log n) |
+| 方案 | 存儲 | 記憶體 | Query A/B |
+|------|------|--------|-----------|
+| Dense Tensor | 26 GB | 26 GB (OOM) | O(S×T + B log B) |
+| **By Symbol + 預聚合** | ~8 GB | ~5 MB | **O(B log B)** |
 
-選擇 Dense 因為：
-1. Query A/B 需全掃描找 Top N，向量化更快
-2. 2.74 MB 完全放進 CPU cache
-3. O(1) 點查詢支援未來券商詳細分析
-
-### 為什麼不用 Rust 優化？
-
-目前 Python 已達 1.75s，瓶頸分析：
-
-| 環節 | 底層 | 說明 |
-|------|------|------|
-| Polars I/O | Rust | 已是原生速度 |
-| deque FIFO | C | CPython 原生實作 |
-| NumPy 運算 | C | 向量化操作 |
-
-Rust 重寫預估 0.5s，省 1.25s，但增加：
-- 雙語言維護成本
-- 編譯流程複雜度
-- FFI 資料轉換開銷
-
-**結論**：單股場景下 ROI 不划算。
+選擇 By Symbol 因為：
+1. Tensor 26 GB 無法放進記憶體
+2. 預聚合表只有 100 KB，查詢反而更快
+3. 增量更新只需重算單股，不用全部重算
 
 ### 多股票規模化策略
 
-未來 1700 支股票時：
+2,839 支股票，M3 Pro 12 核：
 
 | 方案 | 時間 | 說明 |
 |------|------|------|
-| 單線程 Python | 50 分鐘 | 1700 × 1.75s |
-| 單線程 Rust | 14 分鐘 | 1700 × 0.5s |
-| **Python 多進程** | **3 分鐘** | 16 核平行處理 |
+| 單線程 Python | 83 分鐘 | 2839 × 1.75s |
+| **Python 多進程** | **~5 分鐘** | 12 核並行處理 |
 
-正確方向是**平行化**，不是單線程優化。
+正確方向是**並行化 + By Symbol 分檔**。
 
 ## 資料欄位說明
 
-### daily_trade_summary.parquet
+### daily_summary/{symbol}.parquet
 
 | 欄位 | 型態 | 說明 |
 |------|------|------|
-| `date` | String | 交易日期 (YYYY-MM-DD)，台灣時區 |
-| `symbol_id` | String | 股票代碼 |
-| `broker` | String | 券商代碼 |
-| `buy_shares` | Int32 | 當日買入股數 |
-| `sell_shares` | Int32 | 當日賣出股數 |
+| `broker` | Categorical | 券商代碼 |
+| `date` | Date | 交易日期，台灣時區 |
+| `buy_shares` | Int32 | 當日買入張數 |
+| `sell_shares` | Int32 | 當日賣出張數 |
 | `buy_amount` | Float32 | 當日買入金額 |
 | `sell_amount` | Float32 | 當日賣出金額 |
 
-### realized_pnl.npy / unrealized_pnl.npy
+排序：`ORDER BY broker, date`（FIFO 計算最佳化）
 
-- **Shape**: `(n_symbols, n_dates, n_brokers)`
-- **Dtype**: `float32`
-- **索引對照**: `index_maps.json`
+### derived/broker_ranking.parquet
+
+| 欄位 | 型態 | 說明 |
+|------|------|------|
+| `broker` | Categorical | 券商代碼 |
+| `total_pnl` | Float64 | 總損益（2023+ 已實現 + 最終未實現）|
+| `total_buy_amount` | Float64 | 總買入金額 |
+| `total_sell_amount` | Float64 | 總賣出金額 |
+| `win_count` | Int32 | 獲利平倉次數 |
+| `loss_count` | Int32 | 虧損平倉次數 |
 
 **總損益公式**：
 ```python
-total_pnl = realized[:, :, broker_idx].sum() + unrealized[:, -1, broker_idx]
-#           ^^^^^^^^^^^^^^^^^^^^^^^^^^^        ^^^^^^^^^^^^^^^^^^^^^^^^^^^
-#           累計已實現（所有日期加總）            最後一天未實現（快照）
+# 預聚合表已計算完成，直接查詢
+df = pl.read_parquet("derived/broker_ranking.parquet")
+top_10 = df.sort("total_pnl", descending=True).head(10)
 ```
-
-⚠️ 錯誤做法：`(realized + unrealized).sum()` 會重複計算未實現損益。
 
 ## PNL 計算邏輯 (FIFO)
 
@@ -154,15 +139,14 @@ while remaining_buy > 0 and short_lots:
 ```bash
 uv sync
 
-# 完整 Pipeline
-uv run python etl.py 2345.json
-uv run python sync_prices.py daily_trade_summary.parquet
-uv run python pnl_engine.py daily_trade_summary.parquet price_master.parquet
+# 完整 Pipeline（全市場）
+uv run python etl.py broker_tx.parquet          # → daily_summary/*.parquet
+uv run python sync_prices.py                    # → price/close_prices.parquet
+uv run python pnl_engine.py                     # → pnl/*.parquet + derived/
 
-# CLI 指令 (v0.12.0+)
-uv run python -m pnl_analytics ranking          # 生成排名報告
+# CLI 指令
+uv run python -m pnl_analytics ranking          # 顯示排名
 uv run python -m pnl_analytics query 1440       # 查詢單一券商
-uv run python -m pnl_analytics scorecard 1440   # 券商評分卡
 uv run python -m pnl_analytics verify           # 資料驗證
 ```
 
@@ -175,38 +159,33 @@ uv run python -m pnl_analytics verify           # 資料驗證
 
 輸出：`ranking_report.xlsx`
 
-## 效能基準 (2345 單股)
+## 效能基準 (全市場 2,839 股)
 
 | 階段 | 時間 | 記憶體 | Big-O | 說明 |
 |------|------|--------|-------|------|
-| ETL | 1.4s | **1.8 GB** | O(N) | N=421,872 筆 |
-| 價格同步 | 2.8s | 132 MB | O(D) | D=732 天，含網路 |
-| PNL 計算 | 1.6s | 167 MB | O(S×B×T) | 1×940×729 |
-| Query | 0.2s | 154 MB | O(B log B) | 940 券商排序 |
-| **總計** | **6s** | **1.8 GB peak** | | |
+| ETL | ~10 min | ~2 GB | O(N) | N=20.8億筆，streaming |
+| 價格同步 | ~1 min | 200 MB | O(S×D) | 2839股 × 1214天 |
+| PNL 計算 | **~5 min** | ~5 MB/核 | O(S×B×T) | 12核並行 |
+| Query A/B | **0.01s** | 1 MB | O(B log B) | 預聚合表 |
 
 ### 複雜度說明
 
 ```
-ETL:        O(N)           N = 交易筆數
-Sync:       O(D)           D = 交易日數（網路延遲主導）
-PNL Engine: O(S × B × T)   S=股票, B=券商, T=日期
-Query:      O(B log B)     排序取 Top N
+ETL:        O(N)           N = 20.8億筆（streaming 處理）
+Sync:       O(S × D)       S=2839, D=1214（可快取）
+PNL Engine: O(S × B × T)   2839 × 943 × 1214（並行分攤）
+Query:      O(B log B)     預聚合表只有 943 行
 ```
 
-### 記憶體瓶頸
+### 記憶體控制
 
-ETL 佔 1.8 GB 是因為 Polars 需完整載入 JSON 才能解析。
+| 階段 | 策略 |
+|------|------|
+| ETL | `pl.scan_parquet()` + streaming |
+| PNL | 每股獨立處理，單核 ~5 MB |
+| Query | 預聚合表 100 KB |
 
-**低記憶體方案**（未實作，需要時再做）：
-
-| 方案 | 記憶體 | 條件 |
-|------|--------|------|
-| **JSONL 串流** | ~100 MB | 資料源改為 Line-delimited JSON |
-| **分塊處理** | ~200 MB | JSON 預切割成多檔 |
-| **ijson 串流** | ~50 MB | 犧牲速度（慢 5-10x） |
-
-目前 1.8 GB 可接受，暫不優化。
+全程記憶體峰值 ~2 GB，遠低於 36 GB 可用記憶體。
 
 ## BigQuery
 

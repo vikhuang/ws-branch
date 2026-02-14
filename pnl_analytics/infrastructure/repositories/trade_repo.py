@@ -1,12 +1,8 @@
-"""Trade Repository: Access to trade data.
+"""Trade Repository: Access to per-symbol trade data.
 
-Provides read access to:
-- daily_trade_summary.parquet (daily aggregated trades)
-- closed_trades.parquet (completed trades for alpha analysis)
+Provides read access to daily_summary/{symbol}.parquet files.
+Each file contains broker-level daily aggregates for one symbol.
 """
-
-from pathlib import Path
-from typing import Sequence
 
 import polars as pl
 
@@ -15,140 +11,95 @@ from pnl_analytics.infrastructure.config import DataPaths, DEFAULT_PATHS
 
 
 class TradeRepository(Repository[pl.DataFrame]):
-    """Repository for daily trade summary data.
+    """Repository for daily trade summaries.
 
-    Provides access to aggregated daily trades with caching.
+    Loads data from daily_summary/{symbol}.parquet files.
+    Supports loading single symbols or aggregating across symbols.
 
     Example:
         >>> repo = TradeRepository()
-        >>> df = repo.get_all()
-        >>> broker_df = repo.get_by_broker("1440")
+        >>> df = repo.get_symbol("2330")
+        >>> symbols = repo.list_symbols()
     """
 
     def __init__(self, paths: DataPaths = DEFAULT_PATHS):
         self._paths = paths
-        self._cache: pl.DataFrame | None = None
+        self._symbol_cache: dict[str, pl.DataFrame] = {}
 
     def get_all(self) -> pl.DataFrame:
-        """Load all trade data.
+        """Load all trade data (all symbols concatenated).
+
+        Warning: May be slow for 2800+ symbols. Use get_symbol() for single symbol.
 
         Returns:
-            DataFrame with columns: date, symbol_id, broker,
+            DataFrame with columns: symbol_id, broker, date,
+            buy_shares, sell_shares, buy_amount, sell_amount
+        """
+        symbols = self.list_symbols()
+        if not symbols:
+            raise RepositoryError(
+                "No trade data found",
+                str(self._paths.daily_summary_dir)
+            )
+
+        dfs = []
+        for symbol in symbols:
+            df = self.get_symbol(symbol)
+            dfs.append(df.with_columns(pl.lit(symbol).alias("symbol_id")))
+
+        return pl.concat(dfs)
+
+    def get_symbol(self, symbol: str) -> pl.DataFrame:
+        """Load trade data for a single symbol.
+
+        Args:
+            symbol: Stock symbol (e.g., "2330")
+
+        Returns:
+            DataFrame with columns: broker, date,
             buy_shares, sell_shares, buy_amount, sell_amount
 
         Raises:
-            RepositoryError: If file cannot be read
+            RepositoryError: If file not found
         """
-        if self._cache is not None:
-            return self._cache
+        if symbol in self._symbol_cache:
+            return self._symbol_cache[symbol]
 
-        path = self._paths.trade_summary
+        path = self._paths.symbol_trade_path(symbol)
         if not path.exists():
-            raise RepositoryError(f"Trade summary file not found", str(path))
+            raise RepositoryError(f"Trade data not found for {symbol}", str(path))
 
         try:
-            self._cache = pl.read_parquet(path)
-            return self._cache
+            df = pl.read_parquet(path)
+            self._symbol_cache[symbol] = df
+            return df
         except Exception as e:
-            raise RepositoryError(f"Failed to read trade summary: {e}", str(path))
+            raise RepositoryError(f"Failed to read trade data: {e}", str(path))
 
-    def get_by_broker(self, broker: str) -> pl.DataFrame:
-        """Get trades for a specific broker.
+    def get_by_broker(self, symbol: str, broker: str) -> pl.DataFrame:
+        """Get trades for a specific broker in a symbol.
 
         Args:
+            symbol: Stock symbol
             broker: Broker code (e.g., "1440")
 
         Returns:
             Filtered DataFrame for the broker
         """
-        if not broker:
-            raise ValueError("broker cannot be empty")
-        return self.get_all().filter(pl.col("broker") == broker)
+        return self.get_symbol(symbol).filter(pl.col("broker") == broker)
 
-    def get_by_brokers(self, brokers: Sequence[str]) -> pl.DataFrame:
-        """Get trades for multiple brokers.
+    def list_symbols(self) -> list[str]:
+        """Get list of all available symbols."""
+        return self._paths.list_symbols()
 
-        Args:
-            brokers: List of broker codes
+    def get_brokers(self, symbol: str) -> list[str]:
+        """Get list of all brokers for a symbol."""
+        return self.get_symbol(symbol)["broker"].unique().sort().to_list()
 
-        Returns:
-            Filtered DataFrame for the brokers
-        """
-        if not brokers:
-            raise ValueError("brokers list cannot be empty")
-        return self.get_all().filter(pl.col("broker").is_in(brokers))
-
-    def get_by_date_range(self, start: str, end: str) -> pl.DataFrame:
-        """Get trades within a date range.
-
-        Args:
-            start: Start date (inclusive) in YYYY-MM-DD format
-            end: End date (inclusive) in YYYY-MM-DD format
-
-        Returns:
-            Filtered DataFrame for the date range
-        """
-        return self.get_all().filter(pl.col("date").is_between(start, end))
-
-    def get_brokers(self) -> list[str]:
-        """Get list of all unique broker codes."""
-        return self.get_all()["broker"].unique().sort().to_list()
-
-    def get_dates(self) -> list[str]:
-        """Get list of all unique dates."""
-        return self.get_all()["date"].unique().sort().to_list()
+    def get_dates(self, symbol: str) -> list:
+        """Get list of all dates for a symbol."""
+        return self.get_symbol(symbol)["date"].unique().sort().to_list()
 
     def clear_cache(self) -> None:
         """Clear cached data."""
-        self._cache = None
-
-
-class ClosedTradeRepository(Repository[pl.DataFrame]):
-    """Repository for closed trade data.
-
-    Provides access to completed trades for alpha analysis.
-    """
-
-    def __init__(self, paths: DataPaths = DEFAULT_PATHS):
-        self._paths = paths
-        self._cache: pl.DataFrame | None = None
-
-    def get_all(self) -> pl.DataFrame:
-        """Load all closed trades.
-
-        Returns:
-            DataFrame with columns: symbol, broker, shares,
-            buy_date, buy_price, sell_date, sell_price,
-            realized_pnl, trade_type
-
-        Raises:
-            RepositoryError: If file cannot be read
-        """
-        if self._cache is not None:
-            return self._cache
-
-        path = self._paths.closed_trades
-        if not path.exists():
-            raise RepositoryError(f"Closed trades file not found", str(path))
-
-        try:
-            self._cache = pl.read_parquet(path)
-            return self._cache
-        except Exception as e:
-            raise RepositoryError(f"Failed to read closed trades: {e}", str(path))
-
-    def get_by_broker(self, broker: str) -> pl.DataFrame:
-        """Get closed trades for a specific broker."""
-        if not broker:
-            raise ValueError("broker cannot be empty")
-        return self.get_all().filter(pl.col("broker") == broker)
-
-    def get_by_trade_type(self, trade_type: str) -> pl.DataFrame:
-        """Get closed trades by type (long/short)."""
-        if trade_type not in ("long", "short"):
-            raise ValueError(f"trade_type must be 'long' or 'short', got: {trade_type}")
-        return self.get_all().filter(pl.col("trade_type") == trade_type)
-
-    def clear_cache(self) -> None:
-        """Clear cached data."""
-        self._cache = None
+        self._symbol_cache.clear()

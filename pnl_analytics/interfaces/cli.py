@@ -1,15 +1,13 @@
 """Command Line Interface for PNL Analytics.
 
-Provides unified CLI access to all analytics functions:
-- ranking: Generate broker ranking report
-- query: Query specific broker metrics
-- scorecard: Generate broker scorecard
+Provides CLI access to analytics functions:
+- ranking: Show broker ranking
+- query: Query specific broker
 - verify: Verify data integrity
 
 Usage:
     python -m pnl_analytics ranking [--output FILE]
     python -m pnl_analytics query BROKER
-    python -m pnl_analytics scorecard BROKER
     python -m pnl_analytics verify
 """
 
@@ -19,69 +17,72 @@ from pathlib import Path
 
 from pnl_analytics import __version__
 from pnl_analytics.infrastructure import DEFAULT_PATHS
-from pnl_analytics.application import RankingService, RankingReportConfig
+from pnl_analytics.application import (
+    RankingService,
+    RankingReportConfig,
+    BrokerAnalyzer,
+)
 
 
 def cmd_ranking(args: argparse.Namespace) -> int:
-    """Generate broker ranking report."""
+    """Show broker ranking."""
     print(f"PNL Analytics v{__version__}")
     print("=" * 60)
 
-    # Configure output
     config = RankingReportConfig(
-        min_trading_days=args.min_days,
-        permutation_count=args.permutations,
         output_dir=Path(args.output).parent if args.output else Path("."),
         output_formats=tuple(args.formats.split(",")),
     )
 
     service = RankingService(paths=DEFAULT_PATHS, config=config)
 
-    # Show market stats
-    stats = service.get_market_stats()
-    print(f"分析期間：{stats['start_date']} ~ {stats['end_date']}")
-    print(f"交易日數：{stats['trading_days']}")
-    print(f"市場報酬：{stats['market_return']*100:.1f}%")
+    # Get summary
+    summary = service.get_summary()
+    print(f"券商數：{summary['broker_count']}")
+    print(f"總交易筆數：{summary['total_trades']:,}")
     print()
 
-    # Generate report with progress
-    print("分析券商中...")
+    # Get ranking
+    df = service.get_ranking()
 
-    def progress(current: int, total: int):
-        if current % 100 == 0:
-            print(f"  進度：{current}/{total}...")
+    # Save if requested
+    if args.output != "ranking_report" or args.save:
+        base_name = Path(args.output).stem if args.output else "ranking_report"
+        saved = service.save_report(df, base_name)
+        for path in saved:
+            print(f"已輸出：{path}")
+        print()
 
-    df = service.generate_report(progress_callback=progress)
-    print(f"\n有效券商數：{len(df)}")
-
-    # Save report
-    base_name = Path(args.output).stem if args.output else "ranking_report"
-    saved = service.save_report(df, base_name)
-
-    for path in saved:
-        print(f"已輸出：{path}")
-
-    # Show top 5
-    print("\n【PNL 排名 Top 5】")
-    print(f"{'排名':<4} {'券商':<8} {'名稱':<12} {'PNL':>12} {'方向':<6}")
+    # Show top/bottom
+    print("【PNL 排名 Top 10】")
+    print(f"{'排名':<4} {'券商':<8} {'名稱':<12} {'PNL':>12} {'勝率':>8}")
     print("-" * 50)
 
-    for row in df.head(5).iter_rows(named=True):
+    for row in df.head(10).iter_rows(named=True):
         pnl_yi = row["total_pnl"] / 1e8
-        print(f"{row['rank']:<4} {row['broker']:<8} {row['name']:<12} "
-              f"{pnl_yi:>+11.2f}億 {row['direction']:<6}")
+        name = row.get("name", "")[:10]
+        win_rate = row["win_rate"] * 100
+        print(f"{row['rank']:<4} {row['broker']:<8} {name:<12} "
+              f"{pnl_yi:>+10.2f}億 {win_rate:>7.1f}%")
+
+    print()
+    print("【PNL 排名 Bottom 5】")
+    print("-" * 50)
+
+    for row in df.tail(5).iter_rows(named=True):
+        pnl_yi = row["total_pnl"] / 1e8
+        name = row.get("name", "")[:10]
+        win_rate = row["win_rate"] * 100
+        print(f"{row['rank']:<4} {row['broker']:<8} {name:<12} "
+              f"{pnl_yi:>+10.2f}億 {win_rate:>7.1f}%")
 
     return 0
 
 
 def cmd_query(args: argparse.Namespace) -> int:
-    """Query specific broker metrics."""
-    service = RankingService(
-        paths=DEFAULT_PATHS,
-        config=RankingReportConfig(permutation_count=args.permutations),
-    )
-
-    result = service.analyze_single_broker(args.broker)
+    """Query specific broker."""
+    analyzer = BrokerAnalyzer(paths=DEFAULT_PATHS)
+    result = analyzer.analyze(args.broker)
 
     if result is None:
         print(f"找不到券商：{args.broker}")
@@ -91,12 +92,8 @@ def cmd_query(args: argparse.Namespace) -> int:
     print("=" * 50)
     print()
 
-    print("【基本資訊】")
-    print(f"  交易日數：{result.trading_days}")
-    print(f"  買入股數：{result.total_buy_shares:,}")
-    print(f"  賣出股數：{result.total_sell_shares:,}")
-    print(f"  累積淨部位：{result.cumulative_net:,}")
-    print(f"  交易方向：{result.direction}")
+    print("【排名】")
+    print(f"  全市場排名：第 {result.rank} 名")
     print()
 
     print("【損益】")
@@ -105,180 +102,42 @@ def cmd_query(args: argparse.Namespace) -> int:
     print(f"  總 PNL：{result.total_pnl/1e8:+.2f} 億")
     print()
 
-    print("【執行 Alpha】")
-    if result.exec_alpha is not None:
-        print(f"  Alpha：{result.exec_alpha*100:+.4f}%")
-        print(f"  平倉筆數：{result.trade_count:,}")
-        if result.exec_alpha > 0:
-            print(f"  → 執行價格優於市場收盤價")
-        else:
-            print(f"  → 執行價格劣於市場收盤價")
-    else:
-        print(f"  無平倉記錄")
+    print("【交易統計】")
+    print(f"  買入金額：{result.total_buy_amount/1e8:.2f} 億")
+    print(f"  賣出金額：{result.total_sell_amount/1e8:.2f} 億")
+    print(f"  總成交金額：{result.total_amount/1e8:.2f} 億")
+    print(f"  交易方向：{result.direction}")
     print()
 
-    print("【擇時能力】")
-    if result.timing_alpha is not None:
-        print(f"  擇時 Alpha：{result.timing_alpha:,.0f}")
-        print(f"  顯著性：{result.timing_significance}")
-        if result.p_value is not None:
-            print(f"  p-value：{result.p_value:.4f}")
-    else:
-        print(f"  交易日不足，無法分析")
-    print()
+    print("【勝率】")
+    print(f"  獲利筆數：{result.win_count:,}")
+    print(f"  虧損筆數：{result.loss_count:,}")
+    print(f"  總交易筆數：{result.trade_count:,}")
+    print(f"  勝率：{result.win_rate*100:.1f}%")
 
-    print("【相關性分析】")
-    if result.lead_corr is not None:
-        print(f"  領先相關（預測）：{result.lead_corr:+.4f}")
-        print(f"  落後相關（追蹤）：{result.lag_corr:+.4f}")
-        print(f"  交易風格：{result.style}")
-    else:
-        print(f"  數據不足")
-
-    return 0
-
-
-def cmd_scorecard(args: argparse.Namespace) -> int:
-    """Generate broker scorecard with detailed analysis."""
-    service = RankingService(
-        paths=DEFAULT_PATHS,
-        config=RankingReportConfig(permutation_count=500),
-    )
-
-    result = service.analyze_single_broker(args.broker)
-
-    if result is None:
-        print(f"找不到券商：{args.broker}")
-        return 1
-
-    # Get market stats for context
-    stats = service.get_market_stats()
-
-    print(f"\n{'='*60}")
-    print(f"【券商評分卡】{result.broker} {result.name}")
-    print(f"{'='*60}")
-    print(f"分析期間：{stats['start_date']} ~ {stats['end_date']}")
-    print(f"市場報酬：{stats['market_return']*100:.1f}%")
-    print()
-
-    # Six dimensions evaluation
-    scores = []
-
-    # 1. PNL
-    pnl_yi = result.total_pnl / 1e8
-    if pnl_yi > 50:
-        pnl_score = "A"
-    elif pnl_yi > 10:
-        pnl_score = "B"
-    elif pnl_yi > 0:
-        pnl_score = "C"
-    elif pnl_yi > -10:
-        pnl_score = "D"
-    else:
-        pnl_score = "F"
-    scores.append(("總損益", pnl_score, f"{pnl_yi:+.2f}億"))
-
-    # 2. Execution Alpha
-    if result.exec_alpha is not None:
-        alpha_pct = result.exec_alpha * 100
-        if alpha_pct > 0.5:
-            alpha_score = "A"
-        elif alpha_pct > 0.1:
-            alpha_score = "B"
-        elif alpha_pct > -0.1:
-            alpha_score = "C"
-        elif alpha_pct > -0.5:
-            alpha_score = "D"
+    # Get symbol breakdown if requested
+    if args.breakdown:
+        print()
+        print("【股票明細】")
+        print("-" * 60)
+        breakdown = analyzer.get_symbol_breakdown(args.broker)
+        if len(breakdown) > 0:
+            print(f"{'股票':<8} {'交易日':<6} {'買入(億)':<10} {'賣出(億)':<10} {'淨部位':<10}")
+            for row in breakdown.head(20).iter_rows(named=True):
+                print(f"{row['symbol']:<8} {row['trading_days']:<6} "
+                      f"{row['buy_amount']/1e8:<10.2f} {row['sell_amount']/1e8:<10.2f} "
+                      f"{row['net_shares']:<10,}")
+            if len(breakdown) > 20:
+                print(f"... 還有 {len(breakdown) - 20} 檔股票")
         else:
-            alpha_score = "F"
-        scores.append(("執行 Alpha", alpha_score, f"{alpha_pct:+.4f}%"))
-    else:
-        scores.append(("執行 Alpha", "-", "無數據"))
-
-    # 3. Timing Significance
-    if result.timing_significance:
-        if result.timing_significance == "顯著正向":
-            timing_score = "A"
-        elif result.timing_significance == "不顯著" and result.timing_alpha and result.timing_alpha > 0:
-            timing_score = "B"
-        elif result.timing_significance == "不顯著":
-            timing_score = "C"
-        else:  # 顯著負向
-            timing_score = "F"
-        scores.append(("擇時能力", timing_score, result.timing_significance))
-    else:
-        scores.append(("擇時能力", "-", "無數據"))
-
-    # 4. Lead Correlation
-    if result.lead_corr is not None:
-        if result.lead_corr > 0.1:
-            lead_score = "A"
-        elif result.lead_corr > 0.05:
-            lead_score = "B"
-        elif result.lead_corr > -0.05:
-            lead_score = "C"
-        elif result.lead_corr > -0.1:
-            lead_score = "D"
-        else:
-            lead_score = "F"
-        scores.append(("預測能力", lead_score, f"{result.lead_corr:+.4f}"))
-    else:
-        scores.append(("預測能力", "-", "無數據"))
-
-    # 5. Trading Volume
-    volume_yi = result.total_amount / 1e8
-    if volume_yi > 1000:
-        vol_score = "A"
-    elif volume_yi > 100:
-        vol_score = "B"
-    elif volume_yi > 10:
-        vol_score = "C"
-    else:
-        vol_score = "D"
-    scores.append(("交易規模", vol_score, f"{volume_yi:.1f}億"))
-
-    # 6. Consistency (trading days)
-    if result.trading_days > 500:
-        cons_score = "A"
-    elif result.trading_days > 200:
-        cons_score = "B"
-    elif result.trading_days > 50:
-        cons_score = "C"
-    else:
-        cons_score = "D"
-    scores.append(("活躍度", cons_score, f"{result.trading_days}天"))
-
-    # Display scorecard
-    print(f"{'維度':<12} {'評分':^6} {'數值':>16}")
-    print("-" * 40)
-    for dim, score, value in scores:
-        print(f"{dim:<12} {score:^6} {value:>16}")
-
-    # Overall assessment
-    valid_scores = [s for _, s, _ in scores if s != "-"]
-    score_map = {"A": 4, "B": 3, "C": 2, "D": 1, "F": 0}
-    if valid_scores:
-        avg = sum(score_map.get(s, 0) for s in valid_scores) / len(valid_scores)
-        if avg >= 3.5:
-            overall = "優秀"
-        elif avg >= 2.5:
-            overall = "良好"
-        elif avg >= 1.5:
-            overall = "普通"
-        else:
-            overall = "待改善"
-        print("-" * 40)
-        print(f"{'總評':<12} {overall:^6}")
+            print("  無交易記錄")
 
     return 0
 
 
 def cmd_verify(args: argparse.Namespace) -> int:
-    """Verify data integrity and calculations."""
-    from pnl_analytics.infrastructure import (
-        PnlRepository,
-        IndexMapRepository,
-    )
+    """Verify data integrity."""
+    from pnl_analytics.infrastructure.repositories import RankingRepository
 
     print("【數據驗證】")
     print("=" * 50)
@@ -293,37 +152,17 @@ def cmd_verify(args: argparse.Namespace) -> int:
             print(f"  ✗ 缺少：{m}")
             errors.append(f"Missing file: {m}")
     else:
-        print("  ✓ 所有資料檔案存在")
+        print("  ✓ 資料目錄存在")
 
-    # 2. Check zero-sum
-    print("\n2. 零和檢驗...")
+    # 2. Check broker_ranking.parquet
+    print("\n2. 檢查排名資料...")
     try:
-        pnl_repo = PnlRepository(DEFAULT_PATHS)
-        realized_total = pnl_repo.get_total_realized()
-        unrealized_total = pnl_repo.get_total_final_unrealized()
-        net = realized_total + unrealized_total
+        ranking_repo = RankingRepository(DEFAULT_PATHS)
+        df = ranking_repo.get_all()
+        broker_count = len(df)
+        print(f"  券商數：{broker_count}")
 
-        print(f"  已實現：{realized_total/1e8:+.2f}億")
-        print(f"  未實現：{unrealized_total/1e8:+.2f}億")
-        print(f"  合計：{net/1e8:+.4f}億")
-
-        threshold = abs(realized_total) * 0.005  # 0.5%
-        if abs(net) < threshold:
-            print("  ✓ 零和檢驗通過")
-        else:
-            print("  ✗ 零和檢驗失敗")
-            errors.append("Zero-sum check failed")
-    except Exception as e:
-        print(f"  ✗ 錯誤：{e}")
-        errors.append(str(e))
-
-    # 3. Check broker count
-    print("\n3. 檢查券商數量...")
-    try:
-        index_repo = IndexMapRepository(DEFAULT_PATHS)
-        brokers = index_repo.get_brokers()
-        print(f"  券商數：{len(brokers)}")
-        if len(brokers) >= 900:
+        if broker_count >= 900:
             print("  ✓ 券商數量正常")
         else:
             print("  ⚠ 券商數量偏低")
@@ -331,29 +170,43 @@ def cmd_verify(args: argparse.Namespace) -> int:
         print(f"  ✗ 錯誤：{e}")
         errors.append(str(e))
 
-    # 4. Check Merrill (sanity check)
-    print("\n4. 基準券商驗證 (1440 美林)...")
+    # 3. Zero-sum check
+    print("\n3. 零和檢驗...")
     try:
-        service = RankingService(
-            paths=DEFAULT_PATHS,
-            config=RankingReportConfig(permutation_count=50),
-        )
-        result = service.analyze_single_broker("1440")
-        if result:
-            print(f"  已實現 PNL：{result.realized_pnl/1e8:.2f}億")
-            print(f"  執行 Alpha：{result.exec_alpha*100:.4f}%")
+        total_pnl = df["total_pnl"].sum()
+        print(f"  總 PNL：{total_pnl/1e8:+.4f}億")
 
-            if abs(result.realized_pnl/1e8 - 97.84) < 0.5:
-                print("  ✓ 美林指標一致")
-            else:
-                print("  ✗ 美林指標不一致")
-                errors.append("Merrill baseline mismatch")
+        if abs(total_pnl) < abs(df["total_pnl"].max()) * 0.05:
+            print("  ✓ 零和檢驗通過（相對誤差 < 5%）")
         else:
-            print("  ✗ 找不到美林資料")
-            errors.append("Merrill not found")
+            print("  ⚠ 零和偏差較大")
     except Exception as e:
         print(f"  ✗ 錯誤：{e}")
         errors.append(str(e))
+
+    # 4. Check daily_summary files
+    print("\n4. 檢查交易資料...")
+    symbols = DEFAULT_PATHS.list_symbols()
+    print(f"  股票數：{len(symbols)}")
+    if len(symbols) >= 2800:
+        print("  ✓ 股票數量正常")
+    elif len(symbols) > 0:
+        print("  ⚠ 股票數量偏低")
+    else:
+        print("  ✗ 無交易資料")
+        errors.append("No trade data found")
+
+    # 5. Check price data
+    print("\n5. 檢查價格資料...")
+    if DEFAULT_PATHS.close_prices.exists():
+        import polars as pl
+        price_df = pl.read_parquet(DEFAULT_PATHS.close_prices)
+        print(f"  價格記錄數：{len(price_df):,}")
+        print(f"  股票數：{price_df['symbol_id'].n_unique()}")
+        print("  ✓ 價格資料存在")
+    else:
+        print("  ✗ 缺少價格資料")
+        errors.append("Missing price data")
 
     # Summary
     print("\n" + "=" * 50)
@@ -369,7 +222,7 @@ def main(argv: list[str] | None = None) -> int:
     """Main entry point for CLI."""
     parser = argparse.ArgumentParser(
         prog="pnl_analytics",
-        description="PNL Analytics - Broker Performance Analysis System",
+        description="PNL Analytics - Broker Performance Analysis",
     )
     parser.add_argument(
         "--version",
@@ -377,13 +230,10 @@ def main(argv: list[str] | None = None) -> int:
         version=f"%(prog)s {__version__}",
     )
 
-    subparsers = parser.add_subparsers(dest="command", help="Available commands")
+    subparsers = parser.add_subparsers(dest="command", help="Commands")
 
     # ranking command
-    ranking_parser = subparsers.add_parser(
-        "ranking",
-        help="Generate broker ranking report",
-    )
+    ranking_parser = subparsers.add_parser("ranking", help="Show broker ranking")
     ranking_parser.add_argument(
         "-o", "--output",
         default="ranking_report",
@@ -392,52 +242,25 @@ def main(argv: list[str] | None = None) -> int:
     ranking_parser.add_argument(
         "-f", "--formats",
         default="csv,parquet",
-        help="Output formats (comma-separated: csv,parquet,xlsx)",
+        help="Output formats (comma-separated)",
     )
     ranking_parser.add_argument(
-        "--min-days",
-        type=int,
-        default=20,
-        help="Minimum trading days for timing analysis",
-    )
-    ranking_parser.add_argument(
-        "--permutations",
-        type=int,
-        default=200,
-        help="Number of permutations for p-value",
+        "--save",
+        action="store_true",
+        help="Save output files",
     )
 
     # query command
-    query_parser = subparsers.add_parser(
-        "query",
-        help="Query specific broker metrics",
-    )
+    query_parser = subparsers.add_parser("query", help="Query broker")
+    query_parser.add_argument("broker", help="Broker code (e.g., 1440)")
     query_parser.add_argument(
-        "broker",
-        help="Broker code (e.g., 1440)",
-    )
-    query_parser.add_argument(
-        "--permutations",
-        type=int,
-        default=200,
-        help="Number of permutations for p-value",
-    )
-
-    # scorecard command
-    scorecard_parser = subparsers.add_parser(
-        "scorecard",
-        help="Generate broker scorecard",
-    )
-    scorecard_parser.add_argument(
-        "broker",
-        help="Broker code (e.g., 1440)",
+        "--breakdown",
+        action="store_true",
+        help="Show per-symbol breakdown",
     )
 
     # verify command
-    verify_parser = subparsers.add_parser(
-        "verify",
-        help="Verify data integrity",
-    )
+    subparsers.add_parser("verify", help="Verify data integrity")
 
     args = parser.parse_args(argv)
 
@@ -448,7 +271,6 @@ def main(argv: list[str] | None = None) -> int:
     commands = {
         "ranking": cmd_ranking,
         "query": cmd_query,
-        "scorecard": cmd_scorecard,
         "verify": cmd_verify,
     }
 

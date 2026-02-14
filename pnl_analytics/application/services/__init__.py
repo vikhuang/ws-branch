@@ -1,25 +1,24 @@
 """Application Services for PNL Analytics.
 
-Services orchestrate domain logic and repository access
-to implement business use cases.
+Services orchestrate repository access to implement use cases.
 
 Available services:
+- RankingService: Broker ranking report generation
 - BrokerAnalyzer: Single broker analysis
-- RankingService: Full ranking report generation
 """
 
-from pnl_analytics.application.services.broker_analysis import (
-    BrokerAnalyzer,
-    BrokerAnalysisResult,
-)
 from pnl_analytics.application.services.ranking import (
     RankingService,
     RankingReportConfig,
 )
+from pnl_analytics.application.services.broker_analysis import (
+    BrokerAnalyzer,
+    BrokerAnalysisResult,
+)
 
 __all__ = [
-    "BrokerAnalyzer",
-    "BrokerAnalysisResult",
     "RankingService",
     "RankingReportConfig",
+    "BrokerAnalyzer",
+    "BrokerAnalysisResult",
 ]

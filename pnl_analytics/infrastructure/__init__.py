@@ -5,16 +5,19 @@ Contains:
 - repositories: Data access abstractions
 """
 
-from pnl_analytics.infrastructure.config import DataPaths, AnalysisConfig, DEFAULT_PATHS
+from pnl_analytics.infrastructure.config import (
+    DataPaths,
+    AnalysisConfig,
+    DEFAULT_PATHS,
+    DEFAULT_CONFIG,
+)
 from pnl_analytics.infrastructure.repositories import (
     Repository,
     RepositoryError,
     TradeRepository,
-    ClosedTradeRepository,
     PriceRepository,
     BrokerRepository,
-    IndexMapRepository,
-    PnlRepository,
+    RankingRepository,
 )
 
 __all__ = [
@@ -22,13 +25,12 @@ __all__ = [
     "DataPaths",
     "AnalysisConfig",
     "DEFAULT_PATHS",
+    "DEFAULT_CONFIG",
     # Repositories
     "Repository",
     "RepositoryError",
     "TradeRepository",
-    "ClosedTradeRepository",
     "PriceRepository",
     "BrokerRepository",
-    "IndexMapRepository",
-    "PnlRepository",
+    "RankingRepository",
 ]

@@ -3,11 +3,9 @@
 Provides read access to:
 - broker_names.json (broker code to name mapping)
 - 證券商基本資料.xls (official broker master data)
-- index_maps.json (dimension mappings)
 """
 
 import json
-from pathlib import Path
 
 from pnl_analytics.infrastructure.repositories.base import Repository, RepositoryError
 from pnl_analytics.infrastructure.config import DataPaths, DEFAULT_PATHS
@@ -37,7 +35,7 @@ class BrokerRepository(Repository[dict[str, str]]):
             Dict mapping broker code to name
 
         Raises:
-            RepositoryError: If primary file cannot be read
+            RepositoryError: If no broker names found
         """
         if self._cache is not None:
             return self._cache
@@ -50,8 +48,7 @@ class BrokerRepository(Repository[dict[str, str]]):
             try:
                 with open(json_path, encoding="utf-8") as f:
                     broker_names = json.load(f)
-            except Exception as e:
-                # JSON is optional, log warning but continue
+            except Exception:
                 pass
 
         # Override/add from XLS (official data)
@@ -67,15 +64,13 @@ class BrokerRepository(Repository[dict[str, str]]):
                     if code and name:
                         broker_names[code] = name
             except ImportError:
-                # xlrd not installed, skip XLS
                 pass
-            except Exception as e:
-                # XLS read error, log warning but continue
+            except Exception:
                 pass
 
         if not broker_names:
             raise RepositoryError(
-                "No broker names could be loaded from any source",
+                "No broker names found",
                 f"{json_path} or {xls_path}"
             )
 
@@ -104,64 +99,6 @@ class BrokerRepository(Repository[dict[str, str]]):
         """
         all_names = self.get_all()
         return {b: all_names.get(b, "") for b in brokers}
-
-    def clear_cache(self) -> None:
-        """Clear cached data."""
-        self._cache = None
-
-
-class IndexMapRepository(Repository[dict]):
-    """Repository for dimension index mappings.
-
-    Provides access to mappings from string identifiers
-    to integer indices for tensor operations.
-    """
-
-    def __init__(self, paths: DataPaths = DEFAULT_PATHS):
-        self._paths = paths
-        self._cache: dict | None = None
-
-    def get_all(self) -> dict:
-        """Load all index mappings.
-
-        Returns:
-            Dict with 'dates', 'symbols', 'brokers' mappings
-
-        Raises:
-            RepositoryError: If file cannot be read
-        """
-        if self._cache is not None:
-            return self._cache
-
-        path = self._paths.index_maps
-        if not path.exists():
-            raise RepositoryError(f"Index maps file not found", str(path))
-
-        try:
-            with open(path, encoding="utf-8") as f:
-                self._cache = json.load(f)
-            return self._cache
-        except Exception as e:
-            raise RepositoryError(f"Failed to read index maps: {e}", str(path))
-
-    def get_broker_index(self, broker: str) -> int | None:
-        """Get index for a broker code."""
-        return self.get_all().get("brokers", {}).get(broker)
-
-    def get_date_index(self, date: str) -> int | None:
-        """Get index for a date."""
-        return self.get_all().get("dates", {}).get(date)
-
-    def get_brokers(self) -> list[str]:
-        """Get list of all broker codes in index order."""
-        brokers_map = self.get_all().get("brokers", {})
-        # Sort by index to get original order
-        return sorted(brokers_map.keys(), key=lambda b: brokers_map[b])
-
-    def get_dates(self) -> list[str]:
-        """Get list of all dates in index order."""
-        dates_map = self.get_all().get("dates", {})
-        return sorted(dates_map.keys())
 
     def clear_cache(self) -> None:
         """Clear cached data."""

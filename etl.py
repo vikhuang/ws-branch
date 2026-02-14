@@ -1,7 +1,19 @@
-"""ETL: JSON → Parquet with daily trade summary aggregation.
+"""ETL: broker_tx.parquet → daily_summary/{symbol}.parquet
 
-Module A of High-Speed PNL Analytics System (dev.md).
-Transforms nested JSON broker data into tidy Parquet format.
+Transforms supplier broker transaction data into per-symbol daily summaries.
+
+Input:
+    broker_tx.parquet (10GB, 2.08B rows)
+    - symbol_id, date, broker, broker_name, price, buy, sell
+
+Output:
+    daily_summary/{symbol}.parquet
+    - broker (Categorical), date (Date), buy_shares, sell_shares, buy_amount, sell_amount
+    - Sorted by (broker, date) for FIFO optimization
+
+Notes:
+    - Skips proprietary traders (price="-") as they lack price data
+    - Uses streaming to handle 10GB file with ~2GB memory
 """
 
 import sys
@@ -10,71 +22,114 @@ from pathlib import Path
 import polars as pl
 
 
-def json_to_parquet(input_path: Path, output_path: Path | None = None) -> Path:
-    """Transform nested JSON to tidy Parquet with daily aggregates.
-
-    Performs Intraday Aggregation per dev.md:
-    - GroupBy (Date, Symbol, Broker)
-    - Outputs: buy_shares, sell_shares, buy_amount, sell_amount
+def transform_broker_tx(
+    input_path: Path,
+    output_dir: Path,
+    skip_proprietary: bool = True,
+) -> dict[str, int]:
+    """Transform broker_tx.parquet to per-symbol daily summaries.
 
     Args:
-        input_path: Path to input JSON file
-        output_path: Optional output path. Defaults to daily_trade_summary.parquet
+        input_path: Path to broker_tx.parquet
+        output_dir: Output directory for daily_summary/*.parquet
+        skip_proprietary: Skip rows with price="-" (default True)
 
     Returns:
-        Path to output parquet file
+        Dict of {symbol: row_count} for each output file
     """
-    if output_path is None:
-        output_path = input_path.parent / "daily_trade_summary.parquet"
+    output_dir.mkdir(parents=True, exist_ok=True)
 
-    df = pl.read_json(input_path)
+    # Scan parquet (lazy, no memory load)
+    lf = pl.scan_parquet(input_path)
 
-    tidy = (
-        df.explode("data")
-        .with_columns(
-            # Convert UTC timestamp to Taiwan date (UTC+8)
-            # "2026-02-02T16:00:00.000Z" → 2026-02-03 in Taiwan
-            pl.col("date")
-              .str.to_datetime("%Y-%m-%dT%H:%M:%S%.fZ")
-              .dt.convert_time_zone("Asia/Taipei")
-              .dt.date()
-              .cast(pl.String)
-              .alias("date"),
-            # Parse "1,170.00" → 1170.0
-            pl.col("data").struct.field("price")
-              .str.replace_all(",", "")
-              .cast(pl.Float32)
-              .alias("price"),
-            pl.col("data").struct.field("buy").cast(pl.Int32).alias("buy"),
-            pl.col("data").struct.field("sell").cast(pl.Int32).alias("sell"),
+    # Filter out proprietary traders if requested
+    if skip_proprietary:
+        lf = lf.filter(pl.col("price") != "-")
+
+    # Parse price and convert types
+    lf = lf.with_columns([
+        # Parse price: "1,170.00" → 1170.0
+        pl.col("price").str.replace_all(",", "").cast(pl.Float32).alias("price"),
+        # Convert date to Date type (from Datetime)
+        pl.col("date").dt.date().alias("date"),
+    ])
+
+    # Calculate amounts
+    lf = lf.with_columns([
+        (pl.col("buy") * pl.col("price")).alias("buy_amount"),
+        (pl.col("sell") * pl.col("price")).alias("sell_amount"),
+    ])
+
+    # Get unique symbols first (streaming collect)
+    print("Scanning symbols...")
+    symbols = (
+        lf.select("symbol_id")
+        .unique()
+        .collect(engine="streaming")
+    )["symbol_id"].to_list()
+
+    print(f"Found {len(symbols)} symbols")
+
+    # Process each symbol
+    results = {}
+    total = len(symbols)
+
+    for i, symbol in enumerate(symbols):
+        if (i + 1) % 100 == 0 or i == 0:
+            print(f"Processing {i + 1}/{total}: {symbol}")
+
+        # Filter and aggregate for this symbol
+        symbol_df = (
+            lf.filter(pl.col("symbol_id") == symbol)
+            .group_by(["broker", "date"])
+            .agg([
+                pl.col("buy").sum().cast(pl.Int32).alias("buy_shares"),
+                pl.col("sell").sum().cast(pl.Int32).alias("sell_shares"),
+                pl.col("buy_amount").sum().cast(pl.Float32).alias("buy_amount"),
+                pl.col("sell_amount").sum().cast(pl.Float32).alias("sell_amount"),
+            ])
+            .sort(["broker", "date"])
+            .with_columns([
+                pl.col("broker").cast(pl.Categorical),
+            ])
+            .collect(engine="streaming")
         )
-        .with_columns(
-            # Calculate amounts per transaction
-            (pl.col("buy") * pl.col("price")).alias("buy_amount"),
-            (pl.col("sell") * pl.col("price")).alias("sell_amount"),
-            (pl.col("buy") - pl.col("sell")).alias("net_shares_txn"),
-        )
-        .group_by(["date", "symbol_id", "broker"])
-        .agg(
-            pl.col("buy").sum().cast(pl.Int32).alias("buy_shares"),
-            pl.col("sell").sum().cast(pl.Int32).alias("sell_shares"),
-            pl.col("buy_amount").sum().cast(pl.Float32).alias("buy_amount"),
-            pl.col("sell_amount").sum().cast(pl.Float32).alias("sell_amount"),
-        )
-        .sort(["date", "broker"])
-    )
 
-    tidy.write_parquet(output_path)
-    print(f"Written {len(tidy):,} rows to {output_path}")
-    print(f"Schema: {tidy.schema}")
-    return output_path
+        # Write output
+        output_path = output_dir / f"{symbol}.parquet"
+        symbol_df.write_parquet(output_path)
+        results[symbol] = len(symbol_df)
+
+    return results
 
 
-if __name__ == "__main__":
+def main() -> None:
+    """CLI entry point."""
     if len(sys.argv) < 2:
-        print("Usage: python etl.py <input.json> [output.parquet]")
+        print("Usage: python etl.py <broker_tx.parquet> [output_dir]")
+        print("Example: python etl.py data/broker_tx.parquet data/daily_summary")
         sys.exit(1)
 
     input_path = Path(sys.argv[1])
-    output_path = Path(sys.argv[2]) if len(sys.argv) > 2 else None
-    json_to_parquet(input_path, output_path)
+    output_dir = Path(sys.argv[2]) if len(sys.argv) > 2 else Path("data/daily_summary")
+
+    if not input_path.exists():
+        print(f"Error: Input file not found: {input_path}")
+        sys.exit(1)
+
+    print(f"Input:  {input_path}")
+    print(f"Output: {output_dir}/")
+    print()
+
+    results = transform_broker_tx(input_path, output_dir)
+
+    # Summary
+    total_rows = sum(results.values())
+    total_files = len(results)
+    print()
+    print(f"Done! Created {total_files} files with {total_rows:,} total rows")
+    print(f"Output: {output_dir}/")
+
+
+if __name__ == "__main__":
+    main()

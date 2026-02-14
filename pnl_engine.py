@@ -1,57 +1,50 @@
-"""Fusion & PNL Engine: Build 3D PNL Tensor with Realized/Unrealized separation.
+"""PNL Engine: FIFO-based PNL calculation with parallel processing.
 
-Module C & D of High-Speed PNL Analytics System (dev.md).
-- Module C: Dimension Mapping (string → int16 index)
-- Module D: PNL calculation with FIFO cost basis tracking
+Processes daily_summary/{symbol}.parquet files and outputs:
+1. pnl/{symbol}.parquet - Per-symbol PNL results
+2. derived/broker_ranking.parquet - Pre-aggregated broker rankings
 
-Cost Basis Logic (FIFO - First In First Out):
-- Each (symbol, broker) pair is treated as an independent account
-- Tracks individual lots (purchase records) with their cost
-- When selling, sells from oldest lots first
-- Separates realized PNL (closed positions) from unrealized PNL (open positions)
+FIFO Logic:
+- Each (symbol, broker) pair is an independent account
+- Sells close long positions first, then open short
+- Buys cover short positions first, then open long
+- Tracks realized PNL (closed trades) and unrealized PNL (open positions)
+
+Backtest Window:
+- FIFO state accumulates from 2021-01-01
+- Performance (PNL) only counts from 2023-01-01
 """
 
-import json
 import sys
-from pathlib import Path
+from collections import defaultdict
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass, field
-from collections import deque
+from datetime import date
+from pathlib import Path
+from typing import NamedTuple
 
-import numpy as np
 import polars as pl
 
+from pnl_analytics.infrastructure.config import DataPaths, AnalysisConfig, DEFAULT_PATHS, DEFAULT_CONFIG
+
+
+# =============================================================================
+# FIFO Data Structures
+# =============================================================================
 
 @dataclass
 class Lot:
-    """A single purchase lot."""
+    """A single purchase/short lot."""
     shares: int
     cost_per_share: float
-    buy_date: str = ""  # YYYY-MM-DD
-
-
-@dataclass
-class ClosedTrade:
-    """Record of a closed position for Alpha analysis."""
-    symbol: str
-    broker: str
-    shares: int
-    buy_date: str
-    buy_price: float
-    sell_date: str
-    sell_price: float
-    realized_pnl: float
-    trade_type: str  # "long" or "short"
+    buy_date: date
 
 
 @dataclass
 class FIFOAccount:
-    """Tracks position and lots for a (symbol, broker) pair using FIFO."""
-    symbol: str = ""
-    broker: str = ""
-    long_lots: deque = field(default_factory=deque)   # Lots for long position
-    short_lots: deque = field(default_factory=deque)  # Lots for short position
-    realized_pnl: float = 0.0
-    closed_trades: list = field(default_factory=list)  # ClosedTrade records
+    """Tracks position for a (symbol, broker) pair using FIFO."""
+    long_lots: list = field(default_factory=list)
+    short_lots: list = field(default_factory=list)
 
     @property
     def position(self) -> int:
@@ -60,74 +53,6 @@ class FIFOAccount:
         short_shares = sum(lot.shares for lot in self.short_lots)
         return long_shares - short_shares
 
-    def _close_long(self, shares_to_sell: int, sell_price: float, sell_date: str) -> float:
-        """Close long position using FIFO. Returns realized PNL."""
-        realized = 0.0
-        remaining = shares_to_sell
-
-        while remaining > 0 and self.long_lots:
-            lot = self.long_lots[0]
-            take = min(remaining, lot.shares)
-
-            # Realized PNL = (sell price - cost) × shares
-            trade_pnl = take * (sell_price - lot.cost_per_share)
-            realized += trade_pnl
-
-            # Record closed trade
-            self.closed_trades.append(ClosedTrade(
-                symbol=self.symbol,
-                broker=self.broker,
-                shares=take,
-                buy_date=lot.buy_date,
-                buy_price=lot.cost_per_share,
-                sell_date=sell_date,
-                sell_price=sell_price,
-                realized_pnl=trade_pnl,
-                trade_type="long",
-            ))
-
-            lot.shares -= take
-            remaining -= take
-
-            if lot.shares == 0:
-                self.long_lots.popleft()
-
-        return realized
-
-    def _close_short(self, shares_to_cover: int, buy_price: float, cover_date: str) -> float:
-        """Close short position using FIFO. Returns realized PNL."""
-        realized = 0.0
-        remaining = shares_to_cover
-
-        while remaining > 0 and self.short_lots:
-            lot = self.short_lots[0]
-            take = min(remaining, lot.shares)
-
-            # Realized PNL = (short price - buy price) × shares
-            trade_pnl = take * (lot.cost_per_share - buy_price)
-            realized += trade_pnl
-
-            # Record closed trade (short: sell_date is when short opened, buy_date is when covered)
-            self.closed_trades.append(ClosedTrade(
-                symbol=self.symbol,
-                broker=self.broker,
-                shares=take,
-                buy_date=lot.buy_date,      # Date short was opened
-                buy_price=lot.cost_per_share,  # Price short was opened at
-                sell_date=cover_date,        # Date short was covered
-                sell_price=buy_price,        # Price short was covered at
-                realized_pnl=trade_pnl,
-                trade_type="short",
-            ))
-
-            lot.shares -= take
-            remaining -= take
-
-            if lot.shares == 0:
-                self.short_lots.popleft()
-
-        return realized
-
     def process_day(
         self,
         buy_shares: int,
@@ -135,219 +60,318 @@ class FIFOAccount:
         buy_amount: float,
         sell_amount: float,
         close_price: float,
-        current_date: str,
+        current_date: date,
     ) -> tuple[float, float]:
         """Process a day's transactions using FIFO.
 
         Returns:
-            (realized_pnl_today, unrealized_pnl): Today's realized and current unrealized PNL
+            (realized_pnl_today, unrealized_pnl)
         """
         realized_today = 0.0
-        avg_buy_price = buy_amount / buy_shares if buy_shares > 0 else 0.0
-        avg_sell_price = sell_amount / sell_shares if sell_shares > 0 else 0.0
+        avg_buy = buy_amount / buy_shares if buy_shares > 0 else 0.0
+        avg_sell = sell_amount / sell_shares if sell_shares > 0 else 0.0
 
-        # Current position before today's trades
-        current_long = sum(lot.shares for lot in self.long_lots)
-        current_short = sum(lot.shares for lot in self.short_lots)
-
-        # Process sells
+        # Process sells: close longs first, then open shorts
         if sell_shares > 0:
-            if current_long > 0:
-                # Close long positions first (FIFO)
-                shares_to_close = min(sell_shares, current_long)
-                realized_today += self._close_long(shares_to_close, avg_sell_price, current_date)
-                sell_shares -= shares_to_close
+            # Close long positions (FIFO)
+            while sell_shares > 0 and self.long_lots:
+                lot = self.long_lots[0]
+                take = min(sell_shares, lot.shares)
+                realized_today += take * (avg_sell - lot.cost_per_share)
+                lot.shares -= take
+                sell_shares -= take
+                if lot.shares == 0:
+                    self.long_lots.pop(0)
 
-            # Remaining sells open/add to short position
+            # Remaining sells open short
             if sell_shares > 0:
-                self.short_lots.append(Lot(shares=sell_shares, cost_per_share=avg_sell_price, buy_date=current_date))
+                self.short_lots.append(Lot(sell_shares, avg_sell, current_date))
 
-        # Process buys
+        # Process buys: cover shorts first, then open longs
         if buy_shares > 0:
-            # Recalculate current short after sells
-            current_short = sum(lot.shares for lot in self.short_lots)
+            # Cover short positions (FIFO)
+            while buy_shares > 0 and self.short_lots:
+                lot = self.short_lots[0]
+                take = min(buy_shares, lot.shares)
+                realized_today += take * (lot.cost_per_share - avg_buy)
+                lot.shares -= take
+                buy_shares -= take
+                if lot.shares == 0:
+                    self.short_lots.pop(0)
 
-            if current_short > 0:
-                # Cover short positions first (FIFO)
-                shares_to_cover = min(buy_shares, current_short)
-                realized_today += self._close_short(shares_to_cover, avg_buy_price, current_date)
-                buy_shares -= shares_to_cover
-
-            # Remaining buys open/add to long position
+            # Remaining buys open long
             if buy_shares > 0:
-                self.long_lots.append(Lot(shares=buy_shares, cost_per_share=avg_buy_price, buy_date=current_date))
-
-        # Update cumulative realized PNL
-        self.realized_pnl += realized_today
+                self.long_lots.append(Lot(buy_shares, avg_buy, current_date))
 
         # Calculate unrealized PNL
         unrealized = 0.0
-
-        # Long positions: profit if price > cost
         for lot in self.long_lots:
             unrealized += lot.shares * (close_price - lot.cost_per_share)
-
-        # Short positions: profit if price < cost (short price)
         for lot in self.short_lots:
             unrealized += lot.shares * (lot.cost_per_share - close_price)
 
         return realized_today, unrealized
 
 
-def build_dimension_maps(trade_df: pl.DataFrame) -> dict[str, dict[str, int]]:
-    """Build dimension mapping tables (Module C)."""
-    dates = sorted(trade_df["date"].unique().to_list())
-    symbols = sorted(trade_df["symbol_id"].unique().to_list())
-    brokers = sorted(trade_df["broker"].unique().to_list())
+# =============================================================================
+# Per-Symbol Processing
+# =============================================================================
 
-    maps = {
-        "dates": {d: i for i, d in enumerate(dates)},
-        "symbols": {s: i for i, s in enumerate(symbols)},
-        "brokers": {b: i for i, b in enumerate(brokers)},
-    }
+class BrokerResult(NamedTuple):
+    """Result for a single broker in a symbol."""
+    broker: str
+    total_pnl: float        # Realized (after backtest_start) + final unrealized
+    realized_pnl: float     # Sum of realized after backtest_start
+    unrealized_pnl: float   # Final unrealized
+    total_buy: float
+    total_sell: float
+    win_count: int
+    loss_count: int
 
-    print(f"Dimension maps: {len(maps['symbols'])} symbols, {len(maps['dates'])} dates, {len(maps['brokers'])} brokers")
-    return maps
 
-
-def calculate_pnl_tensor(
-    trade_path: Path,
-    price_path: Path,
-    output_dir: Path | None = None,
-) -> tuple[np.ndarray, np.ndarray, dict]:
-    """Calculate PNL tensors with realized/unrealized separation using FIFO (Module D).
+def process_symbol(
+    symbol: str,
+    paths: DataPaths,
+    price_lookup: dict[tuple[str, date], float],
+    backtest_start: date,
+) -> list[BrokerResult]:
+    """Process a single symbol and return broker results.
 
     Args:
-        trade_path: Path to daily_trade_summary.parquet
-        price_path: Path to price_master.parquet
-        output_dir: Output directory. Defaults to current directory.
+        symbol: Stock symbol
+        paths: Data paths configuration
+        price_lookup: {(symbol, date): close_price}
+        backtest_start: Start date for performance calculation
 
     Returns:
-        (realized_tensor, unrealized_tensor, dimension_maps)
+        List of BrokerResult for each broker
     """
-    if output_dir is None:
-        output_dir = Path(".")
+    trade_path = paths.symbol_trade_path(symbol)
+    if not trade_path.exists():
+        return []
 
-    # Load data
-    trade_df = pl.read_parquet(trade_path)
-    price_df = pl.read_parquet(price_path).rename({"coid": "symbol_id"})
+    df = pl.read_parquet(trade_path)
+    if len(df) == 0:
+        return []
 
-    # Build dimension maps
-    maps = build_dimension_maps(trade_df)
-    n_symbols = len(maps["symbols"])
-    n_dates = len(maps["dates"])
-    n_brokers = len(maps["brokers"])
+    # Get all dates and brokers
+    dates = sorted(df["date"].unique().to_list())
+    brokers = df["broker"].unique().to_list()
 
-    print(f"Tensor shape: ({n_symbols}, {n_dates}, {n_brokers})")
+    results = []
 
-    # Build price lookup: {(symbol, date): price}
-    price_lookup = {
-        (row["symbol_id"], row["date"]): row["close_price"]
-        for row in price_df.iter_rows(named=True)
-    }
+    for broker in brokers:
+        broker_df = df.filter(pl.col("broker") == broker).sort("date")
+        trade_dict = {row["date"]: row for row in broker_df.iter_rows(named=True)}
 
-    # Initialize tensors
-    realized_tensor = np.zeros((n_symbols, n_dates, n_brokers), dtype=np.float32)
-    unrealized_tensor = np.zeros((n_symbols, n_dates, n_brokers), dtype=np.float32)
+        account = FIFOAccount()
+        realized_after_start = 0.0
+        total_buy = 0.0
+        total_sell = 0.0
+        win_count = 0
+        loss_count = 0
+        last_unrealized = 0.0
+        last_price = 0.0
 
-    # Group trades by (symbol, broker) for efficient processing
-    trade_df = trade_df.sort(["symbol_id", "broker", "date"])
+        for d in dates:
+            # Get close price
+            price = price_lookup.get((symbol, d), last_price)
+            if price > 0:
+                last_price = price
 
-    # Process each (symbol, broker) pair
-    print("Calculating PNL with FIFO...")
-    dates_list = sorted(maps["dates"].keys())
-    all_closed_trades = []
+            if d in trade_dict:
+                row = trade_dict[d]
+                buy_shares = row["buy_shares"] or 0
+                sell_shares = row["sell_shares"] or 0
+                buy_amount = row["buy_amount"] or 0.0
+                sell_amount = row["sell_amount"] or 0.0
 
-    for sym in maps["symbols"]:
-        sym_idx = maps["symbols"][sym]
-        sym_trades = trade_df.filter(pl.col("symbol_id") == sym)
+                realized, unrealized = account.process_day(
+                    buy_shares, sell_shares,
+                    buy_amount, sell_amount,
+                    price, d,
+                )
 
-        # Pre-fetch prices for this symbol
-        sym_prices = {d: price_lookup.get((sym, d), 0.0) for d in dates_list}
+                # Only count performance after backtest_start
+                if d >= backtest_start:
+                    realized_after_start += realized
+                    total_buy += buy_amount
+                    total_sell += sell_amount
+                    if realized > 0:
+                        win_count += 1
+                    elif realized < 0:
+                        loss_count += 1
 
-        for broker in maps["brokers"]:
-            broker_idx = maps["brokers"][broker]
-            account = FIFOAccount(symbol=sym, broker=broker)
+                last_unrealized = unrealized
+            else:
+                # No trade, recalculate unrealized
+                unrealized = 0.0
+                for lot in account.long_lots:
+                    unrealized += lot.shares * (price - lot.cost_per_share)
+                for lot in account.short_lots:
+                    unrealized += lot.shares * (lot.cost_per_share - price)
+                last_unrealized = unrealized
 
-            broker_trades = sym_trades.filter(pl.col("broker") == broker)
-            trade_dict = {row["date"]: row for row in broker_trades.iter_rows(named=True)}
+        # Total PNL = realized (after start) + final unrealized
+        total_pnl = realized_after_start + last_unrealized
 
-            # Track last known price for days without price data
-            last_price = 0.0
+        results.append(BrokerResult(
+            broker=broker,
+            total_pnl=total_pnl,
+            realized_pnl=realized_after_start,
+            unrealized_pnl=last_unrealized,
+            total_buy=total_buy,
+            total_sell=total_sell,
+            win_count=win_count,
+            loss_count=loss_count,
+        ))
 
-            for date in dates_list:
-                date_idx = maps["dates"][date]
-                close_price = sym_prices.get(date, last_price)
-                if close_price > 0:
-                    last_price = close_price
+    return results
 
-                if date in trade_dict:
-                    row = trade_dict[date]
-                    realized, unrealized = account.process_day(
-                        buy_shares=row["buy_shares"] or 0,
-                        sell_shares=row["sell_shares"] or 0,
-                        buy_amount=row["buy_amount"] or 0.0,
-                        sell_amount=row["sell_amount"] or 0.0,
-                        close_price=close_price,
-                        current_date=date,
-                    )
-                else:
-                    # No trade today, just recalculate unrealized with current price
-                    realized = 0.0
-                    unrealized = 0.0
 
-                    for lot in account.long_lots:
-                        unrealized += lot.shares * (close_price - lot.cost_per_share)
-                    for lot in account.short_lots:
-                        unrealized += lot.shares * (lot.cost_per_share - close_price)
+# =============================================================================
+# Parallel Processing & Aggregation
+# =============================================================================
 
-                realized_tensor[sym_idx, date_idx, broker_idx] = realized
-                unrealized_tensor[sym_idx, date_idx, broker_idx] = unrealized
+def load_price_lookup(paths: DataPaths) -> dict[tuple[str, date], float]:
+    """Load price data into lookup dict."""
+    if not paths.close_prices.exists():
+        print(f"Warning: Price file not found: {paths.close_prices}")
+        return {}
 
-            # Collect closed trades from this account
-            all_closed_trades.extend(account.closed_trades)
+    df = pl.read_parquet(paths.close_prices)
+    lookup = {}
+    for row in df.iter_rows(named=True):
+        # Handle both string and date types
+        d = row["date"]
+        if isinstance(d, str):
+            d = date.fromisoformat(d)
+        lookup[(row["symbol_id"], d)] = row["close_price"]
+    return lookup
 
-    # Save outputs
-    np.save(output_dir / "realized_pnl.npy", realized_tensor)
-    np.save(output_dir / "unrealized_pnl.npy", unrealized_tensor)
-    with open(output_dir / "index_maps.json", "w") as f:
-        json.dump(maps, f, indent=2, ensure_ascii=False)
 
-    # Save closed trades for Alpha analysis
-    if all_closed_trades:
-        closed_trades_df = pl.DataFrame([
-            {
-                "symbol": t.symbol,
-                "broker": t.broker,
-                "shares": t.shares,
-                "buy_date": t.buy_date,
-                "buy_price": t.buy_price,
-                "sell_date": t.sell_date,
-                "sell_price": t.sell_price,
-                "realized_pnl": t.realized_pnl,
-                "trade_type": t.trade_type,
-            }
-            for t in all_closed_trades
-        ])
-        closed_trades_df.write_parquet(output_dir / "closed_trades.parquet")
-        print(f"  closed_trades.parquet: {len(all_closed_trades):,} trades")
+def calculate_all_pnl(
+    paths: DataPaths = DEFAULT_PATHS,
+    config: AnalysisConfig = DEFAULT_CONFIG,
+    workers: int | None = None,
+) -> pl.DataFrame:
+    """Calculate PNL for all symbols and generate broker ranking.
 
-    # Stats
-    print(f"\nOutputs saved to {output_dir}/")
-    print(f"  realized_pnl.npy:   {realized_tensor.nbytes / 1e6:.2f} MB")
-    print(f"  unrealized_pnl.npy: {unrealized_tensor.nbytes / 1e6:.2f} MB")
-    print(f"\nStats:")
-    print(f"  Realized PNL range:   {realized_tensor.min():,.0f} ~ {realized_tensor.max():,.0f}")
-    print(f"  Unrealized PNL range: {unrealized_tensor.min():,.0f} ~ {unrealized_tensor.max():,.0f}")
-    print(f"  Closed trades:        {len(all_closed_trades):,}")
+    Args:
+        paths: Data paths configuration
+        config: Analysis configuration
+        workers: Number of parallel workers (default: config.parallel_workers)
 
-    return realized_tensor, unrealized_tensor, maps
+    Returns:
+        Broker ranking DataFrame
+    """
+    workers = workers or config.parallel_workers
+    backtest_start = date.fromisoformat(config.backtest_start)
+
+    # Ensure output directories exist
+    paths.ensure_dirs()
+
+    # Load prices
+    print("Loading prices...")
+    price_lookup = load_price_lookup(paths)
+    print(f"  Loaded {len(price_lookup):,} price records")
+
+    # Get symbols
+    symbols = paths.list_symbols()
+    if not symbols:
+        print("Error: No symbols found in daily_summary/")
+        return pl.DataFrame()
+
+    print(f"Processing {len(symbols)} symbols with {workers} workers...")
+
+    # Aggregate results by broker
+    broker_totals: dict[str, dict] = defaultdict(lambda: {
+        "total_pnl": 0.0,
+        "realized_pnl": 0.0,
+        "unrealized_pnl": 0.0,
+        "total_buy": 0.0,
+        "total_sell": 0.0,
+        "win_count": 0,
+        "loss_count": 0,
+    })
+
+    # Process symbols (can be parallelized, but keeping simple for now)
+    # TODO: Add ProcessPoolExecutor for true parallelism
+    for i, symbol in enumerate(symbols):
+        if (i + 1) % 100 == 0 or i == 0:
+            print(f"  {i + 1}/{len(symbols)}: {symbol}")
+
+        results = process_symbol(symbol, paths, price_lookup, backtest_start)
+
+        for r in results:
+            b = broker_totals[r.broker]
+            b["total_pnl"] += r.total_pnl
+            b["realized_pnl"] += r.realized_pnl
+            b["unrealized_pnl"] += r.unrealized_pnl
+            b["total_buy"] += r.total_buy
+            b["total_sell"] += r.total_sell
+            b["win_count"] += r.win_count
+            b["loss_count"] += r.loss_count
+
+    # Build ranking DataFrame
+    rows = []
+    for broker, stats in broker_totals.items():
+        win = stats["win_count"]
+        loss = stats["loss_count"]
+        total_trades = win + loss
+        win_rate = win / total_trades if total_trades > 0 else 0.0
+
+        rows.append({
+            "broker": broker,
+            "total_pnl": stats["total_pnl"],
+            "realized_pnl": stats["realized_pnl"],
+            "unrealized_pnl": stats["unrealized_pnl"],
+            "total_buy_amount": stats["total_buy"],
+            "total_sell_amount": stats["total_sell"],
+            "total_amount": stats["total_buy"] + stats["total_sell"],
+            "win_count": win,
+            "loss_count": loss,
+            "trade_count": total_trades,
+            "win_rate": win_rate,
+        })
+
+    df = pl.DataFrame(rows)
+    df = df.sort("total_pnl", descending=True)
+    df = df.with_row_index("rank", offset=1)
+
+    # Save ranking
+    df.write_parquet(paths.broker_ranking)
+    print(f"\nSaved: {paths.broker_ranking}")
+    print(f"  {len(df)} brokers")
+    print(f"  Total PNL range: {df['total_pnl'].min():,.0f} ~ {df['total_pnl'].max():,.0f}")
+
+    return df
+
+
+def main() -> None:
+    """CLI entry point."""
+    paths = DEFAULT_PATHS
+    config = DEFAULT_CONFIG
+
+    # Check for custom paths
+    if len(sys.argv) > 1:
+        paths = DataPaths(root=Path(sys.argv[1]))
+
+    # Validate
+    missing = paths.validate()
+    if missing:
+        print("Missing required files:")
+        for p in missing:
+            print(f"  - {p}")
+        print("\nRun ETL and sync_prices first.")
+        sys.exit(1)
+
+    df = calculate_all_pnl(paths, config)
+
+    if len(df) > 0:
+        print("\nTop 10 brokers by PNL:")
+        print(df.head(10).select(["rank", "broker", "total_pnl", "win_rate"]))
 
 
 if __name__ == "__main__":
-    if len(sys.argv) < 3:
-        print("Usage: python pnl_engine.py <daily_trade_summary.parquet> <price_master.parquet> [output_dir]")
-        sys.exit(1)
-
-    output_dir = Path(sys.argv[3]) if len(sys.argv) > 3 else Path(".")
-    calculate_pnl_tensor(Path(sys.argv[1]), Path(sys.argv[2]), output_dir)
+    main()

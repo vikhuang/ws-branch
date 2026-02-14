@@ -1,159 +1,137 @@
-"""PNL Repository: Access to PNL tensor data.
+"""PNL Repository: Access to broker ranking data.
 
-Provides read access to:
-- realized_pnl.npy (3D tensor of realized PNL)
-- unrealized_pnl.npy (3D tensor of unrealized PNL)
+Provides read access to derived/broker_ranking.parquet.
+Contains pre-aggregated broker PNL across all symbols.
 """
 
-from pathlib import Path
-
-import numpy as np
+import polars as pl
 
 from pnl_analytics.infrastructure.repositories.base import Repository, RepositoryError
 from pnl_analytics.infrastructure.config import DataPaths, DEFAULT_PATHS
 
 
-class PnlRepository(Repository[tuple[np.ndarray, np.ndarray]]):
-    """Repository for PNL tensor data.
+class RankingRepository(Repository[pl.DataFrame]):
+    """Repository for broker ranking data.
 
-    Provides access to realized and unrealized PNL tensors.
-
-    Tensor shape: (n_symbols, n_dates, n_brokers)
-    - Axis 0: Symbols (usually just 1 for single-stock analysis)
-    - Axis 1: Dates
-    - Axis 2: Brokers
+    Loads pre-aggregated PNL from derived/broker_ranking.parquet.
 
     Example:
-        >>> repo = PnlRepository()
-        >>> realized, unrealized = repo.get_all()
-        >>> broker_realized = repo.get_broker_realized(108)  # by index
+        >>> repo = RankingRepository()
+        >>> df = repo.get_all()
+        >>> top10 = repo.get_top(10)
+        >>> broker = repo.get_broker("1440")
     """
 
     def __init__(self, paths: DataPaths = DEFAULT_PATHS):
         self._paths = paths
-        self._realized_cache: np.ndarray | None = None
-        self._unrealized_cache: np.ndarray | None = None
+        self._cache: pl.DataFrame | None = None
 
-    def get_all(self) -> tuple[np.ndarray, np.ndarray]:
-        """Load both PNL tensors.
-
-        Returns:
-            Tuple of (realized_pnl, unrealized_pnl) arrays
-
-        Raises:
-            RepositoryError: If files cannot be read
-        """
-        return self.get_realized(), self.get_unrealized()
-
-    def get_realized(self) -> np.ndarray:
-        """Load realized PNL tensor.
+    def get_all(self) -> pl.DataFrame:
+        """Load broker ranking data.
 
         Returns:
-            3D numpy array of daily realized PNL
+            DataFrame with columns: rank, broker, total_pnl,
+            realized_pnl, unrealized_pnl, total_buy_amount,
+            total_sell_amount, total_amount, win_count, loss_count,
+            trade_count, win_rate
 
         Raises:
             RepositoryError: If file cannot be read
         """
-        if self._realized_cache is not None:
-            return self._realized_cache
+        if self._cache is not None:
+            return self._cache
 
-        path = self._paths.realized_pnl
+        path = self._paths.broker_ranking
         if not path.exists():
-            raise RepositoryError(f"Realized PNL file not found", str(path))
+            raise RepositoryError("Broker ranking not found", str(path))
 
         try:
-            self._realized_cache = np.load(path)
-            return self._realized_cache
+            self._cache = pl.read_parquet(path)
+            return self._cache
         except Exception as e:
-            raise RepositoryError(f"Failed to read realized PNL: {e}", str(path))
+            raise RepositoryError(f"Failed to read ranking: {e}", str(path))
 
-    def get_unrealized(self) -> np.ndarray:
-        """Load unrealized PNL tensor.
+    def get_top(self, n: int = 10) -> pl.DataFrame:
+        """Get top N brokers by PNL.
+
+        Args:
+            n: Number of top brokers to return
 
         Returns:
-            3D numpy array of daily unrealized PNL
+            DataFrame with top N brokers
+        """
+        return self.get_all().head(n)
+
+    def get_bottom(self, n: int = 10) -> pl.DataFrame:
+        """Get bottom N brokers by PNL.
+
+        Args:
+            n: Number of bottom brokers to return
+
+        Returns:
+            DataFrame with bottom N brokers
+        """
+        return self.get_all().tail(n)
+
+    def get_broker(self, broker: str) -> pl.DataFrame:
+        """Get ranking for a specific broker.
+
+        Args:
+            broker: Broker code (e.g., "1440")
+
+        Returns:
+            Single-row DataFrame for the broker
 
         Raises:
-            RepositoryError: If file cannot be read
+            RepositoryError: If broker not found
         """
-        if self._unrealized_cache is not None:
-            return self._unrealized_cache
+        df = self.get_all().filter(pl.col("broker") == broker)
+        if len(df) == 0:
+            raise RepositoryError(f"Broker {broker} not found in ranking")
+        return df
 
-        path = self._paths.unrealized_pnl
-        if not path.exists():
-            raise RepositoryError(f"Unrealized PNL file not found", str(path))
+    def get_broker_rank(self, broker: str) -> int | None:
+        """Get rank for a specific broker.
 
+        Args:
+            broker: Broker code
+
+        Returns:
+            Rank (1-indexed) or None if not found
+        """
         try:
-            self._unrealized_cache = np.load(path)
-            return self._unrealized_cache
-        except Exception as e:
-            raise RepositoryError(f"Failed to read unrealized PNL: {e}", str(path))
+            df = self.get_broker(broker)
+            return df["rank"].item()
+        except RepositoryError:
+            return None
 
-    def get_broker_realized(self, broker_idx: int, symbol_idx: int = 0) -> np.ndarray:
-        """Get realized PNL time series for a broker.
-
-        Args:
-            broker_idx: Broker index in tensor
-            symbol_idx: Symbol index (default 0)
-
-        Returns:
-            1D array of daily realized PNL
-        """
-        realized = self.get_realized()
-        return realized[symbol_idx, :, broker_idx]
-
-    def get_broker_unrealized(self, broker_idx: int, symbol_idx: int = 0) -> np.ndarray:
-        """Get unrealized PNL time series for a broker.
+    def get_broker_pnl(self, broker: str) -> float | None:
+        """Get total PNL for a specific broker.
 
         Args:
-            broker_idx: Broker index in tensor
-            symbol_idx: Symbol index (default 0)
+            broker: Broker code
 
         Returns:
-            1D array of daily unrealized PNL
+            Total PNL or None if not found
         """
-        unrealized = self.get_unrealized()
-        return unrealized[symbol_idx, :, broker_idx]
+        try:
+            df = self.get_broker(broker)
+            return df["total_pnl"].item()
+        except RepositoryError:
+            return None
 
-    def get_broker_total_realized(self, broker_idx: int, symbol_idx: int = 0) -> float:
-        """Get total realized PNL for a broker.
+    def list_brokers(self) -> list[str]:
+        """Get list of all brokers in ranking order."""
+        return self.get_all()["broker"].to_list()
 
-        Args:
-            broker_idx: Broker index in tensor
-            symbol_idx: Symbol index (default 0)
+    def get_total_pnl(self) -> float:
+        """Get total PNL across all brokers."""
+        return self.get_all()["total_pnl"].sum()
 
-        Returns:
-            Sum of all realized PNL
-        """
-        return float(self.get_broker_realized(broker_idx, symbol_idx).sum())
-
-    def get_broker_final_unrealized(self, broker_idx: int, symbol_idx: int = 0) -> float:
-        """Get final unrealized PNL for a broker.
-
-        Args:
-            broker_idx: Broker index in tensor
-            symbol_idx: Symbol index (default 0)
-
-        Returns:
-            Unrealized PNL at the last date
-        """
-        unrealized = self.get_broker_unrealized(broker_idx, symbol_idx)
-        return float(unrealized[-1])
-
-    def get_total_realized(self) -> float:
-        """Get total realized PNL across all brokers."""
-        return float(self.get_realized().sum())
-
-    def get_total_final_unrealized(self) -> float:
-        """Get total final unrealized PNL across all brokers."""
-        unrealized = self.get_unrealized()
-        return float(unrealized[0, -1, :].sum())
-
-    def get_shape(self) -> tuple[int, int, int]:
-        """Get tensor shape (n_symbols, n_dates, n_brokers)."""
-        return self.get_realized().shape
+    def get_broker_count(self) -> int:
+        """Get number of brokers in ranking."""
+        return len(self.get_all())
 
     def clear_cache(self) -> None:
         """Clear cached data."""
-        self._realized_cache = None
-        self._unrealized_cache = None
+        self._cache = None

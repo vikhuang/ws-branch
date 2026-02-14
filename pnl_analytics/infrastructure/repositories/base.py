@@ -4,7 +4,6 @@ Repository Pattern provides:
 - Abstraction over data sources (files, databases, APIs)
 - Caching for performance
 - Consistent error handling
-- Easy testing via dependency injection
 """
 
 from abc import ABC, abstractmethod
@@ -14,24 +13,11 @@ T = TypeVar("T")
 
 
 class Repository(ABC, Generic[T]):
-    """Abstract base class for repositories.
-
-    All repositories should:
-    1. Provide a get_all() method
-    2. Handle caching internally
-    3. Raise RepositoryError on failures
-    """
+    """Abstract base class for repositories."""
 
     @abstractmethod
     def get_all(self) -> T:
-        """Retrieve all data from the repository.
-
-        Returns:
-            The complete dataset
-
-        Raises:
-            RepositoryError: If data cannot be loaded
-        """
+        """Retrieve all data."""
         pass
 
     @abstractmethod

@@ -21,13 +21,9 @@
 │ price/            │
 │ close_prices.parquet  收盤價 (~50 MB)
 └────────┬──────────┘
-         │ pnl_engine.py (12核並行, ~5分鐘)
+         │ pnl_engine.py (pre-partition + 12核並行, ~5分鐘)
          ▼
 ┌───────────────────┐
-│ pnl/              │  PNL 結果 (by symbol)
-│   ├── 2330.parquet│
-│   └── ...         │
-├───────────────────┤
 │ derived/          │  預聚合表 (查詢用)
 │ broker_ranking.parquet  (~100 KB)
 └───────────────────┘
@@ -68,10 +64,16 @@
 
 | 方案 | 時間 | 說明 |
 |------|------|------|
-| 單線程 Python | 83 分鐘 | 2839 × 1.75s |
-| **Python 多進程** | **~5 分鐘** | 12 核並行處理 |
+| 單線程 Python | ~10 分鐘 | 2839 symbols 逐一處理 |
+| **Python 多進程** | **~5 分鐘** | Pre-partition + 12 核並行 |
 
-正確方向是**並行化 + By Symbol 分檔**。
+**為什麼不能直接用 ProcessPoolExecutor？**
+
+`price_lookup` 有 260 萬筆，直接傳給 12 個 worker 需要 pickle 序列化 12 次，
+IPC 開銷遠大於計算本身。解法是 **pre-partition**：按 symbol 預分割，
+每個 worker 只收到 ~1,200 筆（自己那支股票的價格），序列化成本可忽略。
+
+詳見 `ref.md`。
 
 ## 資料欄位說明
 

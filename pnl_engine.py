@@ -134,8 +134,8 @@ class BrokerResult(NamedTuple):
 def process_symbol(
     symbol: str,
     paths: DataPaths,
-    price_lookup: dict[tuple[str, date], float],
-    returns_lookup: dict[tuple[str, date], float],
+    sym_prices: dict[date, float],
+    sym_returns: dict[date, float],
     backtest_start: date,
 ) -> list[BrokerResult]:
     """Process a single symbol and return broker results.
@@ -143,8 +143,8 @@ def process_symbol(
     Args:
         symbol: Stock symbol
         paths: Data paths configuration
-        price_lookup: {(symbol, date): close_price}
-        returns_lookup: {(symbol, date): daily_return}
+        sym_prices: {date: close_price} for this symbol only
+        sym_returns: {date: daily_return} for this symbol only
         backtest_start: Start date for performance calculation
 
     Returns:
@@ -162,15 +162,14 @@ def process_symbol(
     dates = sorted(df["date"].unique().to_list())
     brokers = df["broker"].unique().to_list()
 
-    # Filter dates for timing alpha (only after backtest_start)
-    backtest_dates = [d for d in dates if d >= backtest_start]
+    # Pre-build trade lookup: {(broker, date): row} - ONE pass through DataFrame
+    trade_lookup: dict[tuple[str, date], dict] = {}
+    for row in df.iter_rows(named=True):
+        trade_lookup[(row["broker"], row["date"])] = row
 
     results = []
 
     for broker in brokers:
-        broker_df = df.filter(pl.col("broker") == broker).sort("date")
-        trade_dict = {row["date"]: row for row in broker_df.iter_rows(named=True)}
-
         account = FIFOAccount()
         realized_after_start = 0.0
         total_buy = 0.0
@@ -184,12 +183,12 @@ def process_symbol(
 
         for d in dates:
             # Get close price
-            price = price_lookup.get((symbol, d), last_price)
+            price = sym_prices.get(d, last_price)
             if price > 0:
                 last_price = price
 
-            if d in trade_dict:
-                row = trade_dict[d]
+            row = trade_lookup.get((broker, d))
+            if row:
                 buy_shares = row["buy_shares"] or 0
                 sell_shares = row["sell_shares"] or 0
                 buy_amount = row["buy_amount"] or 0.0
@@ -209,7 +208,7 @@ def process_symbol(
 
                     # Collect for timing alpha
                     net_buy_series.append(buy_shares - sell_shares)
-                    return_series.append(returns_lookup.get((symbol, d), 0.0))
+                    return_series.append(sym_returns.get(d, 0.0))
 
                 last_unrealized = unrealized
             else:
@@ -224,7 +223,7 @@ def process_symbol(
                 # Still collect for timing alpha (net_buy = 0 on no-trade days)
                 if d >= backtest_start:
                     net_buy_series.append(0)
-                    return_series.append(returns_lookup.get((symbol, d), 0.0))
+                    return_series.append(sym_returns.get(d, 0.0))
 
         # Total PNL = realized (after start) + final unrealized
         total_pnl = realized_after_start + last_unrealized
@@ -333,7 +332,18 @@ def calculate_all_pnl(
         print("Error: No symbols found in daily_summary/")
         return pl.DataFrame()
 
-    print(f"Processing {len(symbols)} symbols...")
+    # Pre-partition prices and returns by symbol
+    # Each worker only receives ~1,200 entries instead of 3,400,000
+    print("Pre-partitioning price data...")
+    prices_by_sym: dict[str, dict[date, float]] = defaultdict(dict)
+    for (sym, d), price in price_lookup.items():
+        prices_by_sym[sym][d] = price
+
+    returns_by_sym: dict[str, dict[date, float]] = defaultdict(dict)
+    for (sym, d), ret in returns_lookup.items():
+        returns_by_sym[sym][d] = ret
+
+    print(f"Processing {len(symbols)} symbols with {workers} workers...")
 
     # Aggregate results by broker
     broker_totals: dict[str, dict] = defaultdict(lambda: {
@@ -345,21 +355,33 @@ def calculate_all_pnl(
         "timing_alpha": 0.0,
     })
 
-    # Process symbols
-    for i, symbol in enumerate(symbols):
-        if (i + 1) % 100 == 0 or i == 0:
-            print(f"  {i + 1}/{len(symbols)}: {symbol}")
+    # Parallel processing with pre-partitioned data
+    completed = 0
+    with ProcessPoolExecutor(max_workers=workers) as executor:
+        futures = {
+            executor.submit(
+                process_symbol,
+                symbol, paths,
+                prices_by_sym[symbol],
+                returns_by_sym[symbol],
+                backtest_start,
+            ): symbol
+            for symbol in symbols
+        }
 
-        results = process_symbol(symbol, paths, price_lookup, returns_lookup, backtest_start)
+        for future in as_completed(futures):
+            completed += 1
+            if completed % 500 == 0 or completed == len(symbols):
+                print(f"  {completed}/{len(symbols)} symbols done")
 
-        for r in results:
-            b = broker_totals[r.broker]
-            b["total_pnl"] += r.total_pnl
-            b["realized_pnl"] += r.realized_pnl
-            b["unrealized_pnl"] += r.unrealized_pnl
-            b["total_buy"] += r.total_buy
-            b["total_sell"] += r.total_sell
-            b["timing_alpha"] += r.timing_alpha
+            for r in future.result():
+                b = broker_totals[r.broker]
+                b["total_pnl"] += r.total_pnl
+                b["realized_pnl"] += r.realized_pnl
+                b["unrealized_pnl"] += r.unrealized_pnl
+                b["total_buy"] += r.total_buy
+                b["total_sell"] += r.total_sell
+                b["timing_alpha"] += r.timing_alpha
 
     # Build ranking DataFrame
     rows = []

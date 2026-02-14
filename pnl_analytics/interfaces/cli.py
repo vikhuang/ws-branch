@@ -39,7 +39,6 @@ def cmd_ranking(args: argparse.Namespace) -> int:
     # Get summary
     summary = service.get_summary()
     print(f"券商數：{summary['broker_count']}")
-    print(f"總交易筆數：{summary['total_trades']:,}")
     print()
 
     # Get ranking
@@ -55,26 +54,26 @@ def cmd_ranking(args: argparse.Namespace) -> int:
 
     # Show top/bottom
     print("【PNL 排名 Top 10】")
-    print(f"{'排名':<4} {'券商':<8} {'名稱':<12} {'PNL':>12} {'勝率':>8}")
-    print("-" * 50)
+    print(f"{'排名':<4} {'券商':<8} {'名稱':<12} {'PNL':>12} {'Alpha':>14}")
+    print("-" * 56)
 
     for row in df.head(10).iter_rows(named=True):
         pnl_yi = row["total_pnl"] / 1e8
+        alpha_m = row["timing_alpha"] / 1e6
         name = row.get("name", "")[:10]
-        win_rate = row["win_rate"] * 100
         print(f"{row['rank']:<4} {row['broker']:<8} {name:<12} "
-              f"{pnl_yi:>+10.2f}億 {win_rate:>7.1f}%")
+              f"{pnl_yi:>+10.2f}億 {alpha_m:>+12.1f}M")
 
     print()
     print("【PNL 排名 Bottom 5】")
-    print("-" * 50)
+    print("-" * 56)
 
     for row in df.tail(5).iter_rows(named=True):
         pnl_yi = row["total_pnl"] / 1e8
+        alpha_m = row["timing_alpha"] / 1e6
         name = row.get("name", "")[:10]
-        win_rate = row["win_rate"] * 100
         print(f"{row['rank']:<4} {row['broker']:<8} {name:<12} "
-              f"{pnl_yi:>+10.2f}億 {win_rate:>7.1f}%")
+              f"{pnl_yi:>+10.2f}億 {alpha_m:>+12.1f}M")
 
     return 0
 
@@ -109,11 +108,15 @@ def cmd_query(args: argparse.Namespace) -> int:
     print(f"  交易方向：{result.direction}")
     print()
 
-    print("【勝率】")
-    print(f"  獲利筆數：{result.win_count:,}")
-    print(f"  虧損筆數：{result.loss_count:,}")
-    print(f"  總交易筆數：{result.trade_count:,}")
-    print(f"  勝率：{result.win_rate*100:.1f}%")
+    print("【擇時能力】")
+    alpha_m = result.timing_alpha / 1e6
+    print(f"  Timing Alpha：{alpha_m:+.1f}M")
+    if result.timing_alpha > 0:
+        print("  解讀：買超後漲、賣超後跌（擇時正確）")
+    elif result.timing_alpha < 0:
+        print("  解讀：買超後跌、賣超後漲（擇時錯誤）")
+    else:
+        print("  解讀：無明顯擇時能力")
 
     # Get symbol breakdown if requested
     if args.breakdown:

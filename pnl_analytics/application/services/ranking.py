@@ -164,8 +164,6 @@ class RankingService:
                 elif col_name in ("total_pnl", "realized_pnl", "unrealized_pnl",
                                   "total_buy_amount", "total_sell_amount", "total_amount"):
                     worksheet.write(row_idx, col_idx, value, pnl_fmt)
-                elif col_name == "win_rate":
-                    worksheet.write(row_idx, col_idx, value, pct_fmt)
                 else:
                     worksheet.write(row_idx, col_idx, value)
 
@@ -184,8 +182,6 @@ class RankingService:
             "total_pnl": df["total_pnl"].sum(),
             "total_realized": df["realized_pnl"].sum(),
             "total_unrealized": df["unrealized_pnl"].sum(),
-            "total_trades": df["trade_count"].sum(),
-            "avg_win_rate": df["win_rate"].mean(),
             "top_pnl": df["total_pnl"].max(),
             "bottom_pnl": df["total_pnl"].min(),
         }

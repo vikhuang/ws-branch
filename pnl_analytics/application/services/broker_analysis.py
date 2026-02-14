@@ -35,10 +35,7 @@ class BrokerAnalysisResult:
     total_buy_amount: float
     total_sell_amount: float
     total_amount: float
-    win_count: int
-    loss_count: int
-    trade_count: int
-    win_rate: float
+    timing_alpha: float
 
     # Derived
     direction: str  # "做多", "做空", "中性"
@@ -55,10 +52,7 @@ class BrokerAnalysisResult:
             "total_buy_amount": self.total_buy_amount,
             "total_sell_amount": self.total_sell_amount,
             "total_amount": self.total_amount,
-            "win_count": self.win_count,
-            "loss_count": self.loss_count,
-            "trade_count": self.trade_count,
-            "win_rate": self.win_rate,
+            "timing_alpha": self.timing_alpha,
             "direction": self.direction,
         }
 
@@ -121,10 +115,7 @@ class BrokerAnalyzer:
             total_buy_amount=row["total_buy_amount"],
             total_sell_amount=row["total_sell_amount"],
             total_amount=row["total_amount"],
-            win_count=row["win_count"],
-            loss_count=row["loss_count"],
-            trade_count=row["trade_count"],
-            win_rate=row["win_rate"],
+            timing_alpha=row["timing_alpha"],
             direction=direction,
         )
 

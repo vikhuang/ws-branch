@@ -32,8 +32,7 @@ class RankingRepository(Repository[pl.DataFrame]):
         Returns:
             DataFrame with columns: rank, broker, total_pnl,
             realized_pnl, unrealized_pnl, total_buy_amount,
-            total_sell_amount, total_amount, win_count, loss_count,
-            trade_count, win_rate
+            total_sell_amount, total_amount, timing_alpha
 
         Raises:
             RepositoryError: If file cannot be read

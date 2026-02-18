@@ -3,8 +3,11 @@
 For a given stock, measures whether historically profitable brokers
 are buying or selling, across multiple time windows.
 
+Uses **per-stock** PNL ranking (data/pnl/{symbol}.parquet), NOT global ranking.
+Rank 1 = broker that made the most money trading THIS specific stock.
+
 Signal: sum of PNL ranks for the top 15 net buyers/sellers.
-Lower sum = skilled traders are active on that side.
+Lower sum = skilled traders (on this stock) are active on that side.
 """
 
 from dataclasses import dataclass
@@ -15,7 +18,6 @@ import polars as pl
 from pnl_analytics.infrastructure.config import DataPaths, DEFAULT_PATHS
 from pnl_analytics.infrastructure.repositories import (
     TradeRepository,
-    RankingRepository,
     BrokerRepository,
     RepositoryError,
 )
@@ -82,8 +84,19 @@ class SymbolAnalyzer:
     def __init__(self, paths: DataPaths = DEFAULT_PATHS):
         self._paths = paths
         self._trade_repo = TradeRepository(paths)
-        self._ranking_repo = RankingRepository(paths)
         self._broker_repo = BrokerRepository(paths)
+
+    def _load_symbol_ranking(self, symbol: str) -> pl.DataFrame | None:
+        """Load per-stock PNL ranking from data/pnl/{symbol}.parquet.
+
+        Returns:
+            DataFrame with columns: rank, broker, total_pnl, realized_pnl,
+            unrealized_pnl, timing_alpha. Or None if not found.
+        """
+        path = self._paths.symbol_pnl_path(symbol)
+        if not path.exists():
+            return None
+        return pl.read_parquet(path)
 
     def analyze(
         self,
@@ -91,6 +104,8 @@ class SymbolAnalyzer:
         windows: tuple[int, ...] = DEFAULT_WINDOWS,
     ) -> SymbolAnalysisResult | None:
         """Compute smart money signals for all time windows.
+
+        Uses per-stock PNL ranking (not global market ranking).
 
         Args:
             symbol: Stock symbol (e.g., "2330")
@@ -104,7 +119,11 @@ class SymbolAnalyzer:
         except RepositoryError:
             return None
 
-        ranking_df = self._ranking_repo.get_all().select(
+        ranking_df = self._load_symbol_ranking(symbol)
+        if ranking_df is None:
+            return None
+
+        ranking_df = ranking_df.select(
             "broker", "rank", "realized_pnl", "unrealized_pnl"
         )
 
@@ -134,6 +153,8 @@ class SymbolAnalyzer:
     ) -> tuple[pl.DataFrame, pl.DataFrame]:
         """Get top N net buyers and sellers for a specific window.
 
+        Uses per-stock PNL ranking (not global market ranking).
+
         Args:
             symbol: Stock symbol
             window: Number of trading days
@@ -144,9 +165,11 @@ class SymbolAnalyzer:
             broker, name, net_buy, rank
         """
         trade_df = self._trade_repo.get_symbol(symbol)
-        ranking_df = self._ranking_repo.get_all().select(
-            "broker", "rank"
-        )
+        ranking_df = self._load_symbol_ranking(symbol)
+        if ranking_df is None:
+            empty = pl.DataFrame(schema={"broker": pl.Utf8, "name": pl.Utf8, "net_buy": pl.Int64, "rank": pl.UInt32})
+            return empty, empty
+        ranking_df = ranking_df.select("broker", "rank")
 
         all_dates = sorted(trade_df["date"].unique().to_list())
         window_dates = all_dates[-window:]

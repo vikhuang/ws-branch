@@ -370,11 +370,31 @@ def calculate_all_pnl(
         }
 
         for future in as_completed(futures):
+            symbol = futures[future]
             completed += 1
             if completed % 500 == 0 or completed == len(symbols):
                 print(f"  {completed}/{len(symbols)} symbols done")
 
-            for r in future.result():
+            symbol_results = future.result()
+
+            # Save per-symbol PNL
+            if symbol_results:
+                sym_rows = []
+                for r in symbol_results:
+                    sym_rows.append({
+                        "broker": r.broker,
+                        "total_pnl": r.total_pnl,
+                        "realized_pnl": r.realized_pnl,
+                        "unrealized_pnl": r.unrealized_pnl,
+                        "timing_alpha": r.timing_alpha,
+                    })
+                sym_df = pl.DataFrame(sym_rows)
+                sym_df = sym_df.sort("total_pnl", descending=True)
+                sym_df = sym_df.with_row_index("rank", offset=1)
+                sym_df.write_parquet(paths.symbol_pnl_path(symbol))
+
+            # Aggregate to broker totals
+            for r in symbol_results:
                 b = broker_totals[r.broker]
                 b["total_pnl"] += r.total_pnl
                 b["realized_pnl"] += r.realized_pnl

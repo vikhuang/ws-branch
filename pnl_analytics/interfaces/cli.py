@@ -3,11 +3,13 @@
 Provides CLI access to analytics functions:
 - ranking: Show broker ranking
 - query: Query specific broker
+- symbol: Analyze smart money flow for a stock
 - verify: Verify data integrity
 
 Usage:
     python -m pnl_analytics ranking [--output FILE]
     python -m pnl_analytics query BROKER
+    python -m pnl_analytics symbol SYMBOL [--detail WINDOW]
     python -m pnl_analytics verify
 """
 
@@ -21,6 +23,7 @@ from pnl_analytics.application import (
     RankingService,
     RankingReportConfig,
     BrokerAnalyzer,
+    SymbolAnalyzer,
 )
 
 
@@ -134,6 +137,59 @@ def cmd_query(args: argparse.Namespace) -> int:
                 print(f"... 還有 {len(breakdown) - 20} 檔股票")
         else:
             print("  無交易記錄")
+
+    return 0
+
+
+def cmd_symbol(args: argparse.Namespace) -> int:
+    """Analyze smart money flow for a stock."""
+    analyzer = SymbolAnalyzer(paths=DEFAULT_PATHS)
+    result = analyzer.analyze(args.symbol)
+
+    if result is None:
+        print(f"找不到股票：{args.symbol}")
+        return 1
+
+    print(f"【{result.symbol}】@ {result.last_date}")
+    print("=" * 60)
+
+    # Summary table
+    print()
+    print("【買賣力道摘要】")
+    print(f"{'窗口':>4}  {'買方力道':>8}  {'賣方力道':>8}  {'活躍券商':>8}  {'已實現(億)':>10}  {'未實現(億)':>10}")
+    print("-" * 62)
+
+    for s in result.signals:
+        r_yi = s.realized_pnl / 1e8
+        u_yi = s.unrealized_pnl / 1e8
+        print(f"{s.window:>3}日  {s.buy_rank_sum:>8,}  {s.sell_rank_sum:>8,}  "
+              f"{s.n_active_brokers:>8}  {r_yi:>+10,.0f}  {u_yi:>+10,.0f}")
+
+    print()
+    print("力道 = 淨買(賣)超 TOP 15 的 PNL 排名加總")
+    print("理論最小 120（前15名都在買/賣）  理論最大 13,650")
+
+    # Detail for specified window
+    detail_window = args.detail
+    buy_top, sell_top = analyzer.get_top_brokers(args.symbol, window=detail_window)
+
+    print()
+    print(f"【近 {detail_window} 日 淨買超 TOP 15】")
+    print(f"{'券商':<8} {'名稱':<12} {'淨買超(張)':>14} {'PNL排名':>8}")
+    print("-" * 46)
+    for row in buy_top.iter_rows(named=True):
+        name = (row.get("name") or "")[:10]
+        rank = row["rank"] if row["rank"] is not None else "-"
+        print(f"{row['broker']:<8} {name:<12} {row['net_buy']:>+14,} {rank:>8}")
+
+    print()
+    print(f"【近 {detail_window} 日 淨賣超 TOP 15】")
+    print(f"{'券商':<8} {'名稱':<12} {'淨賣超(張)':>14} {'PNL排名':>8}")
+    print("-" * 46)
+    for row in sell_top.iter_rows(named=True):
+        name = (row.get("name") or "")[:10]
+        rank = row["rank"] if row["rank"] is not None else "-"
+        print(f"{row['broker']:<8} {name:<12} {row['net_buy']:>+14,} {rank:>8}")
 
     return 0
 
@@ -262,6 +318,14 @@ def main(argv: list[str] | None = None) -> int:
         help="Show per-symbol breakdown",
     )
 
+    # symbol command
+    symbol_parser = subparsers.add_parser("symbol", help="Analyze symbol smart money")
+    symbol_parser.add_argument("symbol", help="Stock symbol (e.g., 2330)")
+    symbol_parser.add_argument(
+        "--detail", type=int, default=1,
+        help="Window (trading days) for detail view (default: 1)",
+    )
+
     # verify command
     subparsers.add_parser("verify", help="Verify data integrity")
 
@@ -274,6 +338,7 @@ def main(argv: list[str] | None = None) -> int:
     commands = {
         "ranking": cmd_ranking,
         "query": cmd_query,
+        "symbol": cmd_symbol,
         "verify": cmd_verify,
     }
 

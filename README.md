@@ -148,6 +148,8 @@ uv run python pnl_engine.py                     # → pnl/*.parquet + derived/
 # CLI 指令
 uv run python -m pnl_analytics ranking          # 顯示排名
 uv run python -m pnl_analytics query 1440       # 查詢單一券商
+uv run python -m pnl_analytics symbol 2330      # 個股買賣力道（smart money signal）
+uv run python -m pnl_analytics symbol 2330 --detail 5  # 近5日明細
 uv run python -m pnl_analytics verify           # 資料驗證
 ```
 

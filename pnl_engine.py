@@ -9,8 +9,9 @@ FIFO Logic:
 - Buys cover short positions first, then open long
 - Tracks realized PNL (closed trades) and unrealized PNL (open positions)
 
-Timing Alpha:
-- Measures timing ability: Σ((net_buy[t-1] - avg) × return[t])
+Timing Alpha (normalized):
+- Measures timing ability: Σ((net_buy[t-1] - avg) × return[t]) / std(net_buy)
+- Normalized by trade volume std to remove volume bias
 - Positive = buys before price rises, sells before price falls
 
 Backtest Window:
@@ -128,7 +129,7 @@ class BrokerResult(NamedTuple):
     unrealized_pnl: float   # Final unrealized
     total_buy: float
     total_sell: float
-    timing_alpha: float     # Σ((net_buy[t-1] - avg) × return[t])
+    timing_alpha: float     # Σ((net_buy[t-1] - avg) × return[t]) / std(net_buy)
 
 
 def process_symbol(
@@ -228,12 +229,17 @@ def process_symbol(
         # Total PNL = realized (after start) + final unrealized
         total_pnl = realized_after_start + last_unrealized
 
-        # Calculate timing alpha: Σ((net_buy[t-1] - avg) × return[t])
+        # Calculate timing alpha: Σ((net_buy[t-1] - avg) × return[t]) / std(net_buy)
         timing_alpha = 0.0
         if len(net_buy_series) >= 2:
             avg_net_buy = sum(net_buy_series) / len(net_buy_series)
+            raw_ta = 0.0
             for t in range(1, len(net_buy_series)):
-                timing_alpha += (net_buy_series[t - 1] - avg_net_buy) * return_series[t]
+                raw_ta += (net_buy_series[t - 1] - avg_net_buy) * return_series[t]
+            # Normalize by std(net_buy) to remove volume bias
+            variance = sum((x - avg_net_buy) ** 2 for x in net_buy_series) / len(net_buy_series)
+            std_net_buy = variance ** 0.5
+            timing_alpha = raw_ta / std_net_buy if std_net_buy > 0 else 0.0
 
         results.append(BrokerResult(
             broker=broker,

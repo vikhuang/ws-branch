@@ -4,6 +4,7 @@
 
 1. **哪些券商在賺錢？** — 依 FIFO 計算每家券商的已實現 + 未實現損益，全市場排名
 2. **聰明錢在買什麼？** — 給定一支股票，看「在這支股票上歷史績效最好的券商」現在站哪邊
+3. **大單有預測力嗎？** — 對個股進行大單偵測、統計驗證、TA 加權信號建構與回測
 
 ## 快速開始
 
@@ -22,6 +23,10 @@ uv run python -m pnl_analytics query 1440 --breakdown   # 含個股明細
 uv run python -m pnl_analytics symbol 2330               # 個股 smart money signal
 uv run python -m pnl_analytics symbol 2330 --detail 5    # 近 5 日明細
 uv run python -m pnl_analytics verify                    # 資料完整性驗證
+
+# 個股信號分析（standalone）
+uv run python signal_report.py 2345                      # 大單信號回測報告
+uv run python signal_report.py 2345 --train-start 2023-01-01 --train-end 2024-06-30
 ```
 
 ## Pipeline
@@ -150,6 +155,17 @@ timing_alpha = Σ((net_buy[t-1] - avg_net_buy) × return[t]) / std(net_buy)
 買方力道遠低於賣方 → 在這支股票上賺過錢的人正在買入。
 
 注意：使用的是**個股 PNL 排名**（`pnl/{symbol}.parquet`），不是全市場排名。在台積電排名第 1 的券商和在智邦排名第 1 的券商是不同的。
+
+### Signal Report（大單信號分析）
+
+`signal_report.py` 對個股執行 4 步分析，輸出 `data/reports/{symbol}.md` + `.json`：
+
+1. **大單偵測**：每個券商的 `|net_buy - mean| > 2σ` 為大單日
+2. **統計驗證**：大單日 vs 非大單日的 return spread + t-test（< 5% 顯著 → early exit）
+3. **TA 加權信號**：`signal[t] = Σ(TA_b × dev_b[t] / σ_b)`，TA 僅用 train period 計算（test |t| < 2 → early exit）
+4. **回測**：open→close return，扣除 0.435% 交易成本，計算 Sharpe / MaxDD / Calmar
+
+預設 train 2023-01~2024-06，test 2024-07~2025-12。開盤價從 BigQuery 按需拉取並快取。
 
 ## 效能
 

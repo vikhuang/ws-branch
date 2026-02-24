@@ -534,9 +534,9 @@ def run_backtest(
 
     bh_return = bh_equity[-1] / bh_equity[0] - 1
 
-    # B&H Sharpe
-    bh_daily = np.diff(np.log(np.array(bh_equity)))
-    bh_daily = bh_daily[bh_daily != 0]
+    # B&H Sharpe (arithmetic returns, all days, same methodology as strategy)
+    bh_eq_arr_for_sharpe = np.array(bh_equity)
+    bh_daily = np.diff(bh_eq_arr_for_sharpe) / bh_eq_arr_for_sharpe[:-1]
     bh_sharpe = float(np.mean(bh_daily) / np.std(bh_daily) * np.sqrt(252)) if len(bh_daily) > 0 and np.std(bh_daily) > 0 else 0.0
 
     # B&H Max DD

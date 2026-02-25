@@ -61,8 +61,8 @@ data/derived/broker_ranking.parquet (56 KB)  ← 券商維度
 |------|------|------|
 | `broker` | Categorical | 券商代碼 |
 | `date` | Date | 交易日期 |
-| `buy_shares` | Int32 | 當日買入張數 |
-| `sell_shares` | Int32 | 當日賣出張數 |
+| `buy_shares` | Int32 | 當日買入股數 |
+| `sell_shares` | Int32 | 當日賣出股數 |
 | `buy_amount` | Float32 | 當日買入金額 |
 | `sell_amount` | Float32 | 當日賣出金額 |
 

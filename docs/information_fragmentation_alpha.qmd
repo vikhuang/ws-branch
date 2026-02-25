@@ -1,3 +1,15 @@
+---
+title: "Information Fragmentation Alpha"
+subtitle: "分散式私有資訊的聚合與 Alpha 萃取"
+date: "2026-02-24"
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    theme: cosmo
+    embed-resources: true
+---
+
 # Information Fragmentation Alpha：分散式私有資訊的聚合與 Alpha 萃取
 
 ## 核心命題

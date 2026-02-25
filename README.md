@@ -27,6 +27,10 @@ uv run python -m pnl_analytics verify                    # 資料完整性驗證
 # 個股信號分析（standalone）
 uv run python signal_report.py 2345                      # 大單信號回測報告
 uv run python signal_report.py 2345 --train-start 2023-01-01 --train-end 2024-06-30
+
+# 全市場掃描（~7 分鐘）
+uv run python market_scan.py                             # 預設：2億成交額、0.50%成本、1% FDR
+uv run python market_scan.py --min-turnover 200000000 --cost 0.005 --fdr 0.01
 ```
 
 ## Pipeline
@@ -167,6 +171,22 @@ timing_alpha = Σ((net_buy[t-1] - avg_net_buy) × return[t]) / std(net_buy)
 
 預設 train 2023-01~2024-06，test 2024-07~2025-12。開盤價從 BigQuery 按需拉取並快取。
 
+### Market Scan（全市場信號掃描）
+
+`market_scan.py` 對全市場 ~2,400 支股票執行 5 層篩選 + 回測，使用 BH-FDR 控制多重檢定：
+
+| 階段 | 說明 |
+|------|------|
+| F0a | 排除股票拆分/減資 |
+| F0b | 排除資料不足（train < 30 天、test < 250 天） |
+| F1 | 日均成交額 > 2億 NTD（train period） |
+| F2 | 顯著正向券商 > 5% |
+| F3 | Benjamini-Hochberg FDR < 1% |
+
+通過 F3 的股票執行完整回測（0.50% 保守成本），輸出 `data/derived/market_scan.json` + `.md`，以及每支個股的 `data/reports/{symbol}.json`。
+
+兩階段平行架構：Phase 1 篩選（12 workers），FDR 校正後 Phase 2 批次拉取 OHLC + 回測。
+
 ## 效能
 
 M3 Pro 12 核，全市場 2,839 股 × 917 券商 × 1,209 交易日：
@@ -177,6 +197,7 @@ M3 Pro 12 核，全市場 2,839 股 × 917 券商 × 1,209 交易日：
 | 價格同步 | ~1 min | 200 MB | O(S×D) |
 | PNL 計算 | ~5 min | ~5 MB/核 | O(S×B×T)，12核並行 |
 | 查詢 | 0.01s | 1 MB | O(B log B)，預聚合表 |
+| 全市場掃描 | ~7 min | ~100 MB | O(S×B×D)，12核並行 |
 
 全程記憶體峰值 ~2 GB，遠低於 36 GB 可用記憶體。
 

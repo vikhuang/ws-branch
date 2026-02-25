@@ -1,11 +1,12 @@
 """Market Scan: Full-market signal screening with FDR correction.
 
-Screens ~2400 stocks through 5 filters:
-  F0: Split/reverse-split detection
+Screens ~2400 stocks through 6 filters:
+  F0a: ETF/ETN exclusion (symbol starts with "00")
+  F0b: Split/reverse-split detection
+  F0c: Sufficient historical data
   F1: Liquidity (avg turnover > threshold)
   F2: Significant broker ratio > 5%
-  F3: BH-FDR corrected OOS t-stat
-  F4: Full backtest with conservative costs
+  F3: BH-FDR corrected OOS t-stat + full backtest
 
 Usage:
     uv run python market_scan.py
@@ -166,6 +167,11 @@ def analyze_symbol(
         "n_train_days": 0,
         "n_test_days": 0,
     }
+
+    # --- Filter 0: ETF exclusion ---
+    if symbol.startswith("00"):
+        base["reason"] = "ETF/ETN excluded"
+        return base
 
     # --- Filter 0: Split detection ---
     if detect_split(prices):
@@ -751,24 +757,30 @@ def save_market_scan(
 
     # Count filter funnel (F0 split into sub-categories)
     total = len(phase1_results)
+    f0_etf = sum(
+        1 for r in phase1_results
+        if r["filter_stage"] == 0 and "ETF" in r["reason"]
+    )
     f0_split = sum(
         1 for r in phase1_results
         if r["filter_stage"] == 0 and "split" in r["reason"]
     )
     f0_data = sum(
         1 for r in phase1_results
-        if r["filter_stage"] == 0 and "split" not in r["reason"]
+        if r["filter_stage"] == 0 and "ETF" not in r["reason"] and "split" not in r["reason"]
     )
-    f0a_pass = total - f0_split  # after removing splits
-    f0b_pass = f0a_pass - f0_data  # after removing data-insufficient
+    f0a_pass = total - f0_etf  # after removing ETFs
+    f0b_pass = f0a_pass - f0_split  # after removing splits
+    f0c_pass = f0b_pass - f0_data  # after removing data-insufficient
     f1_pass = sum(1 for r in phase1_results if r["filter_stage"] >= 2 or r["passed"])
     f2_pass = sum(1 for r in phase1_results if r["passed"])
     f3_pass = len(phase2_results)
 
     funnel = {
         "universe": total,
-        "f0a_no_split": f0a_pass,
-        "f0b_sufficient_data": f0b_pass,
+        "f0a_no_etf": f0a_pass,
+        "f0b_no_split": f0b_pass,
+        "f0c_sufficient_data": f0c_pass,
         "f1_liquidity": f1_pass,
         "f2_signal_quality": f2_pass,
         "f3_fdr": f3_pass,
@@ -809,8 +821,9 @@ def save_market_scan(
         "| Stage | Count | Description |",
         "|-------|-------|-------------|",
         f"| Universe | {total} | Stocks with price data |",
-        f"| F0a: No split | {f0a_pass} | Exclude {f0_split} splits/reverse-splits |",
-        f"| F0b: Data | {f0b_pass} | Train ≥ 30 days, Test ≥ {config.min_test_days} days |",
+        f"| F0a: No ETF | {f0a_pass} | Exclude {f0_etf} ETFs/ETNs |",
+        f"| F0b: No split | {f0b_pass} | Exclude {f0_split} splits/reverse-splits |",
+        f"| F0c: Data | {f0c_pass} | Train ≥ 30 days, Test ≥ {config.min_test_days} days |",
         f"| F1: Liquidity | {f1_pass} | Avg turnover > {config.min_turnover / 1e8:.0f}億 |",
         f"| F2: Signal | {f2_pass} | >5% significant brokers |",
         f"| F3: FDR | {f3_pass} | BH-FDR < {config.fdr_threshold:.0%} |",
@@ -947,21 +960,26 @@ def main() -> None:
             phase1_results.append(future.result())
 
     # Phase 1 summary
+    n_etf = sum(
+        1 for r in phase1_results
+        if r["filter_stage"] == 0 and "ETF" in r["reason"]
+    )
     n_split = sum(
         1 for r in phase1_results
         if r["filter_stage"] == 0 and "split" in r["reason"]
     )
     n_data = sum(
         1 for r in phase1_results
-        if r["filter_stage"] == 0 and "split" not in r["reason"]
+        if r["filter_stage"] == 0 and "ETF" not in r["reason"] and "split" not in r["reason"]
     )
     n_f1 = sum(1 for r in phase1_results if r["filter_stage"] == 1)
     n_f2 = sum(1 for r in phase1_results if r["filter_stage"] == 2)
 
     passed_phase1 = [r for r in phase1_results if r["passed"]]
     print(f"\n  Filter funnel:")
-    print(f"    F0a (split):     {n_split} filtered")
-    print(f"    F0b (data):      {n_data} filtered")
+    print(f"    F0a (ETF):       {n_etf} filtered")
+    print(f"    F0b (split):     {n_split} filtered")
+    print(f"    F0c (data):      {n_data} filtered")
     print(f"    F1 (liquidity):  {n_f1} filtered")
     print(f"    F2 (brokers):    {n_f2} filtered")
     print(f"    Passed F0-F2:    {len(passed_phase1)} symbols")

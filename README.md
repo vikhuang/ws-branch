@@ -173,13 +173,14 @@ timing_alpha = Σ((net_buy[t-1] - avg_net_buy) × return[t]) / std(net_buy)
 
 ### Market Scan（全市場信號掃描）
 
-`market_scan.py` 對全市場 ~2,400 支股票執行 5 層篩選 + 回測，使用 BH-FDR 控制多重檢定：
+`market_scan.py` 對全市場 ~2,400 支股票執行 6 層篩選 + 回測，使用 BH-FDR 控制多重檢定：
 
 | 階段 | 說明 |
 |------|------|
-| F0a | 排除股票拆分/減資 |
-| F0b | 排除資料不足（train < 30 天、test < 250 天） |
-| F1 | 日均成交額 > 2億 NTD（train period） |
+| F0a | 排除 ETF/ETN（代碼以 "00" 開頭） |
+| F0b | 排除股票拆分/減資 |
+| F0c | 排除資料不足（train < 30 天、test < 250 天） |
+| F1 | 日均成交額 > 門檻（預設 2億 NTD，train period） |
 | F2 | 顯著正向券商 > 5% |
 | F3 | Benjamini-Hochberg FDR < 1% |
 

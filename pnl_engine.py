@@ -1,7 +1,10 @@
 """PNL Engine: FIFO-based PNL calculation with timing alpha.
 
 Processes daily_summary/{symbol}.parquet files and outputs:
-- derived/broker_ranking.parquet - Pre-aggregated broker rankings with timing alpha
+- pnl_daily/{symbol}.parquet  - Daily PNL events per broker (Layer 1.5)
+- fifo_state/{symbol}.parquet - FIFO checkpoint for incremental updates
+- pnl/{symbol}.parquet        - Aggregated per-symbol broker ranking (Layer 2)
+- derived/broker_ranking.parquet - Global broker ranking (Layer 2)
 
 FIFO Logic:
 - Each (symbol, broker) pair is an independent account
@@ -17,6 +20,7 @@ Timing Alpha (normalized):
 Backtest Window:
 - FIFO state accumulates from 2021-01-01
 - Performance (PNL, timing alpha) only counts from 2023-01-01
+- Daily PNL events stored for ALL dates (enables rolling window queries)
 """
 
 import sys
@@ -116,6 +120,19 @@ class FIFOAccount:
 
         return realized_today, unrealized
 
+    def get_lots(self) -> list[tuple[str, int, float, date]]:
+        """Extract current lots for serialization.
+
+        Returns:
+            List of (side, shares, cost_per_share, open_date) tuples.
+        """
+        lots = []
+        for lot in self.long_lots:
+            lots.append(("long", lot.shares, lot.cost_per_share, lot.buy_date))
+        for lot in self.short_lots:
+            lots.append(("short", lot.shares, lot.cost_per_share, lot.buy_date))
+        return lots
+
 
 # =============================================================================
 # Per-Symbol Processing
@@ -138,8 +155,12 @@ def process_symbol(
     sym_prices: dict[date, float],
     sym_returns: dict[date, float],
     backtest_start: date,
+    write_daily: bool = True,
 ) -> list[BrokerResult]:
     """Process a single symbol and return broker results.
+
+    Also writes pnl_daily/{symbol}.parquet and fifo_state/{symbol}.parquet
+    directly from the worker process (avoids large IPC overhead).
 
     Args:
         symbol: Stock symbol
@@ -147,6 +168,7 @@ def process_symbol(
         sym_prices: {date: close_price} for this symbol only
         sym_returns: {date: daily_return} for this symbol only
         backtest_start: Start date for performance calculation
+        write_daily: If True, write pnl_daily and fifo_state files
 
     Returns:
         List of BrokerResult for each broker
@@ -169,6 +191,8 @@ def process_symbol(
         trade_lookup[(row["broker"], row["date"])] = row
 
     results = []
+    daily_rows: list[dict] = []
+    fifo_rows: list[dict] = []
 
     for broker in brokers:
         account = FIFOAccount()
@@ -212,6 +236,14 @@ def process_symbol(
                     return_series.append(sym_returns.get(d, 0.0))
 
                 last_unrealized = unrealized
+
+                # Collect daily PNL event (all dates, for rolling windows)
+                if write_daily and (realized != 0.0 or unrealized != 0.0):
+                    daily_rows.append({
+                        "broker": broker, "date": d,
+                        "realized_pnl": realized,
+                        "unrealized_pnl": unrealized,
+                    })
             else:
                 # No trade, recalculate unrealized
                 unrealized = 0.0
@@ -225,6 +257,14 @@ def process_symbol(
                 if d >= backtest_start:
                     net_buy_series.append(0)
                     return_series.append(sym_returns.get(d, 0.0))
+
+                # Collect daily PNL for position holders (realized=0, unrealized≠0)
+                if write_daily and unrealized != 0.0:
+                    daily_rows.append({
+                        "broker": broker, "date": d,
+                        "realized_pnl": 0.0,
+                        "unrealized_pnl": unrealized,
+                    })
 
         # Total PNL = realized (after start) + final unrealized
         total_pnl = realized_after_start + last_unrealized
@@ -250,6 +290,36 @@ def process_symbol(
             total_sell=total_sell,
             timing_alpha=timing_alpha,
         ))
+
+        # Collect FIFO lots for checkpoint
+        if write_daily:
+            for side, shares, cost, open_date in account.get_lots():
+                fifo_rows.append({
+                    "broker": broker, "side": side,
+                    "shares": shares, "cost_per_share": cost,
+                    "open_date": open_date,
+                })
+
+    # Write daily PNL events (Layer 1.5)
+    if write_daily and daily_rows:
+        daily_df = pl.DataFrame(daily_rows, schema={
+            "broker": pl.Utf8,
+            "date": pl.Date,
+            "realized_pnl": pl.Float64,
+            "unrealized_pnl": pl.Float64,
+        }).sort(["broker", "date"])
+        daily_df.write_parquet(paths.symbol_pnl_daily_path(symbol))
+
+    # Write FIFO state checkpoint
+    if write_daily and fifo_rows:
+        fifo_df = pl.DataFrame(fifo_rows, schema={
+            "broker": pl.Utf8,
+            "side": pl.Utf8,
+            "shares": pl.Int64,
+            "cost_per_share": pl.Float64,
+            "open_date": pl.Date,
+        })
+        fifo_df.write_parquet(paths.symbol_fifo_state_path(symbol))
 
     return results
 
@@ -432,6 +502,13 @@ def calculate_all_pnl(
     print(f"\nSaved: {paths.broker_ranking}")
     print(f"  {len(df)} brokers")
     print(f"  Total PNL range: {df['total_pnl'].min():,.0f} ~ {df['total_pnl'].max():,.0f}")
+
+    # Layer 1.5 summary
+    n_daily = len(list(paths.pnl_daily_dir.glob("*.parquet")))
+    n_fifo = len(list(paths.fifo_state_dir.glob("*.parquet")))
+    print(f"\nLayer 1.5:")
+    print(f"  {n_daily} pnl_daily files")
+    print(f"  {n_fifo} fifo_state files")
 
     return df
 

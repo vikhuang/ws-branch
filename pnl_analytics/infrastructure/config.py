@@ -4,14 +4,20 @@ This module provides:
 - DataPaths: File paths for all data sources
 - AnalysisConfig: Parameters for analysis algorithms
 
-Directory Structure (v2):
+Directory Structure (v3):
     data/
     ├── daily_summary/           # ETL output (by symbol)
     │   ├── 2330.parquet
     │   └── ...
     ├── price/
     │   └── close_prices.parquet
-    ├── pnl/                     # PNL engine output (by symbol)
+    ├── pnl_daily/               # Daily PNL events (by symbol)
+    │   ├── 2330.parquet
+    │   └── ...
+    ├── fifo_state/              # FIFO checkpoint (by symbol)
+    │   ├── 2330.parquet
+    │   └── ...
+    ├── pnl/                     # Aggregated PNL ranking (by symbol)
     │   ├── 2330.parquet
     │   └── ...
     └── derived/                 # Pre-aggregated tables
@@ -56,6 +62,16 @@ class DataPaths:
         return self.data_dir / "pnl"
 
     @property
+    def pnl_daily_dir(self) -> Path:
+        """Daily PNL events (by symbol)."""
+        return self.data_dir / "pnl_daily"
+
+    @property
+    def fifo_state_dir(self) -> Path:
+        """FIFO checkpoint state (by symbol)."""
+        return self.data_dir / "fifo_state"
+
+    @property
     def derived_dir(self) -> Path:
         """Pre-aggregated tables for queries."""
         return self.data_dir / "derived"
@@ -92,6 +108,14 @@ class DataPaths:
         """Path to a symbol's PNL results."""
         return self.pnl_dir / f"{symbol}.parquet"
 
+    def symbol_pnl_daily_path(self, symbol: str) -> Path:
+        """Path to a symbol's daily PNL events."""
+        return self.pnl_daily_dir / f"{symbol}.parquet"
+
+    def symbol_fifo_state_path(self, symbol: str) -> Path:
+        """Path to a symbol's FIFO checkpoint."""
+        return self.fifo_state_dir / f"{symbol}.parquet"
+
     def list_symbols(self) -> list[str]:
         """List all symbols with trade data."""
         if not self.daily_summary_dir.exists():
@@ -122,6 +146,8 @@ class DataPaths:
         """Create all required directories."""
         self.daily_summary_dir.mkdir(parents=True, exist_ok=True)
         self.price_dir.mkdir(parents=True, exist_ok=True)
+        self.pnl_daily_dir.mkdir(parents=True, exist_ok=True)
+        self.fifo_state_dir.mkdir(parents=True, exist_ok=True)
         self.pnl_dir.mkdir(parents=True, exist_ok=True)
         self.derived_dir.mkdir(parents=True, exist_ok=True)
 

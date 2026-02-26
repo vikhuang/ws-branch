@@ -14,7 +14,7 @@ uv sync
 # Pipeline（全市場 2,839 股，約 15 分鐘）
 uv run python etl.py broker_tx.parquet      # → data/daily_summary/
 uv run python sync_prices.py                # → data/price/
-uv run python pnl_engine.py                 # → data/pnl/ + data/derived/
+uv run python pnl_engine.py                 # → data/pnl_daily/ + data/fifo_state/ + data/pnl/ + data/derived/
 
 # 查詢
 uv run python -m pnl_analytics ranking                  # 全市場券商排名
@@ -45,6 +45,10 @@ data/daily_summary/{symbol}.parquet (4.2 GB, 2839 檔)
 data/price/close_prices.parquet (4 MB)
     │ pnl_engine.py
     ▼
+data/pnl_daily/{symbol}.parquet (12 GB, 2839 檔)  ← Layer 1.5：每日明細
+data/fifo_state/{symbol}.parquet (289 MB, 2839 檔) ← FIFO checkpoint
+    │ aggregate
+    ▼
 data/pnl/{symbol}.parquet (79 MB, 2839 檔)  ← 個股維度
 data/derived/broker_ranking.parquet (56 KB)  ← 券商維度
 ```
@@ -68,13 +72,40 @@ data/derived/broker_ranking.parquet (56 KB)  ← 券商維度
 
 排序：`broker, date`（FIFO 計算最佳化）
 
+### Layer 1.5：pnl_daily/{symbol}.parquet + fifo_state/{symbol}.parquet
+
+`pnl_engine.py` FIFO 逐日計算的中間結果，按股票分檔。支援滾動窗口 PNL 查詢和增量更新。
+
+**pnl_daily/{symbol}.parquet** — 每日 PNL 事件
+
+| 欄位 | 型態 | 說明 |
+|------|------|------|
+| `broker` | Utf8 | 券商代碼 |
+| `date` | Date | 交易日 |
+| `realized_pnl` | Float64 | 當日已實現損益 |
+| `unrealized_pnl` | Float64 | 當日未實現損益（EOD mark-to-market） |
+
+排序：`broker, date`。只存有交易或有持倉的 (broker, date)。所有日期（含 backtest_start 前）均保存，供滾動窗口回溯。
+
+**fifo_state/{symbol}.parquet** — FIFO 持倉 checkpoint
+
+| 欄位 | 型態 | 說明 |
+|------|------|------|
+| `broker` | Utf8 | 券商代碼 |
+| `side` | Utf8 | "long" / "short" |
+| `shares` | Int64 | 股數 |
+| `cost_per_share` | Float64 | 成本價 |
+| `open_date` | Date | 建倉日 |
+
+Layer 2（pnl/ + broker_ranking）從 Layer 1.5 聚合導出。
+
 ### Layer 2：price/close_prices.parquet
 
 `sync_prices.py` 從 BigQuery 同步收盤價，用於計算未實現損益和日報酬率。
 
 ### Layer 3a：pnl/{symbol}.parquet
 
-`pnl_engine.py` 對每支股票的每家券商做 FIFO 回測，輸出**個股維度**的排名。
+從 Layer 1.5 聚合，輸出**個股維度**的排名。
 
 | 欄位 | 型態 | 說明 |
 |------|------|------|
@@ -196,7 +227,7 @@ M3 Pro 12 核，全市場 2,839 股 × 917 券商 × 1,209 交易日：
 |------|------|--------|-------|
 | ETL | ~10 min | ~2 GB (streaming) | O(N)，N=20.8億 |
 | 價格同步 | ~1 min | 200 MB | O(S×D) |
-| PNL 計算 | ~5 min | ~5 MB/核 | O(S×B×T)，12核並行 |
+| PNL 計算 + Layer 1.5 | ~6 min | ~10 MB/核 | O(S×B×T)，12核並行 |
 | 查詢 | 0.01s | 1 MB | O(B log B)，預聚合表 |
 | 全市場掃描 | ~7 min | ~100 MB | O(S×B×D)，12核並行 |
 

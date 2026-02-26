@@ -12,8 +12,8 @@ __pycache__/
 *.csv
 ~$*
 
-# Reference data (force add if needed)
-# !證券商基本資料.xls
+# Reference data
+!broker_names.json
 
 # OS
 .DS_Store

@@ -82,11 +82,16 @@ class RollingRankingService:
             DataFrame with columns: rank, broker, [name], total_pnl,
             realized_pnl, unrealized_pnl.
         """
-        window_start = date(
-            query_date.year - window_years,
-            query_date.month,
-            query_date.day,
-        )
+        # Handle leap year edge case (e.g., 2024-02-29 - 3y → 2021-02-28)
+        try:
+            window_start = query_date.replace(year=query_date.year - window_years)
+        except ValueError:
+            # Feb 29 in non-leap year → use Feb 28
+            window_start = date(
+                query_date.year - window_years,
+                query_date.month,
+                query_date.day - 1,
+            )
 
         # Collect all pnl_daily files
         pnl_daily_dir = self._paths.pnl_daily_dir

@@ -221,9 +221,12 @@ def cmd_rolling(args: argparse.Namespace) -> int:
         print("無排名資料")
         return 1
 
-    window_start = date(
-        query_date.year - args.years, query_date.month, query_date.day,
-    )
+    try:
+        window_start = query_date.replace(year=query_date.year - args.years)
+    except ValueError:
+        window_start = date(
+            query_date.year - args.years, query_date.month, query_date.day - 1,
+        )
 
     print(f"【{args.years} 年滾動 PNL 排名】")
     print(f"  窗口：{window_start} ~ {query_date}")

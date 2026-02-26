@@ -21,6 +21,9 @@ from pnl_analytics.application.services.symbol_analysis import (
     SymbolAnalysisResult,
     SmartMoneySignal,
 )
+from pnl_analytics.application.services.rolling_ranking import (
+    RollingRankingService,
+)
 
 __all__ = [
     "RankingService",
@@ -30,4 +33,5 @@ __all__ = [
     "SymbolAnalyzer",
     "SymbolAnalysisResult",
     "SmartMoneySignal",
+    "RollingRankingService",
 ]

@@ -22,7 +22,10 @@ uv run python -m pnl_analytics query 1440               # 單一券商績效
 uv run python -m pnl_analytics query 1440 --breakdown   # 含個股明細
 uv run python -m pnl_analytics symbol 2330               # 個股 smart money signal
 uv run python -m pnl_analytics symbol 2330 --detail 5    # 近 5 日明細
-uv run python -m pnl_analytics verify                    # 資料完整性驗證
+uv run python -m pnl_analytics rolling                     # 三年滾動 PNL 排名
+uv run python -m pnl_analytics rolling --years 2           # 指定窗口
+uv run python -m pnl_analytics rolling --xlsx              # 匯出 Excel
+uv run python -m pnl_analytics verify                      # 資料完整性驗證
 
 # 個股信號分析（standalone）
 uv run python signal_report.py 2345                      # 大單信號回測報告

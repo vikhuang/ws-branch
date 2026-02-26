@@ -24,6 +24,7 @@ from pnl_analytics.application import (
     RankingReportConfig,
     BrokerAnalyzer,
     SymbolAnalyzer,
+    RollingRankingService,
 )
 
 
@@ -194,6 +195,88 @@ def cmd_symbol(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_rolling(args: argparse.Namespace) -> int:
+    """Show rolling PNL ranking."""
+    from datetime import date, timedelta
+
+    # Determine query date
+    if args.date:
+        query_date = date.fromisoformat(args.date)
+    else:
+        # Use latest date from pnl_daily data
+        import polars as pl
+        files = sorted(DEFAULT_PATHS.pnl_daily_dir.glob("*.parquet"))
+        if not files:
+            print("錯誤：找不到 pnl_daily 資料，請先執行 pnl_engine.py")
+            return 1
+        sample = pl.read_parquet(files[0], columns=["date"])
+        query_date = sample["date"].max()
+
+    n_display = args.n
+
+    service = RollingRankingService(paths=DEFAULT_PATHS)
+    df = service.compute(query_date, window_years=args.years)
+
+    if len(df) == 0:
+        print("無排名資料")
+        return 1
+
+    window_start = date(
+        query_date.year - args.years, query_date.month, query_date.day,
+    )
+
+    print(f"【{args.years} 年滾動 PNL 排名】")
+    print(f"  窗口：{window_start} ~ {query_date}")
+    n_files = len(list(DEFAULT_PATHS.pnl_daily_dir.glob("*.parquet")))
+    print(f"  股票數：{n_files:,}")
+    print()
+
+    print(f"{'排名':<6} {'券商':<8} {'名稱':<14} {'總PNL':>14} {'已實現':>14} {'未實現':>14}")
+    print("-" * 74)
+
+    for row in df.head(n_display).iter_rows(named=True):
+        total_yi = row["total_pnl"] / 1e8
+        real_yi = row["realized_pnl"] / 1e8
+        unreal_yi = row["unrealized_pnl"] / 1e8
+        name = (row.get("name") or "")[:12]
+        print(f"{row['rank']:<6} {row['broker']:<8} {name:<14} "
+              f"{total_yi:>+12.2f}億 {real_yi:>+12.2f}億 {unreal_yi:>+12.2f}億")
+
+    if len(df) > n_display:
+        print(f"... 共 {len(df)} 家券商")
+
+    # Export to xlsx
+    if args.xlsx:
+        import polars as pl
+
+        out_dir = DEFAULT_PATHS.derived_dir
+        out_dir.mkdir(parents=True, exist_ok=True)
+        filename = f"rolling_ranking_{query_date.isoformat()}.xlsx"
+        out_path = out_dir / filename
+
+        # Convert to 億 for readability
+        export_df = df.with_columns(
+            (pl.col("total_pnl") / 1e8).alias("總PNL(億)"),
+            (pl.col("realized_pnl") / 1e8).alias("已實現(億)"),
+            (pl.col("unrealized_pnl") / 1e8).alias("未實現(億)"),
+        ).select(
+            pl.col("rank").alias("排名"),
+            pl.col("broker").alias("券商"),
+            *([pl.col("name").alias("名稱")] if "name" in df.columns else []),
+            "總PNL(億)", "已實現(億)", "未實現(億)",
+        )
+
+        export_df.write_excel(
+            out_path,
+            worksheet="排名",
+            float_precision=2,
+        )
+        print()
+        print(f"已匯出：{out_path}")
+
+    return 0
+
+
 def cmd_verify(args: argparse.Namespace) -> int:
     """Verify data integrity."""
     from pnl_analytics.infrastructure.repositories import RankingRepository
@@ -326,6 +409,25 @@ def main(argv: list[str] | None = None) -> int:
         help="Window (trading days) for detail view (default: 1)",
     )
 
+    # rolling command
+    rolling_parser = subparsers.add_parser("rolling", help="Rolling PNL ranking")
+    rolling_parser.add_argument(
+        "--date",
+        help="Query date (YYYY-MM-DD, default: latest in data)",
+    )
+    rolling_parser.add_argument(
+        "--years", type=int, default=3,
+        help="Window size in years (default: 3)",
+    )
+    rolling_parser.add_argument(
+        "-n", type=int, default=10,
+        help="Number of top brokers to show (default: 10)",
+    )
+    rolling_parser.add_argument(
+        "--xlsx", action="store_true",
+        help="Export full ranking to Excel (.xlsx)",
+    )
+
     # verify command
     subparsers.add_parser("verify", help="Verify data integrity")
 
@@ -339,6 +441,7 @@ def main(argv: list[str] | None = None) -> int:
         "ranking": cmd_ranking,
         "query": cmd_query,
         "symbol": cmd_symbol,
+        "rolling": cmd_rolling,
         "verify": cmd_verify,
     }
 

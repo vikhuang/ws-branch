@@ -34,10 +34,13 @@ class DataPaths:
 
     Attributes:
         root: Project root directory
-        data_dir: Main data directory
+        variant: Output variant (e.g., "merged" for broker-merged PNL).
+                 Affects output dirs (pnl_daily, fifo_state, pnl) and
+                 broker_ranking filename. Input dirs are shared.
     """
 
     root: Path = Path(".")
+    variant: str = ""
 
     # --- Directories ---
 
@@ -59,17 +62,20 @@ class DataPaths:
     @property
     def pnl_dir(self) -> Path:
         """PNL results (by symbol)."""
-        return self.data_dir / "pnl"
+        suffix = f"_{self.variant}" if self.variant else ""
+        return self.data_dir / f"pnl{suffix}"
 
     @property
     def pnl_daily_dir(self) -> Path:
         """Daily PNL events (by symbol)."""
-        return self.data_dir / "pnl_daily"
+        suffix = f"_{self.variant}" if self.variant else ""
+        return self.data_dir / f"pnl_daily{suffix}"
 
     @property
     def fifo_state_dir(self) -> Path:
         """FIFO checkpoint state (by symbol)."""
-        return self.data_dir / "fifo_state"
+        suffix = f"_{self.variant}" if self.variant else ""
+        return self.data_dir / f"fifo_state{suffix}"
 
     @property
     def derived_dir(self) -> Path:
@@ -86,12 +92,18 @@ class DataPaths:
     @property
     def broker_ranking(self) -> Path:
         """Pre-aggregated broker ranking table."""
-        return self.derived_dir / "broker_ranking.parquet"
+        suffix = f"_{self.variant}" if self.variant else ""
+        return self.derived_dir / f"broker_ranking{suffix}.parquet"
 
     @property
     def broker_names(self) -> Path:
         """Broker name mappings (JSON)."""
         return self.root / "broker_names.json"
+
+    @property
+    def broker_merge_map(self) -> Path:
+        """Broker merge map (JSON): old_code → active_code."""
+        return self.derived_dir / "broker_merge_map.json"
 
     @property
     def broker_master(self) -> Path:

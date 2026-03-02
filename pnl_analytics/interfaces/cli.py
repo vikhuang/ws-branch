@@ -18,7 +18,7 @@ import sys
 from pathlib import Path
 
 from pnl_analytics import __version__
-from pnl_analytics.infrastructure import DEFAULT_PATHS
+from pnl_analytics.infrastructure import DEFAULT_PATHS, DataPaths
 from pnl_analytics.application import (
     RankingService,
     RankingReportConfig,
@@ -30,7 +30,8 @@ from pnl_analytics.application import (
 
 def cmd_ranking(args: argparse.Namespace) -> int:
     """Show broker ranking."""
-    print(f"PNL Analytics v{__version__}")
+    mode = "（合併版）" if args.merged else ""
+    print(f"PNL Analytics v{__version__} {mode}")
     print("=" * 60)
 
     config = RankingReportConfig(
@@ -38,7 +39,7 @@ def cmd_ranking(args: argparse.Namespace) -> int:
         output_formats=tuple(args.formats.split(",")),
     )
 
-    service = RankingService(paths=DEFAULT_PATHS, config=config)
+    service = RankingService(paths=args.paths, config=config)
 
     # Get summary
     summary = service.get_summary()
@@ -84,7 +85,7 @@ def cmd_ranking(args: argparse.Namespace) -> int:
 
 def cmd_query(args: argparse.Namespace) -> int:
     """Query specific broker."""
-    analyzer = BrokerAnalyzer(paths=DEFAULT_PATHS)
+    analyzer = BrokerAnalyzer(paths=args.paths)
     result = analyzer.analyze(args.broker)
 
     if result is None:
@@ -144,7 +145,7 @@ def cmd_query(args: argparse.Namespace) -> int:
 
 def cmd_symbol(args: argparse.Namespace) -> int:
     """Analyze smart money flow for a stock."""
-    analyzer = SymbolAnalyzer(paths=DEFAULT_PATHS)
+    analyzer = SymbolAnalyzer(paths=args.paths)
     result = analyzer.analyze(args.symbol)
 
     if result is None:
@@ -205,7 +206,7 @@ def cmd_rolling(args: argparse.Namespace) -> int:
     else:
         # Use latest date from pnl_daily data
         import polars as pl
-        files = sorted(DEFAULT_PATHS.pnl_daily_dir.glob("*.parquet"))
+        files = sorted(args.paths.pnl_daily_dir.glob("*.parquet"))
         if not files:
             print("錯誤：找不到 pnl_daily 資料，請先執行 pnl_engine.py")
             return 1
@@ -214,7 +215,7 @@ def cmd_rolling(args: argparse.Namespace) -> int:
 
     n_display = args.n
 
-    service = RollingRankingService(paths=DEFAULT_PATHS)
+    service = RollingRankingService(paths=args.paths)
     df = service.compute(query_date, window_years=args.years)
 
     if len(df) == 0:
@@ -230,7 +231,7 @@ def cmd_rolling(args: argparse.Namespace) -> int:
 
     print(f"【{args.years} 年滾動 PNL 排名】")
     print(f"  窗口：{window_start} ~ {query_date}")
-    n_files = len(list(DEFAULT_PATHS.pnl_daily_dir.glob("*.parquet")))
+    n_files = len(list(args.paths.pnl_daily_dir.glob("*.parquet")))
     print(f"  股票數：{n_files:,}")
     print()
 
@@ -252,7 +253,7 @@ def cmd_rolling(args: argparse.Namespace) -> int:
     if args.xlsx:
         import polars as pl
 
-        out_dir = DEFAULT_PATHS.derived_dir
+        out_dir = args.paths.derived_dir
         out_dir.mkdir(parents=True, exist_ok=True)
         filename = f"rolling_ranking_{query_date.isoformat()}.xlsx"
         out_path = out_dir / filename
@@ -291,7 +292,7 @@ def cmd_verify(args: argparse.Namespace) -> int:
 
     # 1. Check data files exist
     print("\n1. 檢查資料檔案...")
-    missing = DEFAULT_PATHS.validate()
+    missing = args.paths.validate()
     if missing:
         for m in missing:
             print(f"  ✗ 缺少：{m}")
@@ -302,7 +303,7 @@ def cmd_verify(args: argparse.Namespace) -> int:
     # 2. Check broker_ranking.parquet
     print("\n2. 檢查排名資料...")
     try:
-        ranking_repo = RankingRepository(DEFAULT_PATHS)
+        ranking_repo = RankingRepository(args.paths)
         df = ranking_repo.get_all()
         broker_count = len(df)
         print(f"  券商數：{broker_count}")
@@ -331,7 +332,7 @@ def cmd_verify(args: argparse.Namespace) -> int:
 
     # 4. Check daily_summary files
     print("\n4. 檢查交易資料...")
-    symbols = DEFAULT_PATHS.list_symbols()
+    symbols = args.paths.list_symbols()
     print(f"  股票數：{len(symbols)}")
     if len(symbols) >= 2800:
         print("  ✓ 股票數量正常")
@@ -343,9 +344,9 @@ def cmd_verify(args: argparse.Namespace) -> int:
 
     # 5. Check price data
     print("\n5. 檢查價格資料...")
-    if DEFAULT_PATHS.close_prices.exists():
+    if args.paths.close_prices.exists():
         import polars as pl
-        price_df = pl.read_parquet(DEFAULT_PATHS.close_prices)
+        price_df = pl.read_parquet(args.paths.close_prices)
         print(f"  價格記錄數：{len(price_df):,}")
         print(f"  股票數：{price_df['symbol_id'].n_unique()}")
         print("  ✓ 價格資料存在")
@@ -373,6 +374,11 @@ def main(argv: list[str] | None = None) -> int:
         "--version",
         action="version",
         version=f"%(prog)s {__version__}",
+    )
+    parser.add_argument(
+        "--merged",
+        action="store_true",
+        help="使用合併版券商身份（讀取 _merged 目錄）",
     )
 
     subparsers = parser.add_subparsers(dest="command", help="Commands")
@@ -435,6 +441,7 @@ def main(argv: list[str] | None = None) -> int:
     subparsers.add_parser("verify", help="Verify data integrity")
 
     args = parser.parse_args(argv)
+    args.paths = DataPaths(variant="merged") if args.merged else DEFAULT_PATHS
 
     if args.command is None:
         parser.print_help()

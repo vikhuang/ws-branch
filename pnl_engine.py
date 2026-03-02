@@ -156,6 +156,7 @@ def process_symbol(
     sym_returns: dict[date, float],
     backtest_start: date,
     write_daily: bool = True,
+    merge_map: dict[str, str] | None = None,
 ) -> list[BrokerResult]:
     """Process a single symbol and return broker results.
 
@@ -180,6 +181,19 @@ def process_symbol(
     df = pl.read_parquet(trade_path)
     if len(df) == 0:
         return []
+
+    # Remap broker codes for merged mode
+    if merge_map:
+        df = df.with_columns(
+            pl.col("broker").replace(merge_map, default=pl.col("broker"))
+        )
+        # Old + new code may overlap on same dates → re-aggregate
+        df = df.group_by(["date", "broker"]).agg([
+            pl.col("buy_shares").sum(),
+            pl.col("sell_shares").sum(),
+            pl.col("buy_amount").sum(),
+            pl.col("sell_amount").sum(),
+        ])
 
     # Get all dates and brokers
     dates = sorted(df["date"].unique().to_list())
@@ -376,6 +390,7 @@ def calculate_all_pnl(
     paths: DataPaths = DEFAULT_PATHS,
     config: AnalysisConfig = DEFAULT_CONFIG,
     workers: int | None = None,
+    merge_map: dict[str, str] | None = None,
 ) -> pl.DataFrame:
     """Calculate PNL for all symbols and generate broker ranking.
 
@@ -441,6 +456,8 @@ def calculate_all_pnl(
                 prices_by_sym[symbol],
                 returns_by_sym[symbol],
                 backtest_start,
+                True,  # write_daily
+                merge_map,
             ): symbol
             for symbol in symbols
         }
@@ -515,12 +532,33 @@ def calculate_all_pnl(
 
 def main() -> None:
     """CLI entry point."""
-    paths = DEFAULT_PATHS
+    import argparse
+    import json
+
+    parser = argparse.ArgumentParser(description="PNL Engine: FIFO-based PNL calculation")
+    parser.add_argument("root", nargs="?", help="Project root directory")
+    parser.add_argument("--merged", action="store_true", help="Use merged broker identities")
+    args = parser.parse_args()
+
     config = DEFAULT_CONFIG
 
-    # Check for custom paths
-    if len(sys.argv) > 1:
-        paths = DataPaths(root=Path(sys.argv[1]))
+    if args.root:
+        paths = DataPaths(root=Path(args.root), variant="merged" if args.merged else "")
+    elif args.merged:
+        paths = DataPaths(variant="merged")
+    else:
+        paths = DEFAULT_PATHS
+
+    # Load merge map if merged mode
+    merge_map = None
+    if args.merged:
+        if not paths.broker_merge_map.exists():
+            print(f"Error: Merge map not found: {paths.broker_merge_map}")
+            print("Run generate_merge_map.py first.")
+            sys.exit(1)
+        with open(paths.broker_merge_map) as f:
+            merge_map = json.load(f)
+        print(f"Merged mode: {len(merge_map)} broker remappings")
 
     # Validate
     missing = paths.validate()
@@ -531,7 +569,7 @@ def main() -> None:
         print("\nRun ETL and sync_prices first.")
         sys.exit(1)
 
-    df = calculate_all_pnl(paths, config)
+    df = calculate_all_pnl(paths, config, merge_map=merge_map)
 
     if len(df) > 0:
         print("\nTop 10 brokers by PNL:")

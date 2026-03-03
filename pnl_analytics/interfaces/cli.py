@@ -4,12 +4,14 @@ Provides CLI access to analytics functions:
 - ranking: Show broker ranking
 - query: Query specific broker
 - symbol: Analyze smart money flow for a stock
+- event-study: Smart money event study
 - verify: Verify data integrity
 
 Usage:
     python -m pnl_analytics ranking [--output FILE]
     python -m pnl_analytics query BROKER
     python -m pnl_analytics symbol SYMBOL [--detail WINDOW]
+    python -m pnl_analytics event-study SYMBOL [--top-k 20] [--window 5]
     python -m pnl_analytics verify
 """
 
@@ -25,7 +27,9 @@ from pnl_analytics.application import (
     BrokerAnalyzer,
     SymbolAnalyzer,
     RollingRankingService,
+    EventStudyService,
 )
+from pnl_analytics.domain.event_detection import EventConfig
 
 
 def cmd_ranking(args: argparse.Namespace) -> int:
@@ -285,6 +289,130 @@ def cmd_rolling(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_event_study(args: argparse.Namespace) -> int:
+    """Run event study for a stock."""
+    config = EventConfig(
+        top_k=args.top_k,
+        window_days=args.window,
+        threshold_sigma=args.threshold,
+    )
+    horizons = tuple(int(h) for h in args.horizons.split(","))
+
+    service = EventStudyService(paths=args.paths)
+    report = service.run(
+        symbol=args.symbol,
+        config=config,
+        horizons=horizons,
+        run_robustness=not args.no_robustness,
+    )
+
+    if report is None:
+        print(f"找不到股票或事件不足：{args.symbol}")
+        return 1
+
+    # Header
+    mode = "（合併版）" if args.merged else ""
+    print("=" * 70)
+    print(f"EVENT STUDY: {report.symbol} {mode}")
+    print(f"Config: top_k={config.top_k}, window={config.window_days}d, "
+          f"threshold={config.threshold_sigma}σ")
+    print(f"Date range: {report.date_range[0]} ~ {report.date_range[1]}")
+    print("=" * 70)
+
+    # Events summary
+    print()
+    print(f"Events: {report.n_accumulation} accumulation + "
+          f"{report.n_distribution} distribution = {report.n_events} total")
+
+    # Forward returns table
+    print()
+    print("FORWARD RETURNS (bps):")
+    print(f"{'Horizon':>7} | {'Cond Mean':>9} {'Cond Med':>9} | "
+          f"{'Uncond Mean':>11} | {'t-stat':>6} {'p-corr':>7} {'Cohen d':>8} | Sig")
+    print(f"{'-'*7}-+-{'-'*9}-{'-'*9}-+-{'-'*11}-+-"
+          f"{'-'*6}-{'-'*7}-{'-'*8}-+----")
+
+    for hr in report.horizons:
+        c = hr.conditional
+        u = hr.unconditional
+        t = hr.test
+        sig = " *" if t.significant else ""
+        print(f"{hr.horizon:>5}d  | {c.mean:>+9.1f} {c.median:>+9.1f} | "
+              f"{u.mean:>+11.1f} | {t.t_stat:>6.2f} {t.p_value_corrected:>7.3f} "
+              f"{t.cohens_d:>+8.2f} |{sig}")
+
+    # Significant horizons
+    if report.significant_horizons:
+        h_str = ", ".join(f"{h}d" for h in report.significant_horizons)
+        print(f"\nSignificant horizons: {h_str} "
+              f"({len(report.significant_horizons)}/{len(report.horizons)})")
+    else:
+        print(f"\nSignificant horizons: none (0/{len(report.horizons)})")
+
+    # Robustness
+    if report.robustness is not None:
+        r = report.robustness
+        print()
+        print("ROBUSTNESS:")
+
+        placebo_mark = "NOT significant ✓" if not r.placebo_significant else "significant ✗"
+        print(f"  Placebo (random brokers):     {placebo_mark}")
+
+        mono_mark = "monotonic ✓" if r.dose_response_monotonic else "NOT monotonic ✗"
+        print(f"  Dose-response (quintiles):    {mono_mark}")
+        q_str = "  ".join(f"Q{i+1}: {v:+.0f} bps" for i, v in enumerate(r.quintile_cars))
+        print(f"    {q_str}")
+
+        print("  Temporal split:")
+        in_mark = "✓" if r.temporal_in_sample > 0 else "✗"
+        out_mark = "✓" if r.temporal_out_of_sample > 0 else "✗"
+        print(f"    In-sample (first half):     "
+              f"{r.temporal_in_sample}/{len(report.horizons)} significant {in_mark}")
+        print(f"    Out-of-sample (second half): "
+              f"{r.temporal_out_of_sample}/{len(report.horizons)} significant {out_mark}")
+
+    # Conclusion
+    print()
+    print("=" * 70)
+    conclusion_map = {
+        "significant": "SIGNIFICANT",
+        "marginal": "MARGINAL",
+        "no_effect": "NO EFFECT",
+    }
+    label = conclusion_map[report.conclusion]
+    n_sig = len(report.significant_horizons)
+    n_total = len(report.horizons)
+
+    robustness_note = ""
+    if report.robustness is not None:
+        r = report.robustness
+        passed = []
+        failed = []
+        if not r.placebo_significant:
+            passed.append("placebo")
+        else:
+            failed.append("placebo")
+        if r.dose_response_monotonic:
+            passed.append("dose-response")
+        else:
+            failed.append("dose-response")
+        if r.temporal_in_sample > 0 and r.temporal_out_of_sample > 0:
+            passed.append("temporal")
+        else:
+            failed.append("temporal")
+
+        if failed:
+            robustness_note = f", robustness: {len(passed)}/3 passed"
+        else:
+            robustness_note = ", robustness passed"
+
+    print(f"CONCLUSION: {label} — {n_sig}/{n_total} horizons significant"
+          f"{robustness_note}")
+    print("=" * 70)
+
+    return 0
+
+
 def cmd_verify(args: argparse.Namespace) -> int:
     """Verify data integrity."""
     from pnl_analytics.infrastructure.repositories import RankingRepository
@@ -445,6 +573,32 @@ def main(argv: list[str] | None = None) -> int:
         help="Export full ranking to Excel (.xlsx)",
     )
 
+    # event-study command
+    event_parser = subparsers.add_parser(
+        "event-study", help="Smart money event study",
+    )
+    event_parser.add_argument("symbol", help="Stock symbol (e.g., 6285)")
+    event_parser.add_argument(
+        "--top-k", type=int, default=20,
+        help="Number of top PNL brokers to track (default: 20)",
+    )
+    event_parser.add_argument(
+        "--window", type=int, default=5,
+        help="Rolling window in trading days (default: 5)",
+    )
+    event_parser.add_argument(
+        "--threshold", type=float, default=2.0,
+        help="Event threshold in σ (default: 2.0)",
+    )
+    event_parser.add_argument(
+        "--horizons", default="1,5,10,20",
+        help="Forward return horizons, comma-separated (default: 1,5,10,20)",
+    )
+    event_parser.add_argument(
+        "--no-robustness", action="store_true",
+        help="Skip robustness checks",
+    )
+
     # verify command
     subparsers.add_parser("verify", help="Verify data integrity")
 
@@ -460,6 +614,7 @@ def main(argv: list[str] | None = None) -> int:
         "query": cmd_query,
         "symbol": cmd_symbol,
         "rolling": cmd_rolling,
+        "event-study": cmd_event_study,
         "verify": cmd_verify,
     }
 

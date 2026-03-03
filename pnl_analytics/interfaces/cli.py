@@ -146,13 +146,15 @@ def cmd_query(args: argparse.Namespace) -> int:
 def cmd_symbol(args: argparse.Namespace) -> int:
     """Analyze smart money flow for a stock."""
     analyzer = SymbolAnalyzer(paths=args.paths)
-    result = analyzer.analyze(args.symbol)
+    rolling_years = getattr(args, "years", None)
+    result = analyzer.analyze(args.symbol, rolling_years=rolling_years)
 
     if result is None:
         print(f"找不到股票：{args.symbol}")
         return 1
 
-    print(f"【{result.symbol}】@ {result.last_date}")
+    ranking_label = f"（{rolling_years}年滾動排名）" if rolling_years else ""
+    print(f"【{result.symbol}】@ {result.last_date} {ranking_label}")
     print("=" * 60)
 
     # Summary table
@@ -173,7 +175,9 @@ def cmd_symbol(args: argparse.Namespace) -> int:
 
     # Detail for specified window
     detail_window = args.detail
-    buy_top, sell_top = analyzer.get_top_brokers(args.symbol, window=detail_window)
+    buy_top, sell_top = analyzer.get_top_brokers(
+        args.symbol, window=detail_window, rolling_years=rolling_years,
+    )
 
     print()
     print(f"【近 {detail_window} 日 淨買超 TOP 15】")
@@ -416,6 +420,10 @@ def main(argv: list[str] | None = None) -> int:
     symbol_parser.add_argument(
         "--detail", type=int, default=1,
         help="Window (trading days) for detail view (default: 1)",
+    )
+    symbol_parser.add_argument(
+        "--years", type=int, default=None,
+        help="Use N-year rolling window PNL ranking (default: full period)",
     )
 
     # rolling command

@@ -98,10 +98,54 @@ class SymbolAnalyzer:
             return None
         return pl.read_parquet(path)
 
+    def _load_rolling_ranking(self, symbol: str, years: int) -> pl.DataFrame | None:
+        """Compute per-stock PNL ranking over a rolling window from pnl_daily.
+
+        Reads pnl_daily/{symbol}.parquet, filters to [max_date - N years, max_date],
+        aggregates per broker, and ranks. Millisecond-level operation on a single file.
+
+        Returns:
+            DataFrame with columns: rank, broker, total_pnl, realized_pnl,
+            unrealized_pnl. Or None if not found.
+        """
+        path = self._paths.symbol_pnl_daily_path(symbol)
+        if not path.exists():
+            return None
+
+        df = pl.read_parquet(path)
+        if len(df) == 0:
+            return None
+
+        max_date = df["date"].max()
+        try:
+            window_start = max_date.replace(year=max_date.year - years)
+        except ValueError:
+            window_start = date(max_date.year - years, max_date.month, max_date.day - 1)
+
+        df = df.filter(pl.col("date") >= window_start)
+        if len(df) == 0:
+            return None
+
+        agg = (
+            df.sort("date")
+            .group_by("broker")
+            .agg([
+                pl.col("realized_pnl").sum(),
+                pl.col("unrealized_pnl").last(),
+            ])
+            .with_columns(
+                (pl.col("realized_pnl") + pl.col("unrealized_pnl")).alias("total_pnl")
+            )
+            .sort("total_pnl", descending=True)
+            .with_row_index("rank", offset=1)
+        )
+        return agg
+
     def analyze(
         self,
         symbol: str,
         windows: tuple[int, ...] = DEFAULT_WINDOWS,
+        rolling_years: int | None = None,
     ) -> SymbolAnalysisResult | None:
         """Compute smart money signals for all time windows.
 
@@ -110,6 +154,8 @@ class SymbolAnalyzer:
         Args:
             symbol: Stock symbol (e.g., "2330")
             windows: Trading day windows to compute
+            rolling_years: If set, use N-year rolling window ranking
+                          from pnl_daily instead of full-period ranking.
 
         Returns:
             SymbolAnalysisResult or None if symbol not found
@@ -119,7 +165,10 @@ class SymbolAnalyzer:
         except RepositoryError:
             return None
 
-        ranking_df = self._load_symbol_ranking(symbol)
+        if rolling_years is not None:
+            ranking_df = self._load_rolling_ranking(symbol, rolling_years)
+        else:
+            ranking_df = self._load_symbol_ranking(symbol)
         if ranking_df is None:
             return None
 
@@ -150,6 +199,7 @@ class SymbolAnalyzer:
         symbol: str,
         window: int = 1,
         n: int = TOP_N,
+        rolling_years: int | None = None,
     ) -> tuple[pl.DataFrame, pl.DataFrame]:
         """Get top N net buyers and sellers for a specific window.
 
@@ -159,13 +209,17 @@ class SymbolAnalyzer:
             symbol: Stock symbol
             window: Number of trading days
             n: Number of top brokers to return
+            rolling_years: If set, use N-year rolling window ranking.
 
         Returns:
             (buy_top_df, sell_top_df) with columns:
             broker, name, net_buy, rank
         """
         trade_df = self._trade_repo.get_symbol(symbol)
-        ranking_df = self._load_symbol_ranking(symbol)
+        if rolling_years is not None:
+            ranking_df = self._load_rolling_ranking(symbol, rolling_years)
+        else:
+            ranking_df = self._load_symbol_ranking(symbol)
         if ranking_df is None:
             empty = pl.DataFrame(schema={"broker": pl.Utf8, "name": pl.Utf8, "net_buy": pl.Int64, "rank": pl.UInt32})
             return empty, empty

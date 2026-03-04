@@ -1,28 +1,4 @@
-"""PNL Analytics: High-speed broker PNL analysis system.
+"""Backward-compatible shim — re-exports from broker_analytics."""
 
-A modular system for analyzing broker trading performance,
-including PNL calculation, alpha metrics, and statistical testing.
-
-Architecture:
-- domain/: Core business logic (metrics, calculations)
-- infrastructure/: I/O and external dependencies
-- application/: Use cases and services
-- interfaces/: CLI and API endpoints
-"""
-
-__version__ = "0.27.1"
-
-from pnl_analytics.infrastructure import (
-    DataPaths,
-    AnalysisConfig,
-    DEFAULT_PATHS,
-    RepositoryError,
-)
-
-__all__ = [
-    "__version__",
-    "DataPaths",
-    "AnalysisConfig",
-    "DEFAULT_PATHS",
-    "RepositoryError",
-]
+from broker_analytics import *  # noqa: F401,F403
+from broker_analytics import __version__, __all__

@@ -3,8 +3,11 @@
 Assembles domain functions to answer: do PNL top-K brokers' cumulative
 buy/sell patterns predict medium-term returns?
 
+CRITICAL: Uses rolling PNL ranking — no look-ahead bias. For each date T,
+"smart money" is defined using only PNL data up to T.
+
 Pipeline:
-    1. Detect events (domain/event_detection)
+    1. Detect events (domain/event_detection) — rolling ranking
     2. Compute forward returns (domain/forward_returns)
     3. Sample unconditional baseline
     4. Compare distributions (domain/statistics)
@@ -113,6 +116,8 @@ class EventStudyReport:
 class EventStudyService:
     """Runs event study analysis for a single stock.
 
+    Uses rolling PNL ranking — no look-ahead bias.
+
     Example:
         >>> svc = EventStudyService()
         >>> report = svc.run("6285")
@@ -147,16 +152,16 @@ class EventStudyService:
         except RepositoryError:
             return None
 
-        ranking_df = self._load_ranking(symbol)
-        if ranking_df is None:
+        pnl_daily_df = self._load_pnl_daily(symbol)
+        if pnl_daily_df is None:
             return None
 
         prices = self._load_prices()
         if prices is None:
             return None
 
-        # 2. Detect events
-        events = detect_smart_money_events(trade_df, ranking_df, config)
+        # 2. Detect events (rolling ranking — no look-ahead)
+        events = detect_smart_money_events(trade_df, pnl_daily_df, config)
         if len(events) == 0:
             return None
 
@@ -214,7 +219,7 @@ class EventStudyService:
         robustness = None
         if run_robustness and n_sig >= 1:
             robustness = self._run_robustness(
-                trade_df, ranking_df, prices, symbol,
+                trade_df, pnl_daily_df, prices, symbol,
                 events, event_returns, config, horizons,
             )
 
@@ -238,13 +243,14 @@ class EventStudyService:
     # Private Helpers
     # -------------------------------------------------------------------------
 
-    def _load_ranking(self, symbol: str) -> pl.DataFrame | None:
-        """Load per-stock PNL ranking."""
-        path = self._paths.symbol_pnl_path(symbol)
+    def _load_pnl_daily(self, symbol: str) -> pl.DataFrame | None:
+        """Load per-stock daily PNL data."""
+        path = self._paths.symbol_pnl_daily_path(symbol)
         if not path.exists():
             return None
         df = pl.read_parquet(path)
-        if "broker" not in df.columns or "total_pnl" not in df.columns:
+        required = {"broker", "date", "realized_pnl", "unrealized_pnl"}
+        if not required.issubset(df.columns):
             return None
         return df
 
@@ -258,7 +264,7 @@ class EventStudyService:
     def _run_robustness(
         self,
         trade_df: pl.DataFrame,
-        ranking_df: pl.DataFrame,
+        pnl_daily_df: pl.DataFrame,
         prices: pl.DataFrame,
         symbol: str,
         events: pl.DataFrame,
@@ -270,7 +276,7 @@ class EventStudyService:
         n_tests = len(horizons)
 
         # --- Placebo ---
-        placebo_events = detect_placebo_events(trade_df, ranking_df, config)
+        placebo_events = detect_placebo_events(trade_df, pnl_daily_df, config)
         placebo_sig = False
         if len(placebo_events) >= 10:
             placebo_rets = compute_forward_returns(placebo_events, prices, symbol, horizons)
@@ -288,19 +294,12 @@ class EventStudyService:
                         break
 
         # --- Dose-response ---
-        # Split events into 5 quintiles by signal_value, compute avg CAR
-        best_horizon = max(horizons)  # Use longest horizon for CAR
+        best_horizon = max(horizons)
         car_col = f"ret_{best_horizon}d"
         quintile_cars = [0.0] * 5
 
         valid_rets = event_returns.drop_nulls(car_col)
         if len(valid_rets) >= 10:
-            valid_rets = valid_rets.with_columns(
-                pl.col("signal_value")
-                .rank()
-                .over(pl.lit(1))  # global rank
-                .alias("sv_rank")
-            )
             n_total = len(valid_rets)
             q_size = n_total / 5
 
@@ -311,7 +310,6 @@ class EventStudyService:
                 if len(q_df) > 0:
                     quintile_cars[q] = float(q_df[car_col].mean())
 
-        # Check monotonicity: each quintile CAR >= previous
         is_monotonic = all(
             quintile_cars[i] <= quintile_cars[i + 1]
             for i in range(4)
@@ -333,14 +331,12 @@ class EventStudyService:
             col = f"ret_{h}d"
             unc = uncond.get(h, np.array([]))
 
-            # First half
             c1 = first_half[col].drop_nulls().to_numpy()
             if len(c1) >= 5 and len(unc) >= 5:
                 t1 = compare_distributions(c1, unc, n_tests=n_tests)
                 if t1.significant:
                     in_sample_sig += 1
 
-            # Second half
             c2 = second_half[col].drop_nulls().to_numpy()
             if len(c2) >= 5 and len(unc) >= 5:
                 t2 = compare_distributions(c2, unc, n_tests=n_tests)

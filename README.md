@@ -248,7 +248,7 @@ timing_alpha = Σ((net_buy[t-1] - avg_net_buy) × return[t]) / std(net_buy)
 
 `event-study` 子命令對個股執行事件研究，檢驗 PNL top-K 券商的累積買賣異常是否預測中期報酬：
 
-1. **事件偵測**：top-K 券商的 N 日滾動淨買超，標準化後超過 ±Nσ → accumulation / distribution 事件
+1. **事件偵測**：使用 rolling PNL ranking（每天只用截至當天的累積 PNL），取 top-K 券商的 N 日滾動淨買超，標準化後超過 ±Nσ → accumulation / distribution 事件
 2. **Forward returns**：事件後 1/5/10/20 日報酬（bps），與隨機基準線（10,000 次抽樣）比較
 3. **統計檢定**：Welch's t-test + Bonferroni 校正 + Cohen's d 效果量（雙重門檻：p_corr < 0.05 且 |d| ≥ 0.2）
 4. **穩健性檢查**（3 項）：

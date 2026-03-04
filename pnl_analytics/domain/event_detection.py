@@ -28,6 +28,9 @@ class EventConfig:
         top_k: Number of top PNL brokers to track.
         window_days: Rolling window for cumulative net buy.
         threshold_sigma: Event threshold in standard deviations.
+        ranking_window_years: Rolling window (years) for PNL ranking.
+                              PNL only meaningful from 2023+, so a 3-year
+                              window avoids diluting with position-building noise.
         min_history_days: Minimum trading days of PNL history before
                           detecting events. Prevents ranking on noisy
                           early data.
@@ -35,6 +38,7 @@ class EventConfig:
     top_k: int = 20
     window_days: int = 5
     threshold_sigma: float = 2.0
+    ranking_window_years: int = 3
     min_history_days: int = 250
 
 
@@ -73,12 +77,16 @@ def detect_smart_money_events(
         DataFrame[date, signal_value, direction]
         direction: +1 (accumulation) or -1 (distribution)
     """
-    # 1. Compute cumulative total_pnl per broker per date
+    # 1. Compute rolling-window total_pnl per broker per date
+    window_days_str = f"{365 * config.ranking_window_years}d"
     daily_pnl = (
         pnl_daily_df
-        .sort("broker", "date")
+        .sort("date")
         .with_columns(
-            pl.col("realized_pnl").cum_sum().over("broker").alias("cum_realized")
+            pl.col("realized_pnl")
+            .rolling_sum_by("date", window_size=window_days_str)
+            .over("broker")
+            .alias("cum_realized")
         )
         .with_columns(
             (pl.col("cum_realized") + pl.col("unrealized_pnl")).alias("total_pnl")

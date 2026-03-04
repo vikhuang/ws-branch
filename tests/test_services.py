@@ -10,14 +10,14 @@ from pathlib import Path
 
 import polars as pl
 
-from pnl_analytics.application import (
+from broker_analytics.application import (
     BrokerAnalyzer,
     BrokerAnalysisResult,
     RankingService,
     RankingReportConfig,
 )
-from pnl_analytics.infrastructure import DEFAULT_PATHS
-from pnl_analytics.infrastructure.repositories import RankingRepository, RepositoryError
+from broker_analytics.infrastructure import DEFAULT_PATHS
+from broker_analytics.infrastructure.repositories import RankingRepository, RepositoryError
 
 
 # =============================================================================
@@ -39,10 +39,7 @@ class TestBrokerAnalysisResult:
             total_buy_amount=100_000_000_000,
             total_sell_amount=80_000_000_000,
             total_amount=180_000_000_000,
-            win_count=300,
-            loss_count=200,
-            trade_count=500,
-            win_rate=0.6,
+            timing_alpha=0.35,
             direction="做多",
         )
         d = result.to_dict()
@@ -51,6 +48,7 @@ class TestBrokerAnalysisResult:
         assert d["name"] == "美林"
         assert d["rank"] == 1
         assert d["direction"] == "做多"
+        assert d["timing_alpha"] == 0.35
 
     def test_frozen(self):
         """BrokerAnalysisResult should be immutable."""
@@ -58,8 +56,7 @@ class TestBrokerAnalysisResult:
             broker="1440", name="", rank=1,
             total_pnl=0, realized_pnl=0, unrealized_pnl=0,
             total_buy_amount=0, total_sell_amount=0, total_amount=0,
-            win_count=0, loss_count=0, trade_count=0,
-            win_rate=0, direction="中性",
+            timing_alpha=0.0, direction="中性",
         )
         with pytest.raises(AttributeError):
             result.broker = "9999"
@@ -107,7 +104,7 @@ class TestBrokerAnalyzer:
                     assert result.broker == broker
                     assert result.rank >= 1
                     assert isinstance(result.total_pnl, float)
-                    assert isinstance(result.win_rate, float)
+                    assert isinstance(result.timing_alpha, float)
                     assert result.direction in ("做多", "做空", "中性")
         except RepositoryError:
             pytest.skip("Ranking data not available")

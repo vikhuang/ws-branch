@@ -1,10 +1,13 @@
-"""Command Line Interface for PNL Analytics.
+"""Command Line Interface for Broker Analytics.
 
 Provides CLI access to analytics functions:
 - ranking: Show broker ranking
 - query: Query specific broker
 - symbol: Analyze smart money flow for a stock
 - event-study: Smart money event study
+- signal: Per-stock signal analysis pipeline
+- scan: Full-market signal screening with FDR
+- export: Export signals to CSV
 - verify: Verify data integrity
 
 Usage:
@@ -12,6 +15,9 @@ Usage:
     python -m broker_analytics query BROKER
     python -m broker_analytics symbol SYMBOL [--detail WINDOW]
     python -m broker_analytics event-study SYMBOL [--top-k 20] [--window 5]
+    python -m broker_analytics signal SYMBOL [--train-start DATE]
+    python -m broker_analytics scan [--min-turnover N] [--fdr 0.01]
+    python -m broker_analytics export [--symbols SYM1,SYM2]
     python -m broker_analytics verify
 """
 
@@ -475,6 +481,63 @@ def cmd_verify(args: argparse.Namespace) -> int:
         return 0
 
 
+def cmd_signal(args: argparse.Namespace) -> int:
+    """Run per-stock signal analysis pipeline."""
+    from broker_analytics.application.services.signal_report import run_pipeline
+
+    run_pipeline(
+        args.symbol,
+        train_start=args.train_start,
+        train_end=args.train_end,
+        test_start=args.test_start,
+        test_end=args.test_end,
+        paths=args.paths,
+    )
+    return 0
+
+
+def cmd_scan(args: argparse.Namespace) -> int:
+    """Run full-market signal screening."""
+    from broker_analytics.application.services.market_scan import ScanConfig, run_scan
+
+    config = ScanConfig(
+        min_turnover=args.min_turnover,
+        cost=args.cost,
+        fdr_threshold=args.fdr,
+        min_test_days=args.min_test_days,
+        train_start=args.train_start,
+        train_end=args.train_end,
+        test_start=args.test_start,
+        test_end=args.test_end,
+        workers=args.workers,
+    )
+    run_scan(config, paths=args.paths)
+    return 0
+
+
+def cmd_export(args: argparse.Namespace) -> int:
+    """Export signals to CSV."""
+    from broker_analytics.application.services.signal_export import run_export
+
+    symbols = None
+    if args.symbols:
+        symbols = [s.strip() for s in args.symbols.split(",")]
+
+    run_export(
+        symbols=symbols,
+        trade_start=args.trade_start,
+        trade_end=args.trade_end,
+        output=args.output,
+        workers=args.workers,
+        train_start=args.train_start,
+        train_end=args.train_end,
+        test_start=args.test_start,
+        test_end=args.test_end,
+        paths=args.paths,
+    )
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     """Main entry point for CLI."""
     parser = argparse.ArgumentParser(
@@ -578,6 +641,62 @@ def main(argv: list[str] | None = None) -> int:
         help="Skip robustness checks",
     )
 
+    # signal command
+    signal_parser = subparsers.add_parser(
+        "signal", help="Per-stock signal analysis pipeline",
+    )
+    signal_parser.add_argument("symbol", help="Stock symbol (e.g., 2330)")
+    signal_parser.add_argument("--train-start", default="2023-01-01")
+    signal_parser.add_argument("--train-end", default="2024-06-30")
+    signal_parser.add_argument("--test-start", default="2024-07-01")
+    signal_parser.add_argument("--test-end", default="2025-12-31")
+
+    # scan command
+    scan_parser = subparsers.add_parser(
+        "scan", help="Full-market signal screening with FDR",
+    )
+    scan_parser.add_argument(
+        "--min-turnover", type=float, default=2e8,
+        help="Min avg daily turnover in NTD (default: 200000000)",
+    )
+    scan_parser.add_argument(
+        "--cost", type=float, default=0.005,
+        help="Cost per trade (default: 0.005)",
+    )
+    scan_parser.add_argument(
+        "--fdr", type=float, default=0.01,
+        help="FDR threshold (default: 0.01)",
+    )
+    scan_parser.add_argument(
+        "--min-test-days", type=int, default=250,
+        help="Min test days (default: 250)",
+    )
+    scan_parser.add_argument(
+        "--workers", type=int, default=12,
+        help="Parallel workers (default: 12)",
+    )
+    scan_parser.add_argument("--train-start", default="2023-01-01")
+    scan_parser.add_argument("--train-end", default="2024-06-30")
+    scan_parser.add_argument("--test-start", default="2024-07-01")
+    scan_parser.add_argument("--test-end", default="2025-12-31")
+
+    # export command
+    export_parser = subparsers.add_parser(
+        "export", help="Export signals to CSV",
+    )
+    export_parser.add_argument(
+        "--symbols", default=None,
+        help="Comma-separated symbols (default: all FDR-passing)",
+    )
+    export_parser.add_argument("--trade-start", default="2025-01-02")
+    export_parser.add_argument("--trade-end", default="2025-12-31")
+    export_parser.add_argument("-o", "--output", default=None)
+    export_parser.add_argument("--workers", type=int, default=12)
+    export_parser.add_argument("--train-start", default="2023-01-01")
+    export_parser.add_argument("--train-end", default="2024-06-30")
+    export_parser.add_argument("--test-start", default="2024-07-01")
+    export_parser.add_argument("--test-end", default="2025-12-31")
+
     # verify command
     subparsers.add_parser("verify", help="Verify data integrity")
 
@@ -594,6 +713,9 @@ def main(argv: list[str] | None = None) -> int:
         "symbol": cmd_symbol,
         "rolling": cmd_rolling,
         "event-study": cmd_event_study,
+        "signal": cmd_signal,
+        "scan": cmd_scan,
+        "export": cmd_export,
         "verify": cmd_verify,
     }
 

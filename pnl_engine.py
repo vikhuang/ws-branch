@@ -26,127 +26,14 @@ Backtest Window:
 import sys
 from collections import defaultdict
 from concurrent.futures import ProcessPoolExecutor, as_completed
-from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
-from typing import NamedTuple
 
 import polars as pl
 
-from pnl_analytics.infrastructure.config import DataPaths, AnalysisConfig, DEFAULT_PATHS, DEFAULT_CONFIG
-
-
-# =============================================================================
-# FIFO Data Structures
-# =============================================================================
-
-@dataclass
-class Lot:
-    """A single purchase/short lot."""
-    shares: int
-    cost_per_share: float
-    buy_date: date
-
-
-@dataclass
-class FIFOAccount:
-    """Tracks position for a (symbol, broker) pair using FIFO."""
-    long_lots: list = field(default_factory=list)
-    short_lots: list = field(default_factory=list)
-
-    @property
-    def position(self) -> int:
-        """Net position: positive=long, negative=short."""
-        long_shares = sum(lot.shares for lot in self.long_lots)
-        short_shares = sum(lot.shares for lot in self.short_lots)
-        return long_shares - short_shares
-
-    def process_day(
-        self,
-        buy_shares: int,
-        sell_shares: int,
-        buy_amount: float,
-        sell_amount: float,
-        close_price: float,
-        current_date: date,
-    ) -> tuple[float, float]:
-        """Process a day's transactions using FIFO.
-
-        Returns:
-            (realized_pnl_today, unrealized_pnl)
-        """
-        realized_today = 0.0
-        avg_buy = buy_amount / buy_shares if buy_shares > 0 else 0.0
-        avg_sell = sell_amount / sell_shares if sell_shares > 0 else 0.0
-
-        # Process sells: close longs first, then open shorts
-        if sell_shares > 0:
-            # Close long positions (FIFO)
-            while sell_shares > 0 and self.long_lots:
-                lot = self.long_lots[0]
-                take = min(sell_shares, lot.shares)
-                realized_today += take * (avg_sell - lot.cost_per_share)
-                lot.shares -= take
-                sell_shares -= take
-                if lot.shares == 0:
-                    self.long_lots.pop(0)
-
-            # Remaining sells open short
-            if sell_shares > 0:
-                self.short_lots.append(Lot(sell_shares, avg_sell, current_date))
-
-        # Process buys: cover shorts first, then open longs
-        if buy_shares > 0:
-            # Cover short positions (FIFO)
-            while buy_shares > 0 and self.short_lots:
-                lot = self.short_lots[0]
-                take = min(buy_shares, lot.shares)
-                realized_today += take * (lot.cost_per_share - avg_buy)
-                lot.shares -= take
-                buy_shares -= take
-                if lot.shares == 0:
-                    self.short_lots.pop(0)
-
-            # Remaining buys open long
-            if buy_shares > 0:
-                self.long_lots.append(Lot(buy_shares, avg_buy, current_date))
-
-        # Calculate unrealized PNL
-        unrealized = 0.0
-        for lot in self.long_lots:
-            unrealized += lot.shares * (close_price - lot.cost_per_share)
-        for lot in self.short_lots:
-            unrealized += lot.shares * (lot.cost_per_share - close_price)
-
-        return realized_today, unrealized
-
-    def get_lots(self) -> list[tuple[str, int, float, date]]:
-        """Extract current lots for serialization.
-
-        Returns:
-            List of (side, shares, cost_per_share, open_date) tuples.
-        """
-        lots = []
-        for lot in self.long_lots:
-            lots.append(("long", lot.shares, lot.cost_per_share, lot.buy_date))
-        for lot in self.short_lots:
-            lots.append(("short", lot.shares, lot.cost_per_share, lot.buy_date))
-        return lots
-
-
-# =============================================================================
-# Per-Symbol Processing
-# =============================================================================
-
-class BrokerResult(NamedTuple):
-    """Result for a single broker in a symbol."""
-    broker: str
-    total_pnl: float        # Realized (after backtest_start) + final unrealized
-    realized_pnl: float     # Sum of realized after backtest_start
-    unrealized_pnl: float   # Final unrealized
-    total_buy: float
-    total_sell: float
-    timing_alpha: float     # Σ((net_buy[t-1] - avg) × return[t]) / std(net_buy)
+from broker_analytics.domain.fifo import Lot, FIFOAccount, BrokerResult
+from broker_analytics.domain.timing_alpha import compute_timing_alpha
+from broker_analytics.infrastructure.config import DataPaths, AnalysisConfig, DEFAULT_PATHS, DEFAULT_CONFIG
 
 
 def process_symbol(
@@ -283,17 +170,7 @@ def process_symbol(
         # Total PNL = realized (after start) + final unrealized
         total_pnl = realized_after_start + last_unrealized
 
-        # Calculate timing alpha: Σ((net_buy[t-1] - avg) × return[t]) / std(net_buy)
-        timing_alpha = 0.0
-        if len(net_buy_series) >= 2:
-            avg_net_buy = sum(net_buy_series) / len(net_buy_series)
-            raw_ta = 0.0
-            for t in range(1, len(net_buy_series)):
-                raw_ta += (net_buy_series[t - 1] - avg_net_buy) * return_series[t]
-            # Normalize by std(net_buy) to remove volume bias
-            variance = sum((x - avg_net_buy) ** 2 for x in net_buy_series) / len(net_buy_series)
-            std_net_buy = variance ** 0.5
-            timing_alpha = raw_ta / std_net_buy if std_net_buy > 0 else 0.0
+        timing_alpha = compute_timing_alpha(net_buy_series, return_series)
 
         results.append(BrokerResult(
             broker=broker,

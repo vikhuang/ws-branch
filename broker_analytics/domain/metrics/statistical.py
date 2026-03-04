@@ -14,7 +14,7 @@ from dataclasses import dataclass
 import random
 from typing import Sequence, Callable
 
-from broker_analytics.domain.metrics.timing_alpha import calculate_timing_alpha
+from broker_analytics.domain.timing_alpha import compute_timing_alpha as calculate_timing_alpha
 
 
 # =============================================================================

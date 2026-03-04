@@ -17,6 +17,7 @@ from broker_analytics.infrastructure.repositories import (
     TradeRepository,
     BrokerRepository,
     RankingRepository,
+    PriceRepository,
 )
 
 __all__ = [
@@ -31,4 +32,5 @@ __all__ = [
     "TradeRepository",
     "BrokerRepository",
     "RankingRepository",
+    "PriceRepository",
 ]

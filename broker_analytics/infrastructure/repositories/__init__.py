@@ -10,6 +10,7 @@ from broker_analytics.infrastructure.repositories.base import Repository, Reposi
 from broker_analytics.infrastructure.repositories.trade_repo import TradeRepository
 from broker_analytics.infrastructure.repositories.broker_repo import BrokerRepository
 from broker_analytics.infrastructure.repositories.pnl_repo import RankingRepository
+from broker_analytics.infrastructure.repositories.price_repo import PriceRepository
 
 __all__ = [
     "Repository",
@@ -17,4 +18,5 @@ __all__ = [
     "TradeRepository",
     "BrokerRepository",
     "RankingRepository",
+    "PriceRepository",
 ]

@@ -1,4 +1,4 @@
-"""Application Services for PNL Analytics.
+"""Application Services for Broker Analytics.
 
 Services orchestrate repository access to implement use cases.
 
@@ -6,6 +6,9 @@ Available services:
 - RankingService: Broker ranking report generation
 - BrokerAnalyzer: Single broker analysis
 - SymbolAnalyzer: Smart money signal for individual stocks
+- signal_report: Per-stock signal analysis pipeline
+- market_scan: Full-market signal screening with FDR
+- signal_export: Signal CSV export for ws-quant
 """
 
 from broker_analytics.application.services.ranking import (

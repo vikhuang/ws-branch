@@ -16,15 +16,9 @@ from pathlib import Path
 import polars as pl
 from google.cloud import bigquery
 
-from pnl_analytics.infrastructure.config import DataPaths, DEFAULT_PATHS
+from broker_analytics.infrastructure.bigquery import PROJECT_ID, _TABLE_REF
+from broker_analytics.infrastructure.config import DataPaths, DEFAULT_PATHS
 
-
-# BigQuery configuration
-PROJECT_ID = "gen-lang-client-0998197473"
-DATASET = "wsai"
-TABLE = "tej_prices"
-
-# Batch size for BigQuery queries (avoid query length limits)
 BATCH_SIZE = 500
 
 
@@ -51,7 +45,7 @@ def fetch_prices_batch(
         coid,
         mdate,
         close_d
-    FROM `{PROJECT_ID}.{DATASET}.{TABLE}`
+    FROM `{_TABLE_REF}`
     WHERE coid IN ({symbols_str})
       AND mdate BETWEEN '{start_date}' AND '{end_date}'
     ORDER BY coid, mdate
@@ -103,7 +97,7 @@ def sync_prices(
     client = bigquery.Client(project=PROJECT_ID)
     sample_query = f"""
     SELECT DISTINCT coid, mdate, close_d
-    FROM `{PROJECT_ID}.{DATASET}.{TABLE}`
+    FROM `{_TABLE_REF}`
     WHERE coid IN ('{symbols[0]}')
       AND mdate BETWEEN '{start_date}' AND '{end_date}'
     """

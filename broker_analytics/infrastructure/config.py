@@ -106,6 +106,21 @@ class DataPaths:
         return self.derived_dir / "broker_merge_map.json"
 
     @property
+    def reports_dir(self) -> Path:
+        """Signal reports output directory."""
+        return self.data_dir / "reports"
+
+    @property
+    def market_scan_path(self) -> Path:
+        """Market scan results (JSON)."""
+        return self.derived_dir / "market_scan.json"
+
+    @property
+    def signals_csv_path(self) -> Path:
+        """Exported signals CSV."""
+        return self.derived_dir / "signals.csv"
+
+    @property
     def broker_master(self) -> Path:
         """Official broker data (XLS)."""
         return self.root / "證券商基本資料.xls"
@@ -162,6 +177,7 @@ class DataPaths:
         self.fifo_state_dir.mkdir(parents=True, exist_ok=True)
         self.pnl_dir.mkdir(parents=True, exist_ok=True)
         self.derived_dir.mkdir(parents=True, exist_ok=True)
+        self.reports_dir.mkdir(parents=True, exist_ok=True)
 
 
 @dataclass(frozen=True)

@@ -320,3 +320,35 @@ def permutation_test(
             count_extreme += 1
 
     return count_extreme / n_perms
+
+
+# =============================================================================
+# P-value Conversion & Multiple Testing Correction
+# =============================================================================
+
+def tstat_to_pvalue(t: float) -> float:
+    """Two-tailed p-value from t-stat using normal approximation (valid for df > 30)."""
+    return math.erfc(abs(t) / math.sqrt(2))
+
+
+def benjamini_hochberg(
+    items_pvalues: list[tuple[str, float]], alpha: float
+) -> list[str]:
+    """Benjamini-Hochberg FDR correction.
+
+    Args:
+        items_pvalues: List of (item_id, p_value) tuples.
+        alpha: FDR threshold (e.g., 0.01 for 1%).
+
+    Returns:
+        List of item_ids that pass FDR correction, sorted by p-value.
+    """
+    if not items_pvalues:
+        return []
+    sorted_sp = sorted(items_pvalues, key=lambda x: x[1])
+    n = len(sorted_sp)
+    max_k = 0
+    for k in range(1, n + 1):
+        if sorted_sp[k - 1][1] <= alpha * k / n:
+            max_k = k
+    return [sorted_sp[i][0] for i in range(max_k)]

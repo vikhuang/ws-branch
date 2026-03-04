@@ -15,6 +15,8 @@ from datetime import date
 
 import polars as pl
 
+from broker_analytics.domain.large_trade import flag_large_trades
+
 
 # =============================================================================
 # Configuration
@@ -118,7 +120,7 @@ def detect_smart_money_events(
         return pl.DataFrame(schema=_EMPTY_EVENTS)
 
     # 4. Flag per-broker large trades (like signal_report: |net_buy - mean| > 2σ)
-    large_trades = _flag_broker_large_trades(trade_df, config.threshold_sigma)
+    large_trades = flag_large_trades(trade_df, config.threshold_sigma).select("date", "broker", "large_dir")
 
     # 5. Join top-K with large trade flags → daily count
     topk_large = daily_ranked.join(
@@ -181,7 +183,7 @@ def detect_placebo_events(
     sampled = set(rng.choice(eligible, size=config.top_k, replace=False).tolist())
 
     # Flag per-broker large trades, filter to sampled brokers
-    large_trades = _flag_broker_large_trades(trade_df, config.threshold_sigma)
+    large_trades = flag_large_trades(trade_df, config.threshold_sigma).select("date", "broker", "large_dir")
     placebo_large = large_trades.filter(pl.col("broker").is_in(sampled))
 
     daily_net = (
@@ -204,53 +206,6 @@ def detect_placebo_events(
 # Internal Helpers
 # =============================================================================
 
-def _flag_broker_large_trades(
-    trade_df: pl.DataFrame,
-    sigma: float = 2.0,
-) -> pl.DataFrame:
-    """Flag per-broker large trades (like signal_report).
-
-    For each broker, compute mean/std of net_buy across all dates.
-    Flag days where (net_buy - mean) / std exceeds ±sigma.
-
-    Returns:
-        DataFrame[date, broker, large_dir]
-        large_dir: +1 (large buy), -1 (large sell), 0 (normal)
-    """
-    trades_with_net = (
-        trade_df
-        .with_columns(
-            pl.col("broker").cast(pl.Utf8),
-            (pl.col("buy_shares") - pl.col("sell_shares")).alias("net_buy"),
-        )
-    )
-
-    broker_stats = (
-        trades_with_net
-        .group_by("broker")
-        .agg(
-            pl.col("net_buy").mean().alias("mean_nb"),
-            pl.col("net_buy").std().alias("std_nb"),
-        )
-        .filter(pl.col("std_nb") > 0)
-    )
-
-    return (
-        trades_with_net
-        .join(broker_stats, on="broker")
-        .with_columns(
-            ((pl.col("net_buy") - pl.col("mean_nb")) / pl.col("std_nb")).alias("z_broker")
-        )
-        .with_columns(
-            pl.when(pl.col("z_broker") > sigma)
-            .then(pl.lit(1, dtype=pl.Int8))
-            .when(pl.col("z_broker") < -sigma)
-            .then(pl.lit(-1, dtype=pl.Int8))
-            .otherwise(pl.lit(0, dtype=pl.Int8))
-            .alias("large_dir")
-        )
-        .select("date", "broker", "large_dir")
-    )
 
 
 def _signal_from_daily_net(

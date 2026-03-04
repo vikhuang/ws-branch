@@ -17,8 +17,11 @@ from pnl_analytics.domain.metrics import (
 )
 from pnl_analytics.domain.statistics import (
     DistributionSummary,
+    DistributionShape,
     HypothesisTestResult,
     compare_distributions,
+    describe_shape,
+    permutation_test as stats_permutation_test,
 )
 from pnl_analytics.domain.event_detection import (
     EventConfig,
@@ -27,6 +30,8 @@ from pnl_analytics.domain.event_detection import (
 from pnl_analytics.domain.forward_returns import (
     compute_forward_returns,
     sample_unconditional_returns,
+    compute_daily_car,
+    standardize_returns,
 )
 
 __all__ = [
@@ -38,12 +43,17 @@ __all__ = [
     "permutation_test",
     # Statistics
     "DistributionSummary",
+    "DistributionShape",
     "HypothesisTestResult",
     "compare_distributions",
+    "describe_shape",
+    "stats_permutation_test",
     # Event Detection
     "EventConfig",
     "detect_smart_money_events",
     # Forward Returns
     "compute_forward_returns",
     "sample_unconditional_returns",
+    "compute_daily_car",
+    "standardize_returns",
 ]

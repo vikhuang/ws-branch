@@ -291,6 +291,8 @@ def cmd_rolling(args: argparse.Namespace) -> int:
 
 def cmd_event_study(args: argparse.Namespace) -> int:
     """Run event study for a stock."""
+    from pnl_analytics.domain.event_detection import EventConfig
+
     config = EventConfig(
         top_k=args.top_k,
         window_days=args.window,
@@ -324,52 +326,56 @@ def cmd_event_study(args: argparse.Namespace) -> int:
     print(f"Events: {report.n_accumulation} accumulation + "
           f"{report.n_distribution} distribution = {report.n_events} total")
 
-    # Forward returns table
+    # Step 1: Threshold calibration
+    s = report.threshold_shape
     print()
-    print("FORWARD RETURNS (bps):")
-    print(f"{'Horizon':>7} | {'Cond Mean':>9} {'Cond Med':>9} | "
-          f"{'Uncond Mean':>11} | {'t-stat':>6} {'p-corr':>7} {'Cohen d':>8} | Sig")
-    print(f"{'-'*7}-+-{'-'*9}-{'-'*9}-+-{'-'*11}-+-"
-          f"{'-'*6}-{'-'*7}-{'-'*8}-+----")
+    print(f"THRESHOLD CALIBRATION (per-broker z-scores):")
+    print(f"  Skewness: {s.skewness:+.3f}  Excess kurtosis: {s.excess_kurtosis:+.3f}")
+    print(f"  Beyond ±{config.threshold_sigma}σ: {s.pct_beyond:.1f}% "
+          f"(normal expects {s.pct_expected:.1f}%)")
+    fat = s.pct_beyond / s.pct_expected if s.pct_expected > 0 else 0
+    if fat > 1.5:
+        print(f"  Fat tails: {fat:.1f}x more triggers than normal assumption")
+    print(f"  +{config.threshold_sigma}σ = top {100 - s.threshold_percentile:.1f}%")
 
-    for hr in report.horizons:
-        c = hr.conditional
-        u = hr.unconditional
-        t = hr.test
-        sig = " *" if t.significant else ""
-        print(f"{hr.horizon:>5}d  | {c.mean:>+9.1f} {c.median:>+9.1f} | "
-              f"{u.mean:>+11.1f} | {t.t_stat:>6.2f} {t.p_value_corrected:>7.3f} "
-              f"{t.cohens_d:>+8.2f} |{sig}")
+    # Step 2-4: Per-direction results
+    for dr in [report.accumulation, report.distribution]:
+        if dr is None:
+            continue
+        print()
+        label = "ACCUMULATION (top-K large buys)" if dr.label == "accumulation" \
+            else "DISTRIBUTION (top-K large sells)"
+        print(f"{label}: {dr.n_events} events")
+        print(f"{'Horizon':>7} | {'Mean':>9} {'Median':>9} | "
+              f"{'Uncond':>9} | {'t-stat':>6} {'perm-p':>7} {'Cohen d':>8} | Sig")
+        print(f"{'-'*7}-+-{'-'*9}-{'-'*9}-+-{'-'*9}-+-"
+              f"{'-'*6}-{'-'*7}-{'-'*8}-+----")
 
-    # Significant horizons
-    if report.significant_horizons:
-        h_str = ", ".join(f"{h}d" for h in report.significant_horizons)
-        print(f"\nSignificant horizons: {h_str} "
-              f"({len(report.significant_horizons)}/{len(report.horizons)})")
-    else:
-        print(f"\nSignificant horizons: none (0/{len(report.horizons)})")
+        for hr in dr.horizons:
+            sig = " *" if hr.significant else ""
+            print(f"{hr.horizon:>5}d  | {hr.cond_mean:>+9.1f} {hr.cond_median:>+9.1f} | "
+                  f"{hr.uncond_mean:>+9.1f} | {hr.t_stat:>6.2f} {hr.perm_p:>7.4f} "
+                  f"{hr.cohens_d:>+8.2f} |{sig}")
+
+        if dr.significant_horizons:
+            h_str = ", ".join(f"{h}d" for h in dr.significant_horizons)
+            print(f"  Significant: {h_str}")
+
+        # Step 5: Decay curve
+        if dr.decay_curve:
+            print(f"  Decay curve (direction-adjusted CAR, bps):")
+            curve_str = "  "
+            for d in range(len(dr.decay_curve)):
+                if (d + 1) in [1, 2, 3, 5, 10, 15, 20] and d < len(dr.decay_curve):
+                    curve_str += f"d{d+1}:{dr.decay_curve[d]:+.0f}  "
+            print(curve_str)
 
     # Robustness
     if report.robustness is not None:
         r = report.robustness
         print()
-        print("ROBUSTNESS:")
-
-        placebo_mark = "NOT significant ✓" if not r.placebo_significant else "significant ✗"
-        print(f"  Placebo (random brokers):     {placebo_mark}")
-
-        mono_mark = "monotonic ✓" if r.dose_response_monotonic else "NOT monotonic ✗"
-        print(f"  Dose-response (quintiles):    {mono_mark}")
-        q_str = "  ".join(f"Q{i+1}: {v:+.0f} bps" for i, v in enumerate(r.quintile_cars))
-        print(f"    {q_str}")
-
-        print("  Temporal split:")
-        in_mark = "✓" if r.temporal_in_sample > 0 else "✗"
-        out_mark = "✓" if r.temporal_out_of_sample > 0 else "✗"
-        print(f"    In-sample (first half):     "
-              f"{r.temporal_in_sample}/{len(report.horizons)} significant {in_mark}")
-        print(f"    Out-of-sample (second half): "
-              f"{r.temporal_out_of_sample}/{len(report.horizons)} significant {out_mark}")
+        placebo_mark = "NOT significant" if not r.placebo_significant else "significant"
+        print(f"PLACEBO: {placebo_mark}")
 
     # Conclusion
     print()
@@ -380,34 +386,7 @@ def cmd_event_study(args: argparse.Namespace) -> int:
         "no_effect": "NO EFFECT",
     }
     label = conclusion_map[report.conclusion]
-    n_sig = len(report.significant_horizons)
-    n_total = len(report.horizons)
-
-    robustness_note = ""
-    if report.robustness is not None:
-        r = report.robustness
-        passed = []
-        failed = []
-        if not r.placebo_significant:
-            passed.append("placebo")
-        else:
-            failed.append("placebo")
-        if r.dose_response_monotonic:
-            passed.append("dose-response")
-        else:
-            failed.append("dose-response")
-        if r.temporal_in_sample > 0 and r.temporal_out_of_sample > 0:
-            passed.append("temporal")
-        else:
-            failed.append("temporal")
-
-        if failed:
-            robustness_note = f", robustness: {len(passed)}/3 passed"
-        else:
-            robustness_note = ", robustness passed"
-
-    print(f"CONCLUSION: {label} — {n_sig}/{n_total} horizons significant"
-          f"{robustness_note}")
+    print(f"CONCLUSION: {label}")
     print("=" * 70)
 
     return 0

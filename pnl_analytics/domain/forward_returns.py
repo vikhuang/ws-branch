@@ -1,7 +1,8 @@
 """Forward Returns: Compute post-event returns and unconditional baseline.
 
 Calculates forward returns (in bps) at multiple horizons for event dates,
-and samples random baseline returns for comparison.
+samples random baseline returns for comparison, computes daily CAR curves,
+and standardizes returns (SCAR) for cross-stock pooling.
 
 Pure functions — input/output are polars DataFrames and numpy arrays.
 """
@@ -139,3 +140,125 @@ def sample_unconditional_returns(
         result[h] = rets.astype(np.float64)
 
     return result
+
+
+# =============================================================================
+# Daily CAR (Decay Curve)
+# =============================================================================
+
+def compute_daily_car(
+    events: pl.DataFrame,
+    prices: pl.DataFrame,
+    symbol: str,
+    max_horizon: int = 20,
+) -> np.ndarray:
+    """Compute mean Cumulative Abnormal Return day by day.
+
+    For each event, compute daily return from T to T+d (d = 1..max_horizon).
+    Then average across events. Used for decay curve visualization.
+
+    Direction-aware: distribution events (-1) have their returns negated,
+    so positive CAR means the signal is working in both directions.
+
+    Args:
+        events: Event DataFrame with columns: date, direction, signal_value.
+        prices: Price DataFrame with columns: symbol_id, date, close_price.
+        symbol: Stock symbol.
+        max_horizon: Maximum forward day (inclusive).
+
+    Returns:
+        1-D numpy array of length max_horizon. car[d-1] = mean CAR at day d.
+        NaN if no valid events for that day.
+    """
+    sym_prices = (
+        prices
+        .filter(pl.col("symbol_id") == symbol)
+        .sort("date")
+        .select("date", "close_price")
+    )
+
+    if len(sym_prices) == 0 or len(events) == 0:
+        return np.full(max_horizon, np.nan)
+
+    dates = sym_prices["date"].to_list()
+    closes = sym_prices["close_price"].to_numpy()
+    date_to_idx = {d: i for i, d in enumerate(dates)}
+    n = len(dates)
+
+    # Collect per-event daily returns (direction-adjusted)
+    # Shape: (n_events, max_horizon)
+    all_cars = []
+    for row in events.iter_rows(named=True):
+        idx = date_to_idx.get(row["date"])
+        if idx is None:
+            continue
+        entry_price = closes[idx]
+        if entry_price == 0:
+            continue
+
+        direction = row["direction"]
+        daily = np.full(max_horizon, np.nan)
+        for d in range(1, max_horizon + 1):
+            if idx + d < n:
+                ret_bps = (closes[idx + d] - entry_price) / entry_price * 10000
+                daily[d - 1] = ret_bps * direction  # sign-adjust
+        all_cars.append(daily)
+
+    if not all_cars:
+        return np.full(max_horizon, np.nan)
+
+    car_matrix = np.array(all_cars)  # (n_events, max_horizon)
+    return np.nanmean(car_matrix, axis=0)
+
+
+# =============================================================================
+# SCAR Standardization
+# =============================================================================
+
+def standardize_returns(
+    event_returns: np.ndarray,
+    prices: pl.DataFrame,
+    symbol: str,
+    horizon: int,
+    estimation_window: int = 120,
+) -> np.ndarray:
+    """Standardize event returns by stock volatility → SCAR.
+
+    SCAR_i = CAR_i / σ_stock, where σ_stock is the annualized daily
+    return std estimated from a window BEFORE the event period.
+
+    Args:
+        event_returns: 1-D array of raw event returns (bps).
+        prices: Price DataFrame with columns: symbol_id, date, close_price.
+        symbol: Stock symbol.
+        horizon: Horizon in days (used to scale volatility).
+        estimation_window: Number of trailing days for σ estimation.
+
+    Returns:
+        1-D array of standardized returns (same length as input).
+        If volatility cannot be estimated, returns the raw values.
+    """
+    sym_prices = (
+        prices
+        .filter(pl.col("symbol_id") == symbol)
+        .sort("date")
+        .select("close_price")
+    )
+
+    if len(sym_prices) < estimation_window + 1:
+        return event_returns
+
+    closes = sym_prices["close_price"].to_numpy()
+
+    # Use the last estimation_window days before the end of data
+    # for a single stock-level σ estimate
+    daily_rets = np.diff(closes[-estimation_window - 1:]) / closes[-estimation_window - 1:-1]
+    daily_std = float(np.std(daily_rets, ddof=1))
+
+    if daily_std == 0:
+        return event_returns
+
+    # Scale to horizon: σ_h = σ_daily × sqrt(h), convert to bps
+    horizon_std_bps = daily_std * np.sqrt(horizon) * 10000
+
+    return event_returns / horizon_std_bps

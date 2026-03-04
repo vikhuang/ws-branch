@@ -246,15 +246,15 @@ timing_alpha = Σ((net_buy[t-1] - avg_net_buy) × return[t]) / std(net_buy)
 
 ### Event Study（聰明錢事件研究）
 
-`event-study` 子命令對個股執行事件研究，檢驗 PNL top-K 券商的累積買賣異常是否預測中期報酬：
+`event-study` 子命令對個股執行事件研究，檢驗 PNL top-K 券商的個別大單（per-broker 2σ）是否預測中期報酬：
 
-1. **事件偵測**：使用 rolling PNL ranking（每天只用截至當天的累積 PNL），取 top-K 券商的 N 日滾動淨買超，標準化後超過 ±Nσ → accumulation / distribution 事件
-2. **Forward returns**：事件後 1/5/10/20 日報酬（bps），與隨機基準線（10,000 次抽樣）比較
-3. **統計檢定**：Welch's t-test + Bonferroni 校正 + Cohen's d 效果量（雙重門檻：p_corr < 0.05 且 |d| ≥ 0.2）
-4. **穩健性檢查**（3 項）：
-   - **安慰劑**：用隨機券商取代 top-K → 應不顯著
-   - **劑量反應**：信號強度分 5 quintile → CAR 應單調遞增
-   - **時間分割**：前後半段事件各自檢定 → 兩半都應顯著
+1. **事件偵測**：使用 rolling PNL ranking（每天只用截至當天的累積 PNL），偵測 top-K 券商的個別異常大單（per-broker |net_buy - mean| > 2σ），累積計數超過門檻 → accumulation / distribution 事件
+2. **門檻校準**：分析 per-broker z-score 分佈形狀（偏態、峰態），確認 2σ 門檻的實際觸發百分位
+3. **方向分拆**：accumulation（大單買超）和 distribution（大單賣超）獨立分析，避免方向對沖稀釋信號
+4. **統計檢定**：Permutation test（10,000 次）取代 Bonferroni，搭配 Cohen's d 效果量
+5. **SCAR 跨股票池化**：標準化後跨股票合併，解決 per-stock 樣本不足問題
+6. **衰減曲線**：逐日 direction-adjusted CAR，判斷 alpha 消化速度與最佳持倉期
+7. **穩健性**：Placebo test（隨機券商取代 top-K）
 
 ## 效能
 

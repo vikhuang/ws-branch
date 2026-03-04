@@ -10,7 +10,7 @@ Architecture:
 - interfaces/: CLI and API endpoints
 """
 
-__version__ = "0.26.1"
+__version__ = "0.27.0"
 
 from pnl_analytics.infrastructure import (
     DataPaths,

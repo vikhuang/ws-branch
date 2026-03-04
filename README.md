@@ -248,7 +248,7 @@ timing_alpha = Σ((net_buy[t-1] - avg_net_buy) × return[t]) / std(net_buy)
 
 `event-study` 子命令對個股執行事件研究，檢驗 PNL top-K 券商的個別大單（per-broker 2σ）是否預測中期報酬：
 
-1. **事件偵測**：使用 rolling PNL ranking（每天只用截至當天的累積 PNL），偵測 top-K 券商的個別異常大單（per-broker |net_buy - mean| > 2σ），累積計數超過門檻 → accumulation / distribution 事件
+1. **事件偵測**：使用 rolling PNL ranking（每天只用過去 3 年的 PNL，避免 2021-2022 持倉建置期噪音），偵測 top-K 券商的個別異常大單（per-broker |net_buy - mean| > 2σ），累積計數超過門檻 → accumulation / distribution 事件
 2. **門檻校準**：分析 per-broker z-score 分佈形狀（偏態、峰態），確認 2σ 門檻的實際觸發百分位
 3. **方向分拆**：accumulation（大單買超）和 distribution（大單賣超）獨立分析，避免方向對沖稀釋信號
 4. **統計檢定**：Permutation test（10,000 次）取代 Bonferroni，搭配 Cohen's d 效果量

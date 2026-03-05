@@ -20,7 +20,16 @@ ws-branch
 │   │   ├── backtest.py — open-to-close 回測引擎 ✓
 │   │   ├── fifo.py — FIFO 持倉追蹤 (Lot/FIFOAccount) ✓
 │   │   ├── event_detection.py — 事件偵測 ✓
-│   │   └── forward_returns.py — 前瞻報酬計算 ✓
+│   │   ├── forward_returns.py — 前瞻報酬計算 ✓
+│   │   └── hypothesis/ — 可組合假說檢定框架 ✓ ← HERE
+│   │       ├── types.py — 型別契約 (SymbolData/HypothesisConfig/Result)
+│   │       ├── position.py — Plan A 持倉推導
+│   │       ├── selectors.py — Step 1: 券商篩選 (8 函數)
+│   │       ├── filters.py — Step 2: 事件過濾 (7 函數)
+│   │       ├── outcomes.py — Step 3: 報酬衡量 (2 函數)
+│   │       ├── baselines.py — Step 4: 基準報酬 (3 函數)
+│   │       ├── stat_tests.py — Step 5: 統計檢定 (2 函數)
+│   │       └── registry.py — 9 策略組合註冊
 │   │
 │   ├── infrastructure — I/O + 外部依賴
 │   │   ├── bigquery.py — 統一 BigQuery client ✓
@@ -35,12 +44,14 @@ ws-branch
 │   │   ├── event_study.py — 事件研究 ✓
 │   │   ├── signal_report.py — 個股大單信號分析 ✓
 │   │   ├── market_scan.py — 全市場掃描 + BH-FDR ✓
-│   │   └── signal_export.py — 信號 CSV 匯出 ✓
+│   │   ├── signal_export.py — 信號 CSV 匯出 ✓
+│   │   └── hypothesis_runner.py — 假說檢定編排器 ✓
 │   │
-│   └── interfaces/cli.py — 9 subcommands ✓
+│   └── interfaces/cli.py — 10 subcommands ✓
 │       ├── ranking / query / symbol / verify / rolling ✓
 │       ├── event-study ✓
-│       └── signal / scan / export ✓
+│       ├── signal / scan / export ✓
+│       └── hypothesis ✓
 │
 ├── (future)
 │   ├── ○

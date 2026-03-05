@@ -10,7 +10,7 @@ Architecture:
 - interfaces/: CLI entry points
 """
 
-__version__ = "0.28.0"
+__version__ = "0.29.0"
 
 from broker_analytics.infrastructure import (
     DataPaths,

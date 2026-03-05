@@ -515,6 +515,134 @@ def cmd_scan(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_hypothesis(args: argparse.Namespace) -> int:
+    """Run composable hypothesis test."""
+    from broker_analytics.application.services.hypothesis_runner import HypothesisRunner
+    from broker_analytics.domain.hypothesis.registry import list_strategies, STRATEGIES
+
+    runner = HypothesisRunner(paths=args.paths)
+
+    if args.list:
+        print("可用策略：")
+        print(f"  {'名稱':<24} {'中文':<12} 說明")
+        print("  " + "-" * 70)
+        for name in list_strategies():
+            cfg = STRATEGIES[name]
+            print(f"  {name:<24} {cfg.display_name:<12} {cfg.description}")
+        return 0
+
+    if not args.symbol and not args.batch:
+        print("Error: 需指定 symbol 或 --batch")
+        return 1
+
+    # Batch mode
+    if args.batch:
+        symbols = [s.strip() for s in args.batch.split(",")]
+        results = runner.run_batch(symbols, args.strategy, workers=args.workers)
+        _print_batch_results(results)
+        return 0
+
+    # Parse params override
+    params_override = None
+    if args.params:
+        params_override = _parse_hypothesis_params(args.params)
+
+    if args.all:
+        results = runner.run_all_strategies(args.symbol)
+        _print_all_strategies_results(args.symbol, results)
+        return 0
+
+    result = runner.run_single(
+        args.symbol, args.strategy, params_override=params_override,
+    )
+    if result is None:
+        print(f"資料不足：{args.symbol}")
+        return 1
+
+    _print_hypothesis_result(result)
+    return 0
+
+
+def _parse_hypothesis_params(param_str: str) -> dict:
+    """Parse 'key1=val1,key2=val2' into dict with numeric conversion."""
+    params = {}
+    for pair in param_str.split(","):
+        k, v = pair.split("=", 1)
+        try:
+            params[k.strip()] = int(v.strip())
+        except ValueError:
+            try:
+                params[k.strip()] = float(v.strip())
+            except ValueError:
+                params[k.strip()] = v.strip()
+    return params
+
+
+def _print_hypothesis_result(result) -> None:
+    """Print single hypothesis result."""
+    conclusion_map = {
+        "significant": "✓ 顯著",
+        "marginal": "◐ 邊際顯著",
+        "no_effect": "✗ 無效果",
+    }
+    print(f"\n【假說檢定】{result.strategy_name}")
+    print(f"  股票：{result.symbol}")
+    print(f"  選定券商：{result.n_brokers_selected}")
+    print(f"  事件數：{result.n_events}")
+    print(f"  結論：{conclusion_map.get(result.conclusion, result.conclusion)}")
+
+    if result.horizon_details:
+        print(f"\n  {'Horizon':>8} {'事件均值':>10} {'基準均值':>10} {'Cohen d':>8} {'p_corr':>8} {'顯著':>4}")
+        print("  " + "-" * 56)
+        for d in result.horizon_details:
+            sig = "✓" if d.test_result.significant else ""
+            print(
+                f"  {d.horizon:>6}d {d.cond_mean:>10.1f} {d.uncond_mean:>10.1f}"
+                f" {d.test_result.cohens_d:>8.3f} {d.test_result.p_value_corrected:>8.4f}"
+                f" {sig:>4}"
+            )
+
+
+def _print_all_strategies_results(symbol: str, results: dict) -> None:
+    """Print results for all strategies on one symbol."""
+    conclusion_map = {
+        "significant": "✓ 顯著",
+        "marginal": "◐ 邊際",
+        "no_effect": "✗ 無效",
+    }
+    print(f"\n【全策略假說檢定】{symbol}")
+    print(f"  {'策略':<24} {'券商':>6} {'事件':>6} {'結論':<12}")
+    print("  " + "-" * 56)
+    for name, r in results.items():
+        if r is None:
+            print(f"  {name:<24} {'—':>6} {'—':>6} 資料不足")
+        else:
+            c = conclusion_map.get(r.conclusion, r.conclusion)
+            print(f"  {name:<24} {r.n_brokers_selected:>6} {r.n_events:>6} {c}")
+
+
+def _print_batch_results(results: list) -> None:
+    """Print batch results for one strategy across symbols."""
+    if not results:
+        print("無結果")
+        return
+    conclusion_map = {
+        "significant": "✓",
+        "marginal": "◐",
+        "no_effect": "✗",
+    }
+    print(f"\n【批次假說檢定】{results[0].strategy_name}")
+    print(f"  {'股票':>8} {'券商':>6} {'事件':>6} {'結論':>4}")
+    print("  " + "-" * 30)
+    for r in sorted(results, key=lambda x: x.symbol):
+        c = conclusion_map.get(r.conclusion, "?")
+        print(f"  {r.symbol:>8} {r.n_brokers_selected:>6} {r.n_events:>6} {c:>4}")
+
+    sig_count = sum(1 for r in results if r.conclusion == "significant")
+    mar_count = sum(1 for r in results if r.conclusion == "marginal")
+    print(f"\n  顯著：{sig_count}/{len(results)}  邊際：{mar_count}/{len(results)}")
+
+
 def cmd_export(args: argparse.Namespace) -> int:
     """Export signals to CSV."""
     from broker_analytics.application.services.signal_export import run_export
@@ -697,6 +825,36 @@ def main(argv: list[str] | None = None) -> int:
     export_parser.add_argument("--test-start", default="2024-07-01")
     export_parser.add_argument("--test-end", default="2025-12-31")
 
+    # hypothesis command
+    hyp_parser = subparsers.add_parser(
+        "hypothesis", help="Run composable hypothesis tests",
+    )
+    hyp_parser.add_argument("symbol", nargs="?", help="Stock symbol")
+    hyp_parser.add_argument(
+        "-s", "--strategy", default="contrarian_broker",
+        help="Strategy name (default: contrarian_broker)",
+    )
+    hyp_parser.add_argument(
+        "--all", action="store_true",
+        help="Run all 9 strategies on one symbol",
+    )
+    hyp_parser.add_argument(
+        "--list", action="store_true",
+        help="List available strategies",
+    )
+    hyp_parser.add_argument(
+        "--params", default=None,
+        help="Override params as key=value pairs, comma-separated",
+    )
+    hyp_parser.add_argument(
+        "--batch", default=None,
+        help="Run on multiple symbols (comma-separated)",
+    )
+    hyp_parser.add_argument(
+        "--workers", type=int, default=1,
+        help="Parallel workers for batch mode (default: 1)",
+    )
+
     # verify command
     subparsers.add_parser("verify", help="Verify data integrity")
 
@@ -717,6 +875,7 @@ def main(argv: list[str] | None = None) -> int:
         "scan": cmd_scan,
         "export": cmd_export,
         "verify": cmd_verify,
+        "hypothesis": cmd_hypothesis,
     }
 
     return commands[args.command](args)

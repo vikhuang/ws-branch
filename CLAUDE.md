@@ -25,6 +25,10 @@ uv run python -m broker_analytics signal 2330      # Signal analysis
 uv run python -m broker_analytics scan             # Market-wide screening
 uv run python -m broker_analytics export           # Export signals CSV
 uv run python -m broker_analytics verify           # Data integrity
+uv run python -m broker_analytics hypothesis --list                    # List 9 strategies
+uv run python -m broker_analytics hypothesis 2330 -s contrarian_broker # Single hypothesis
+uv run python -m broker_analytics hypothesis 2330 --all                # All 9 strategies
+uv run python -m broker_analytics hypothesis --batch 2330,2454 -s exodus --workers 4
 ```
 
 ## Architecture
@@ -52,6 +56,7 @@ Top-level scripts (`etl.py`, `pnl_engine.py`, `sync_prices.py`) are the data pip
 | `domain/backtest.py` | `run_backtest()` → `BacktestResult` (open→close, configurable cost) |
 | `domain/event_detection.py` | Rolling PNL ranking + large trade detection |
 | `domain/forward_returns.py` | Forward return computation for event study |
+| `domain/hypothesis/` | Composable 5-step hypothesis pipeline (9 strategies) |
 
 ### Infrastructure
 
@@ -100,5 +105,5 @@ Types: `feat`, `fix`, `refactor`, `docs`, `test`, `perf`, `chore`
 
 ## Known Issues
 
-- `tests/test_services.py` has stale fixtures referencing removed fields (`win_count`, `loss_count`, etc.)
 - `pnl_analytics/` is a backward-compatible shim — all imports redirect to `broker_analytics`
+- `cross_stock` strategy requires `--params target_symbol=XXXX` to specify target stock

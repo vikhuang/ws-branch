@@ -31,6 +31,9 @@ from broker_analytics.application.services.event_study import (
     EventStudyService,
     EventStudyReport,
 )
+from broker_analytics.application.services.hypothesis_runner import (
+    HypothesisRunner,
+)
 
 __all__ = [
     "RankingService",
@@ -43,4 +46,5 @@ __all__ = [
     "RollingRankingService",
     "EventStudyService",
     "EventStudyReport",
+    "HypothesisRunner",
 ]

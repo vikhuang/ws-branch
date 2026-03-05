@@ -1,11 +1,12 @@
 # ws-branch
 
-全市場券商分點交易資料的 PNL 回測系統。回答兩個問題：
+全市場券商分點交易資料的 PNL 回測系統。回答五個問題：
 
 1. **哪些券商在賺錢？** — 依 FIFO 計算每家券商的已實現 + 未實現損益，全市場排名
 2. **聰明錢在買什麼？** — 給定一支股票，看「在這支股票上歷史績效最好的券商」現在站哪邊
 3. **大單有預測力嗎？** — 對個股進行大單偵測、統計驗證、TA 加權信號建構與回測
 4. **聰明錢的累積行為能預測報酬嗎？** — 事件研究：PNL top-K 券商的買賣異常 → 多期 forward return 統計檢定
+5. **各種券商行為假說是否成立？** — 可組合五步假說檢定框架，9 種策略（反差券商、加碼信號、集體撤退、逆勢操作等）
 
 ## 快速開始
 
@@ -22,34 +23,45 @@ uv run python generate_merge_map.py         # → data/derived/broker_merge_map.
 uv run python pnl_engine.py --merged        # → data/pnl_daily_merged/ + data/pnl_merged/ + data/derived/
 
 # 查詢
-uv run python -m pnl_analytics ranking                  # 全市場券商排名
-uv run python -m pnl_analytics query 1440               # 單一券商績效
-uv run python -m pnl_analytics query 1440 --breakdown   # 含個股明細
-uv run python -m pnl_analytics symbol 2330               # 個股 smart money signal
-uv run python -m pnl_analytics symbol 2330 --detail 5    # 近 5 日明細
-uv run python -m pnl_analytics symbol 2330 --years 3     # 用 3 年滾動排名
-uv run python -m pnl_analytics rolling                     # 三年滾動 PNL 排名
-uv run python -m pnl_analytics rolling --years 2           # 指定窗口
-uv run python -m pnl_analytics rolling --xlsx              # 匯出 Excel
-uv run python -m pnl_analytics verify                      # 資料完整性驗證
+uv run python -m broker_analytics ranking                  # 全市場券商排名
+uv run python -m broker_analytics query 1440               # 單一券商績效
+uv run python -m broker_analytics query 1440 --breakdown   # 含個股明細
+uv run python -m broker_analytics symbol 2330               # 個股 smart money signal
+uv run python -m broker_analytics symbol 2330 --detail 5    # 近 5 日明細
+uv run python -m broker_analytics symbol 2330 --years 3     # 用 3 年滾動排名
+uv run python -m broker_analytics rolling                   # 三年滾動 PNL 排名
+uv run python -m broker_analytics rolling --years 2         # 指定窗口
+uv run python -m broker_analytics rolling --xlsx            # 匯出 Excel
+uv run python -m broker_analytics verify                    # 資料完整性驗證
 
 # 事件研究（smart money accumulation → forward returns）
-uv run python -m pnl_analytics event-study 6285                          # 預設 top-20, 5d, 2σ
-uv run python -m pnl_analytics event-study 6285 --top-k 10 --window 10  # 調參數
-uv run python -m pnl_analytics event-study 6285 --threshold 1.5         # 降低門檻（更多事件）
-uv run python -m pnl_analytics event-study 6285 --no-robustness         # 跳過穩健性檢查
+uv run python -m broker_analytics event-study 6285                          # 預設 top-20, 5d, 2σ
+uv run python -m broker_analytics event-study 6285 --top-k 10 --window 10  # 調參數
+uv run python -m broker_analytics event-study 6285 --threshold 1.5         # 降低門檻（更多事件）
+uv run python -m broker_analytics event-study 6285 --no-robustness         # 跳過穩健性檢查
 
 # 合併版查詢（所有命令均支援 --merged）
-uv run python -m pnl_analytics ranking --merged             # 合併版排名
-uv run python -m pnl_analytics query 1650 --merged          # 含原瑞士信貸持倉
+uv run python -m broker_analytics ranking --merged         # 合併版排名
+uv run python -m broker_analytics query 1650 --merged      # 含原瑞士信貸持倉
 
-# 個股信號分析（standalone）
-uv run python signal_report.py 2345                      # 大單信號回測報告
-uv run python signal_report.py 2345 --train-start 2023-01-01 --train-end 2024-06-30
+# 個股信號分析
+uv run python -m broker_analytics signal 2345              # 大單信號回測報告
+uv run python -m broker_analytics signal 2345 --train-start 2023-01-01 --train-end 2024-06-30
 
 # 全市場掃描（~7 分鐘）
-uv run python market_scan.py                             # 預設：2億成交額、0.50%成本、1% FDR
-uv run python market_scan.py --min-turnover 200000000 --cost 0.005 --fdr 0.01
+uv run python -m broker_analytics scan                     # 預設：2億成交額、0.50%成本、1% FDR
+uv run python -m broker_analytics scan --min-turnover 200000000 --cost 0.005 --fdr 0.01
+
+# 信號匯出
+uv run python -m broker_analytics export                   # 匯出信號 CSV
+uv run python -m broker_analytics export --symbols 3665,2345
+
+# 假說檢定框架（9 策略 × 可組合五步流水線）
+uv run python -m broker_analytics hypothesis --list                      # 列出 9 策略
+uv run python -m broker_analytics hypothesis 2330 -s contrarian_broker   # 單一策略
+uv run python -m broker_analytics hypothesis 6285 --all                  # 全部 9 策略
+uv run python -m broker_analytics hypothesis 2330 -s conviction --params top_k=30
+uv run python -m broker_analytics hypothesis --batch 2330,2454 -s exodus --workers 4
 ```
 
 ## Pipeline
@@ -218,7 +230,7 @@ timing_alpha = Σ((net_buy[t-1] - avg_net_buy) × return[t]) / std(net_buy)
 
 ### Signal Report（大單信號分析）
 
-`signal_report.py` 對個股執行 4 步分析，輸出 `data/reports/{symbol}.md` + `.json`：
+`broker_analytics signal` 對個股執行 4 步分析，輸出 `data/reports/{symbol}.md` + `.json`：
 
 1. **大單偵測**：每個券商的 `|net_buy - mean| > 2σ` 為大單日
 2. **統計驗證**：大單日 vs 非大單日的 return spread + t-test（< 5% 顯著 → early exit）
@@ -229,7 +241,7 @@ timing_alpha = Σ((net_buy[t-1] - avg_net_buy) × return[t]) / std(net_buy)
 
 ### Market Scan（全市場信號掃描）
 
-`market_scan.py` 對全市場 ~2,400 支股票執行 6 層篩選 + 回測，使用 BH-FDR 控制多重檢定：
+`broker_analytics scan` 對全市場 ~2,400 支股票執行 6 層篩選 + 回測，使用 BH-FDR 控制多重檢定：
 
 | 階段 | 說明 |
 |------|------|
@@ -255,6 +267,33 @@ timing_alpha = Σ((net_buy[t-1] - avg_net_buy) × return[t]) / std(net_buy)
 5. **SCAR 跨股票池化**：標準化後跨股票合併，解決 per-stock 樣本不足問題
 6. **衰減曲線**：逐日 direction-adjusted CAR，判斷 alpha 消化速度與最佳持倉期
 7. **穩健性**：Placebo test（隨機券商取代 top-K）
+
+### Hypothesis Testing（可組合假說檢定框架）
+
+`broker_analytics hypothesis` 提供可組合的五步流水線，驗證各種券商行為假說：
+
+```
+Selector → Filter → Outcome → Baseline → StatTest
+(選券商)   (篩事件)   (量報酬)   (做基準)   (跑統計)
+```
+
+每步是純函數，策略只是「五個函數的組合 + 參數」，新增策略零改框架。
+
+**9 策略**：
+
+| # | 策略 | 說明 |
+|---|------|------|
+| 1 | `contrarian_broker` | 全市場績效差但個股績效好的券商（反差信號） |
+| 2 | `dual_window` | 1 年 ∩ 3 年滾動 PNL 均 top-K 的券商 |
+| 3 | `conviction` | 績優券商加碼（持倉 > 0 且繼續買入） |
+| 4 | `exodus` | 多個績優券商同日淨賣出 |
+| 5 | `cross_stock` | A 股績優券商大單 → B 股報酬（跨股資訊流） |
+| 6 | `ta_regime` | 擇時能力突變的券商（rolling TA z-score） |
+| 7 | `contrarian_smart` | 績優券商在大跌日逆勢買入 |
+| 8 | `concentration` | 持倉集中度突增（HHI breakout） |
+| 9 | `herding` | 績優 vs 績差券商方向一致時的信號 |
+
+統計檢定：parametric（Welch t-test + Bonferroni）或 permutation（10,000 次），均要求 `p < 0.05` AND `|Cohen's d| >= 0.2`。結論：2+ 個 horizon 顯著 = significant，1 個 = marginal，0 = no_effect。
 
 ## 效能
 

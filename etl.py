@@ -1,9 +1,9 @@
-"""ETL: broker_tx.parquet → daily_summary/{symbol}.parquet
+"""ETL: broker_tx → daily_summary/{symbol}.parquet
 
-Transforms supplier broker transaction data into per-symbol daily summaries.
+Transforms broker transaction data into per-symbol daily summaries.
 
 Input:
-    broker_tx.parquet (10GB, 2.08B rows)
+    ~/r20/data/fugle/broker_tx/ (per-day parquet files, managed by ws-admin)
     - symbol_id, date, broker, broker_name, price, buy, sell
 
 Output:
@@ -12,6 +12,7 @@ Output:
     - Sorted by (broker, date) for FIFO optimization
 
 Notes:
+    - Accepts a directory (scans *.parquet) or a single parquet file
     - Skips proprietary traders (price="-") as they lack price data
     - Batched scan: groups symbols into batches to reduce scan count
       (6 scans instead of 2,839, while staying within memory limits)
@@ -48,7 +49,10 @@ def transform_broker_tx(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Build lazy query: filter → parse → calculate amounts
-    lf = pl.scan_parquet(input_path)
+    if input_path.is_dir():
+        lf = pl.scan_parquet(input_path / "*.parquet")
+    else:
+        lf = pl.scan_parquet(input_path)
 
     if skip_proprietary:
         lf = lf.filter(pl.col("price") != "-")
@@ -114,16 +118,18 @@ def transform_broker_tx(
 
 def main() -> None:
     """CLI entry point."""
-    if len(sys.argv) < 2:
-        print("Usage: python etl.py <broker_tx.parquet> [output_dir]")
-        print("Example: python etl.py data/broker_tx.parquet data/daily_summary")
-        sys.exit(1)
+    default_input = Path.home() / "r20" / "data" / "fugle" / "broker_tx"
 
-    input_path = Path(sys.argv[1])
+    if len(sys.argv) < 2:
+        input_path = default_input
+    else:
+        input_path = Path(sys.argv[1])
     output_dir = Path(sys.argv[2]) if len(sys.argv) > 2 else Path("data/daily_summary")
 
     if not input_path.exists():
-        print(f"Error: Input file not found: {input_path}")
+        print(f"Error: Input not found: {input_path}")
+        print(f"Usage: python etl.py [broker_tx_path] [output_dir]")
+        print(f"Default: {default_input}")
         sys.exit(1)
 
     print(f"Input:  {input_path}")

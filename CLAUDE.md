@@ -3,7 +3,7 @@
 ## Build & Run
 
 ```bash
-uv run python etl.py broker_tx.parquet      # Step 1: ETL
+uv run python etl.py                        # Step 1: ETL (reads ~/r20/data/fugle/broker_tx/)
 uv run python sync_prices.py                 # Step 2: BigQuery prices
 uv run python pnl_engine.py                  # Step 3: FIFO PNL
 uv run python pnl_engine.py --merged         # Step 3b: merged variant

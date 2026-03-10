@@ -292,15 +292,15 @@ Arrow mmap          中        小        是        ~0       8-10x
 
 ### 現象
 
-`etl.py` 將 10 GB 的 `broker_tx.parquet`（20.8 億筆）拆成 2,839 個 per-symbol 檔案。
+`etl.py` 將 `~/r20/data/fugle/broker_tx/`（per-day parquet, 9 GB）拆成 per-symbol 檔案。
 原本的做法：先掃一次取得 symbol 清單，再對每個 symbol 各掃一次全檔。
 
 ```
-broker_tx.parquet (10 GB)
+~/r20/data/fugle/broker_tx/*.parquet (9 GB, 1,306 files)
 
-  Scan 0:    取 unique symbols                     ← 掃全檔
-  Scan 1:    lf.filter(symbol == "0050").collect()  ← 又掃全檔
-  Scan 2:    lf.filter(symbol == "0051").collect()  ← 又掃全檔
+  Scan 0:    取 unique symbols                     ← 掃全目錄
+  Scan 1:    lf.filter(symbol == "0050").collect()  ← 又掃全目錄
+  Scan 2:    lf.filter(symbol == "0051").collect()  ← 又掃全目錄
   ...
   Scan 2839: lf.filter(symbol == "9958").collect()  ← 第 2,840 次
 

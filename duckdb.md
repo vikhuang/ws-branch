@@ -51,10 +51,10 @@ FROM 'file.parquet';
 
 ## 本專案常用查詢
 
-### broker_tx.parquet（原始分點資料）
+### broker_tx（原始分點資料）
 
 ```bash
-FILE='branch_parquet_file/券商分點/broker_tx.parquet'
+FILE="$HOME/r20/data/fugle/broker_tx/*.parquet"
 
 # 總覽
 duckdb -c "
@@ -132,7 +132,7 @@ duckdb -c "
 WITH tagged AS (
     SELECT *,
         CASE WHEN price = '-' THEN '自營商' ELSE '一般分點' END as type
-    FROM 'branch_parquet_file/券商分點/broker_tx.parquet'
+    FROM '$FILE'
     WHERE symbol_id = '2330' AND date = '2025-06-30'
 )
 SELECT type,
@@ -155,7 +155,7 @@ ETL 跳過 price="-" 是正確的。
 duckdb -c "
 WITH proprietary_days AS (
     SELECT DISTINCT symbol_id, date
-    FROM 'branch_parquet_file/券商分點/broker_tx.parquet'
+    FROM '$FILE'
     WHERE price = '-'
 ),
 sampled AS (
@@ -166,7 +166,7 @@ sampled AS (
 tagged AS (
     SELECT t.*,
         CASE WHEN t.price = '-' THEN '自營商' ELSE '一般分點' END as type
-    FROM 'branch_parquet_file/券商分點/broker_tx.parquet' t
+    FROM '$FILE' t
     INNER JOIN sampled s ON t.symbol_id = s.symbol_id AND t.date = s.date
 )
 SELECT symbol_id, date::date as date, type,

@@ -33,13 +33,13 @@ def transform_broker_tx(
     output_dir: Path,
     skip_proprietary: bool = True,
 ) -> dict[str, int]:
-    """Transform broker_tx.parquet to per-symbol daily summaries.
+    """Transform broker_tx to per-symbol daily summaries.
 
     Batched approach: scan once to get symbols, then process in batches
     of BATCH_SIZE symbols per scan. Reduces 2,839 scans to ~6 scans.
 
     Args:
-        input_path: Path to broker_tx.parquet
+        input_path: Path to broker_tx directory or parquet file
         output_dir: Output directory for daily_summary/*.parquet
         skip_proprietary: Skip rows with price="-" (default True)
 

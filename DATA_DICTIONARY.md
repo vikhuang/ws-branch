@@ -23,7 +23,7 @@ format:
 
 ## 目錄
 
-1. [broker_tx.parquet — 分點交易明細](#1-broker_txparquet--分點交易明細)
+1. [broker_tx — 分點交易明細](#1-broker_tx--分點交易明細)
 2. [director_holding.parquet — 董監事持股](#2-director_holdingparquet--董監事持股)
 3. [stock_transfer.parquet — 內部人轉讓申報](#3-stock_transferparquet--內部人轉讓申報)
 4. [stock_transfer_suspend.parquet — 內部人轉讓暫緩](#4-stock_transfer_suspendparquet--內部人轉讓暫緩)
@@ -31,7 +31,7 @@ format:
 
 ---
 
-## 1. broker_tx.parquet — 分點交易明細
+## 1. broker_tx — 分點交易明細
 
 > 記錄每支股票、每個券商、每個價位的買賣張數（分價量資料）
 
@@ -39,13 +39,14 @@ format:
 
 | 項目 | 值 |
 |------|-----|
-| 檔案大小 | 10 GB |
-| 總行數 | 20.8 億 |
-| 股票數 | 2,839 |
+| 路徑 | `~/r20/data/fugle/broker_tx/` (per-day parquet) |
+| 檔案大小 | 9.0 GB (1,306 個檔案) |
+| 總行數 | ~37.4 億 |
+| 股票數 | 2,869 |
 | 券商數 | 943 |
-| 時間範圍 | 2021-01-04 ~ 2025-12-31（1,214 天）|
-| 更新頻率 | 每日 |
-| 原始來源 | 券商分點進出明細 |
+| 時間範圍 | 2021-01-03 ~ 2026-03-09 |
+| 更新頻率 | 每日（ws-admin 自動拉取） |
+| 原始來源 | Fugle Storage API + 歷史遷移 |
 
 ### Schema
 
@@ -80,13 +81,13 @@ df = df.with_columns([
 ])
 ```
 
-#### 大檔案讀取
+#### 讀取方式
 
 ```python
-# ⚠️ 10GB 檔案必須使用 streaming，否則會 OOM
 import polars as pl
 
-lf = pl.scan_parquet("broker_tx.parquet")
+# 掃描整個目錄（per-day files）
+lf = pl.scan_parquet("~/r20/data/fugle/broker_tx/*.parquet")
 
 # 範例：查詢單一股票的每日券商彙總
 daily = (
@@ -363,8 +364,9 @@ big_holders = (
 ### C. 檔案位置
 
 ```
-branch_parquet_file/
-├── broker_tx.parquet              # 10 GB
+~/r20/data/fugle/
+├── broker_tx/                     # 9.0 GB, 1,306 per-day parquet files
+~/r20/wp/ws-branch/branch_parquet_file/
 ├── 董監事持股/
 │   └── director_holding.parquet
 ├── 內部人轉讓與轉讓暫緩/

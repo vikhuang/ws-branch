@@ -14,7 +14,7 @@
 uv sync
 
 # Pipeline（全市場 2,839 股，約 15 分鐘）
-uv run python etl.py broker_tx.parquet      # → data/daily_summary/
+uv run python etl.py                        # → data/daily_summary/
 uv run python sync_prices.py                # → data/price/
 uv run python pnl_engine.py                 # → data/pnl_daily/ + data/pnl/ + data/derived/
 
@@ -56,10 +56,10 @@ uv run python -m broker_analytics scan --min-turnover 200000000 --cost 0.005 --f
 uv run python -m broker_analytics export                   # 匯出信號 CSV
 uv run python -m broker_analytics export --symbols 3665,2345
 
-# 假說檢定框架（9 策略 × 可組合五步流水線）
-uv run python -m broker_analytics hypothesis --list                      # 列出 9 策略
+# 假說檢定框架（10 策略 × 可組合五步流水線）
+uv run python -m broker_analytics hypothesis --list                      # 列出 10 策略
 uv run python -m broker_analytics hypothesis 2330 -s contrarian_broker   # 單一策略
-uv run python -m broker_analytics hypothesis 6285 --all                  # 全部 9 策略
+uv run python -m broker_analytics hypothesis 6285 --all                  # 全部 10 策略
 uv run python -m broker_analytics hypothesis 2330 -s conviction --params top_k=30
 uv run python -m broker_analytics hypothesis --batch 2330,2454 -s exodus --workers 4
 ```
@@ -67,7 +67,7 @@ uv run python -m broker_analytics hypothesis --batch 2330,2454 -s exodus --worke
 ## Pipeline
 
 ```
-broker_tx.parquet (10GB, 20.8億筆)
+~/r20/data/fugle/broker_tx/ (9 GB, per-day parquet, managed by ws-admin)
     │ etl.py
     ▼
 data/daily_summary/{symbol}.parquet (4.2 GB, 2839 檔)
@@ -92,7 +92,7 @@ data/derived/broker_ranking_merged.parquet  ← 合併版券商維度
 
 ### Layer 0：供應商原始資料
 
-`broker_tx.parquet` — 供應商提供的分點買賣明細，20.8 億筆，2021-01 ~ 2025-12。
+`~/r20/data/fugle/broker_tx/` — per-day parquet 檔案（由 ws-admin 每日自動拉取），2021-01 ~ 2026-03。
 
 ### Layer 1：daily_summary/{symbol}.parquet
 
@@ -279,7 +279,7 @@ Selector → Filter → Outcome → Baseline → StatTest
 
 每步是純函數，策略只是「五個函數的組合 + 參數」，新增策略零改框架。
 
-**9 策略**：
+**10 策略**：
 
 | # | 策略 | 說明 |
 |---|------|------|

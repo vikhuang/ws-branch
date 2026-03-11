@@ -14,6 +14,7 @@ from broker_analytics.infrastructure.config import DataPaths, DEFAULT_PATHS
 from broker_analytics.infrastructure.repositories import (
     TradeRepository,
     RankingRepository,
+    PriceRepository,
     RepositoryError,
 )
 from broker_analytics.domain.hypothesis.types import (
@@ -38,6 +39,7 @@ class HypothesisRunner:
     def __init__(self, paths: DataPaths = DEFAULT_PATHS):
         self._paths = paths
         self._trade_repo = TradeRepository(paths)
+        self._price_repo = PriceRepository(paths)
         self._global_ctx: GlobalContext | None = None
 
     def run_single(
@@ -76,8 +78,26 @@ class HypothesisRunner:
         if not brokers:
             return self._empty_result(config.name, symbol, 0, 0, params)
 
-        # Inject broker list for herding baseline
+        # Inject broker list (was for herding baseline, kept for compatibility)
         params["_brokers_list"] = brokers
+
+        # Inject cluster trade data for cross_stock strategy
+        if "cluster" in params:
+            cluster_syms = params["cluster"]
+            if isinstance(cluster_syms, str):
+                cluster_syms = [s.strip() for s in cluster_syms.split(",")]
+            cluster_trades = {}
+            for sym in cluster_syms:
+                path = self._paths.symbol_trade_path(sym)
+                if path.exists():
+                    cluster_trades[sym] = pl.read_parquet(path)
+            params["_cluster_trades"] = cluster_trades
+
+        # Inject broker concentration data for concentration strategy
+        if config.name == "concentration":
+            params["_broker_concentrations"] = self._load_broker_concentrations(
+                symbol
+            )
 
         # Step 2: Filter events
         events = config.filter(data, brokers, params)
@@ -203,10 +223,9 @@ class HypothesisRunner:
             return None
         pnl_df = pl.read_parquet(pnl_path)
 
-        prices_path = self._paths.close_prices
-        if not prices_path.exists():
+        prices = self._price_repo.get_prices_df()
+        if prices.is_empty():
             return None
-        prices = pl.read_parquet(prices_path)
 
         return SymbolData(
             symbol=symbol,
@@ -227,8 +246,7 @@ class HypothesisRunner:
         except RepositoryError:
             global_ranking = pl.DataFrame()
 
-        prices_path = self._paths.close_prices
-        prices = pl.read_parquet(prices_path) if prices_path.exists() else pl.DataFrame()
+        prices = self._price_repo.get_prices_df()
 
         self._global_ctx = GlobalContext(
             global_ranking=global_ranking,
@@ -236,6 +254,76 @@ class HypothesisRunner:
             prices=prices,
         )
         return self._global_ctx
+
+    def _load_broker_concentrations(self, target_symbol: str) -> pl.DataFrame:
+        """Load all pnl/{symbol}.parquet, compute per-broker concentration ratio.
+
+        Returns DataFrame[broker, concentration_ratio, hhi] where:
+        - concentration_ratio = |urpnl in target| / total |urpnl| across all stocks
+        - hhi = Herfindahl index of broker's cross-stock position weights
+        """
+        rows = []
+        for sym in self._paths.list_symbols():
+            path = self._paths.symbol_pnl_path(sym)
+            if path.exists():
+                try:
+                    df = pl.read_parquet(path).select(
+                        pl.col("broker").cast(pl.Utf8), "unrealized_pnl"
+                    )
+                    df = df.with_columns(pl.lit(sym).alias("symbol"))
+                    rows.append(df)
+                except Exception:
+                    continue
+
+        if not rows:
+            return pl.DataFrame(schema={
+                "broker": pl.Utf8,
+                "concentration_ratio": pl.Float64,
+                "hhi": pl.Float64,
+            })
+
+        all_pnl = pl.concat(rows)
+
+        # Per broker: total absolute unrealized PNL and per-symbol weight
+        broker_totals = (
+            all_pnl
+            .with_columns(pl.col("unrealized_pnl").abs().alias("abs_urpnl"))
+            .group_by("broker")
+            .agg(pl.col("abs_urpnl").sum().alias("total_abs_urpnl"))
+        )
+
+        # Per broker-symbol weight
+        broker_sym = (
+            all_pnl
+            .with_columns(pl.col("unrealized_pnl").abs().alias("abs_urpnl"))
+            .join(broker_totals, on="broker", how="inner")
+            .filter(pl.col("total_abs_urpnl") > 0)
+            .with_columns(
+                (pl.col("abs_urpnl") / pl.col("total_abs_urpnl")).alias("weight")
+            )
+        )
+
+        # Concentration ratio for target symbol
+        target_weights = (
+            broker_sym
+            .filter(pl.col("symbol") == target_symbol)
+            .select("broker", pl.col("weight").alias("concentration_ratio"))
+        )
+
+        # HHI per broker
+        hhi = (
+            broker_sym
+            .with_columns((pl.col("weight") ** 2).alias("w_sq"))
+            .group_by("broker")
+            .agg(pl.col("w_sq").sum().alias("hhi"))
+        )
+
+        # Join concentration + HHI
+        result = hhi.join(target_weights, on="broker", how="left").with_columns(
+            pl.col("concentration_ratio").fill_null(0.0)
+        )
+
+        return result
 
     @staticmethod
     def _empty_result(

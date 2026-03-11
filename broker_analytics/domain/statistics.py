@@ -322,6 +322,64 @@ def permutation_test(
     return count_extreme / n_perms
 
 
+def permutation_test_adaptive(
+    event_values: np.ndarray,
+    population_values: np.ndarray,
+    n_perms: int = 10000,
+    seed: int = 42,
+    alpha: float = 0.05,
+    check_interval: int = 200,
+) -> float:
+    """Adaptive permutation test with early stopping.
+
+    Same null hypothesis as permutation_test(), but checks every
+    *check_interval* iterations whether the outcome is already clear:
+    - Clearly not significant (current p >> alpha) → stop early.
+    - Clearly significant (current p << alpha) → stop early.
+    - Borderline → run full n_perms for maximum precision.
+
+    Args:
+        event_values: Observed returns after events (1-D).
+        population_values: All available returns to permute from (1-D).
+        n_perms: Maximum number of permutation iterations.
+        seed: Random seed.
+        alpha: Significance threshold (after Bonferroni, i.e. per-horizon).
+        check_interval: Check early-stop condition every this many iterations.
+
+    Returns:
+        Two-tailed p-value (fraction of permutations with |mean| >= |observed|).
+    """
+    event_values = event_values[~np.isnan(event_values)]
+    population_values = population_values[~np.isnan(population_values)]
+
+    n_events = len(event_values)
+    n_pop = len(population_values)
+    if n_events == 0 or n_pop < n_events:
+        return 1.0
+
+    observed_mean = float(np.mean(event_values))
+    rng = np.random.default_rng(seed)
+
+    # Threshold: if count_extreme exceeds this at checkpoint, p > 4×alpha
+    stop_high_factor = 4.0
+
+    count_extreme = 0
+    for i in range(1, n_perms + 1):
+        perm_sample = rng.choice(population_values, size=n_events, replace=False)
+        if abs(float(np.mean(perm_sample))) >= abs(observed_mean):
+            count_extreme += 1
+
+        if i % check_interval == 0:
+            # Clearly not significant: current p > 4 × alpha
+            if count_extreme > i * alpha * stop_high_factor:
+                return count_extreme / i
+            # Clearly significant: after 500+ iters, p ≈ 0
+            if i >= 500 and count_extreme <= 1:
+                return count_extreme / i
+
+    return count_extreme / n_perms
+
+
 # =============================================================================
 # P-value Conversion & Multiple Testing Correction
 # =============================================================================

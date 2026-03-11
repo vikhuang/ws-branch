@@ -220,19 +220,13 @@ def process_symbol(
 # =============================================================================
 
 def load_price_lookup(paths: DataPaths) -> dict[tuple[str, date], float]:
-    """Load price data into lookup dict."""
-    if not paths.close_prices.exists():
-        print(f"Warning: Price file not found: {paths.close_prices}")
-        return {}
+    """Load price data into lookup dict via ws-core."""
+    from ws_core import prices as ws_prices
 
-    df = pl.read_parquet(paths.close_prices)
+    df = ws_prices(columns=["coid", "mdate", "close_d"], start="2021-01-01")
     lookup = {}
     for row in df.iter_rows(named=True):
-        # Handle both string and date types
-        d = row["date"]
-        if isinstance(d, str):
-            d = date.fromisoformat(d)
-        lookup[(row["symbol_id"], d)] = row["close_price"]
+        lookup[(row["coid"], row["mdate"])] = float(row["close_d"])
     return lookup
 
 

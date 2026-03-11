@@ -22,8 +22,8 @@ import polars as pl
 
 from broker_analytics.domain.backtest import run_backtest as _domain_backtest
 from broker_analytics.domain.statistics import tstat_to_pvalue, benjamini_hochberg
-from broker_analytics.infrastructure.bigquery import fetch_ohlc_batch as _bq_fetch_ohlc_batch
 from broker_analytics.infrastructure.config import DataPaths, DEFAULT_PATHS
+from broker_analytics.infrastructure.repositories.price_repo import PriceRepository
 
 # =============================================================================
 # Constants
@@ -633,17 +633,9 @@ def run_scan(config: ScanConfig, paths: DataPaths = DEFAULT_PATHS) -> None:
 
     # Load close prices
     print("\n[Step 1] Loading close prices...")
-    if not paths.close_prices.exists():
-        print(f"Error: {paths.close_prices} not found. Run sync_prices.py first.")
-        sys.exit(1)
-
-    prices_df = pl.read_parquet(paths.close_prices)
-    prices_by_sym: dict[str, dict[date, float]] = defaultdict(dict)
-    for row in prices_df.iter_rows(named=True):
-        d = row["date"]
-        if isinstance(d, str):
-            d = date.fromisoformat(d)
-        prices_by_sym[row["symbol_id"]][d] = float(row["close_price"])
+    from broker_analytics.infrastructure.repositories import PriceRepository
+    price_repo = PriceRepository(paths)
+    prices_by_sym = price_repo.get_all_close_prices()
 
     summary_dir = str(paths.daily_summary_dir)
     summary_symbols = {p.stem for p in paths.daily_summary_dir.glob("*.parquet")}
@@ -716,7 +708,7 @@ def run_scan(config: ScanConfig, paths: DataPaths = DEFAULT_PATHS) -> None:
 
     # Phase 2: OHLC fetch + backtest
     print(f"\n[Step 4] Phase 2: Backtest for {len(fdr_passing)} symbols...")
-    ohlc_data = _bq_fetch_ohlc_batch(fdr_passing, cache_dir=paths.price_dir)
+    ohlc_data = PriceRepository(paths).get_ohlc_batch(fdr_passing)
     missing_ohlc = [s for s in fdr_passing if s not in ohlc_data]
     if missing_ohlc:
         print(f"  Warning: no OHLC data for {missing_ohlc}")

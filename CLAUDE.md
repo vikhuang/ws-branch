@@ -4,9 +4,8 @@
 
 ```bash
 uv run python etl.py                        # Step 1: ETL (reads ~/r20/data/fugle/broker_tx/)
-uv run python sync_prices.py                 # Step 2: BigQuery prices
-uv run python pnl_engine.py                  # Step 3: FIFO PNL
-uv run python pnl_engine.py --merged         # Step 3b: merged variant
+uv run python pnl_engine.py                  # Step 2: FIFO PNL (prices via ws-core)
+uv run python pnl_engine.py --merged         # Step 2b: merged variant
 uv run python -m broker_analytics <subcommand>  # Analytics CLI
 uv run pytest                                # Tests
 ```
@@ -42,7 +41,7 @@ Clean Architecture — violations break separation of concerns:
 | application | `broker_analytics/application/` | Use cases combining domain + infrastructure |
 | interfaces | `broker_analytics/interfaces/` | CLI entry points only |
 
-Top-level scripts (`etl.py`, `pnl_engine.py`, `sync_prices.py`) are the data pipeline.
+Top-level scripts (`etl.py`, `pnl_engine.py`) are the data pipeline. Prices come from ws-core (reads `~/r20/data/tej/prices.parquet`).
 `signal_report.py`, `market_scan.py`, `export_signals.py` are thin wrappers around `broker_analytics.application.services`.
 
 ### Domain Modules (shared, no duplication)

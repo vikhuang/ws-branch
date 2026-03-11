@@ -15,7 +15,6 @@ uv sync
 
 # Pipeline（全市場 2,839 股，約 15 分鐘）
 uv run python etl.py                        # → data/daily_summary/
-uv run python sync_prices.py                # → data/price/
 uv run python pnl_engine.py                 # → data/pnl_daily/ + data/pnl/ + data/derived/
 
 # 合併版（將已停用券商代碼對應到存續券商，重新跑 FIFO）
@@ -71,10 +70,7 @@ uv run python -m broker_analytics hypothesis --batch 2330,2454 -s exodus --worke
     │ etl.py
     ▼
 data/daily_summary/{symbol}.parquet (4.2 GB, 2839 檔)
-    │ sync_prices.py
-    ▼
-data/price/close_prices.parquet (4 MB)
-    │ pnl_engine.py
+    │ pnl_engine.py (prices via ws-core → ~/r20/data/tej/prices.parquet)
     ▼
 data/pnl_daily/{symbol}.parquet (12 GB, 2839 檔)  ← Layer 1.5：每日明細
 data/fifo_state/{symbol}.parquet (289 MB, 2839 檔) ← FIFO checkpoint
@@ -135,10 +131,6 @@ data/derived/broker_ranking_merged.parquet  ← 合併版券商維度
 | `open_date` | Date | 建倉日 |
 
 Layer 2（pnl/ + broker_ranking）從 Layer 1.5 聚合導出。
-
-### Layer 2：price/close_prices.parquet
-
-`sync_prices.py` 從 BigQuery 同步收盤價，用於計算未實現損益和日報酬率。
 
 ### Layer 3a：pnl/{symbol}.parquet
 
@@ -237,7 +229,7 @@ timing_alpha = Σ((net_buy[t-1] - avg_net_buy) × return[t]) / std(net_buy)
 3. **TA 加權信號**：`signal[t] = Σ(TA_b × dev_b[t] / σ_b)`，TA 僅用 train period 計算（test |t| < 2 → early exit）
 4. **回測**：open→close return，扣除 0.435% 交易成本，計算 Sharpe / MaxDD / Calmar
 
-預設 train 2023-01~2024-06，test 2024-07~2025-12。開盤價從 BigQuery 按需拉取並快取。
+預設 train 2023-01~2024-06，test 2024-07~2025-12。開盤價從 ws-core 讀取。
 
 ### Market Scan（全市場信號掃描）
 
@@ -302,7 +294,6 @@ M3 Pro 12 核，全市場 2,839 股 × 917 券商 × 1,209 交易日：
 | 階段 | 時間 | 記憶體 | Big-O |
 |------|------|--------|-------|
 | ETL | ~10 min | ~2 GB (streaming) | O(N)，N=20.8億 |
-| 價格同步 | ~1 min | 200 MB | O(S×D) |
 | PNL 計算 + Layer 1.5 | ~6 min | ~10 MB/核 | O(S×B×T)，12核並行 |
 | 查詢 | 0.01s | 1 MB | O(B log B)，預聚合表 |
 | 全市場掃描 | ~7 min | ~100 MB | O(S×B×D)，12核並行 |
@@ -339,8 +330,6 @@ M3 Pro 12 核，全市場 2,839 股 × 917 券商 × 1,209 交易日：
 
 ## 外部依賴
 
-### BigQuery
+### ws-core
 
-- **Project**: `gen-lang-client-0998197473`
-- **Dataset**: `wsai`
-- **Table**: `tej_prices`（分區: year，聚類: coid）
+價格資料統一透過 `ws-core` 讀取 `~/r20/data/tej/prices.parquet`（由 ws-admin 每日自動更新）。

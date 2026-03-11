@@ -1,6 +1,6 @@
 [project]
 name = "broker-analytics"
-version = "0.29.0"
+version = "0.30.0"
 description = "Broker behavior analysis from trade-level data"
 requires-python = ">=3.12"
 dependencies = [
@@ -9,6 +9,7 @@ dependencies = [
     "google-cloud-bigquery>=3.40.0",
     "xlsxwriter>=3.2.9",
     "xlrd>=2.0.2",
+    "ws-core",
 ]
 
 [project.scripts]
@@ -29,3 +30,6 @@ packages = ["broker_analytics"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+
+[tool.uv.sources]
+ws-core = { path = "../ws-core", editable = true }

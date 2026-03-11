@@ -9,8 +9,7 @@ Directory Structure (v3):
     ├── daily_summary/           # ETL output (by symbol)
     │   ├── 2330.parquet
     │   └── ...
-    ├── price/
-    │   └── close_prices.parquet
+    ├── price/                   # OHLC cache (per-symbol, from ws-core)
     ├── pnl_daily/               # Daily PNL events (by symbol)
     │   ├── 2330.parquet
     │   └── ...
@@ -85,11 +84,6 @@ class DataPaths:
     # --- Files ---
 
     @property
-    def close_prices(self) -> Path:
-        """Close prices for all symbols."""
-        return self.price_dir / "close_prices.parquet"
-
-    @property
     def broker_ranking(self) -> Path:
         """Pre-aggregated broker ranking table."""
         suffix = f"_{self.variant}" if self.variant else ""
@@ -160,12 +154,6 @@ class DataPaths:
         # Check directories
         if not self.daily_summary_dir.exists():
             missing.append(str(self.daily_summary_dir))
-        if not self.price_dir.exists():
-            missing.append(str(self.price_dir))
-
-        # Check required files
-        if not self.close_prices.exists():
-            missing.append(str(self.close_prices))
 
         return missing
 

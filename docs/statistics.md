@@ -11,7 +11,7 @@ timing_alpha = Σ((net_buy[t-1] - avg_net_buy) × return[t]) / std(net_buy)
 - Subtract mean to remove directional bias
 - Divide by std(net_buy) to normalize for trade volume
 
-Implemented in: `pnl_analytics/domain/metrics/timing_alpha.py`
+Implemented in: `broker_analytics/domain/timing_alpha.py`
 
 ## Hypothesis Testing
 
@@ -19,7 +19,7 @@ Implemented in: `pnl_analytics/domain/metrics/timing_alpha.py`
 
 All statistical functions are hand-implemented using `math.erfc` for normal CDF approximation (valid for n>30).
 
-Implemented in: `pnl_analytics/domain/statistics.py`
+Implemented in: `broker_analytics/domain/statistics.py`
 
 ### Dual significance threshold
 
@@ -33,7 +33,7 @@ This prevents declaring significance on trivially small effects.
 ### Permutation test
 
 - 10,000 permutations in `domain/statistics.py` (general purpose)
-- 200 permutations in `domain/metrics/statistical.py` (per-broker timing alpha)
+- 200 permutations in `broker_analytics/domain/statistics.py` (per-broker timing alpha)
 - p-value for broker ranking is computed at query time, not pre-stored (too slow to precompute)
 
 ### Event study significance

@@ -18,7 +18,6 @@ import polars as pl
 
 from broker_analytics.domain.backtest import run_backtest as _domain_backtest
 from broker_analytics.domain.timing_alpha import compute_timing_alpha
-from broker_analytics.infrastructure.bigquery import fetch_ohlc
 from broker_analytics.infrastructure.config import DataPaths, DEFAULT_PATHS
 from broker_analytics.infrastructure.repositories.price_repo import PriceRepository
 
@@ -124,8 +123,9 @@ def load_close_prices(symbol: str, paths: DataPaths = DEFAULT_PATHS) -> dict[dat
 
 
 def load_ohlc(symbol: str, paths: DataPaths = DEFAULT_PATHS) -> pl.DataFrame:
-    """Fetch OHLC with cache."""
-    return fetch_ohlc(symbol, cache_dir=paths.price_dir)
+    """Fetch OHLC via ws-core."""
+    repo = PriceRepository(paths)
+    return repo.get_ohlc(symbol)
 
 
 # =============================================================================

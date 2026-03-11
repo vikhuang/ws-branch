@@ -411,11 +411,11 @@ class EventStudyService:
         return df
 
     def _load_prices(self) -> pl.DataFrame | None:
-        """Load close prices."""
-        path = self._paths.close_prices
-        if not path.exists():
-            return None
-        return pl.read_parquet(path)
+        """Load close prices via ws-core."""
+        from broker_analytics.infrastructure.repositories import PriceRepository
+        repo = PriceRepository(self._paths)
+        df = repo.get_prices_df()
+        return df if not df.is_empty() else None
 
     def _run_placebo(
         self,

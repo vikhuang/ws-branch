@@ -461,14 +461,16 @@ def cmd_verify(args: argparse.Namespace) -> int:
 
     # 5. Check price data
     print("\n5. 檢查價格資料...")
-    if args.paths.close_prices.exists():
+    try:
+        from ws_core import prices as ws_prices
         import polars as pl
-        price_df = pl.read_parquet(args.paths.close_prices)
+        price_df = ws_prices(columns=["coid", "mdate", "close_d"], start="2021-01-01")
         print(f"  價格記錄數：{len(price_df):,}")
-        print(f"  股票數：{price_df['symbol_id'].n_unique()}")
-        print("  ✓ 價格資料存在")
-    else:
-        print("  ✗ 缺少價格資料")
+        print(f"  股票數：{price_df['coid'].n_unique()}")
+        print(f"  日期範圍：{price_df['mdate'].min()} ~ {price_df['mdate'].max()}")
+        print("  ✓ 價格資料存在 (ws-core)")
+    except Exception as e:
+        print(f"  ✗ 無法讀取價格資料: {e}")
         errors.append("Missing price data")
 
     # Summary
@@ -563,18 +565,24 @@ def cmd_hypothesis(args: argparse.Namespace) -> int:
     return 0
 
 
-def _parse_hypothesis_params(param_str: str) -> dict:
-    """Parse 'key1=val1,key2=val2' into dict with numeric conversion."""
+def _parse_hypothesis_params(param_args: list[str]) -> dict:
+    """Parse ['key1=val1', 'key2=val2'] into dict with numeric conversion.
+
+    Values containing commas are kept as strings (e.g., cluster=2330,3711).
+    """
     params = {}
-    for pair in param_str.split(","):
+    for pair in param_args:
+        if "=" not in pair:
+            continue
         k, v = pair.split("=", 1)
+        v = v.strip()
         try:
-            params[k.strip()] = int(v.strip())
+            params[k.strip()] = int(v)
         except ValueError:
             try:
-                params[k.strip()] = float(v.strip())
+                params[k.strip()] = float(v)
             except ValueError:
-                params[k.strip()] = v.strip()
+                params[k.strip()] = v
     return params
 
 
@@ -843,8 +851,8 @@ def main(argv: list[str] | None = None) -> int:
         help="List available strategies",
     )
     hyp_parser.add_argument(
-        "--params", default=None,
-        help="Override params as key=value pairs, comma-separated",
+        "--params", nargs="*", default=None,
+        help="Override params as key=value pairs (space-separated, values may contain commas)",
     )
     hyp_parser.add_argument(
         "--batch", default=None,

@@ -12,6 +12,7 @@ from broker_analytics.domain.statistics import (
     compare_distributions,
     HypothesisTestResult,
     permutation_test,
+    permutation_test_adaptive,
     welch_t_test,
     cohens_d,
 )
@@ -49,7 +50,12 @@ def stat_test_permutation(
     baseline_returns: HorizonReturns,
     params: dict,
 ) -> dict[int, HypothesisTestResult]:
-    """Permutation test + Cohen's d (like event_study service).
+    """Permutation test + Cohen's d with adaptive acceleration.
+
+    Three-layer optimization:
+    A) Cohen's d pre-filter: skip permutation if |d| < 0.2 (can never be significant).
+    B) Welch t-test pre-filter: skip if t_p > 0.2 (parametric test already fails).
+    C) Adaptive permutation: early-stop when outcome is clear (200-iter checkpoints).
 
     params: n_perms (int, default 10000)
     """
@@ -64,17 +70,36 @@ def stat_test_permutation(
             results[h] = _EMPTY_RESULT
             continue
 
-        t, _ = welch_t_test(cond, uncond)
+        t, t_p = welch_t_test(cond, uncond)
         d = cohens_d(cond, uncond)
-        perm_p = permutation_test(cond, uncond, n_perms=n_perms)
+
+        # A: Cohen's d pre-filter — |d| < 0.2 can never meet significance
+        if abs(d) < 0.2:
+            results[h] = HypothesisTestResult(
+                t_stat=t, p_value=1.0, p_value_corrected=1.0,
+                cohens_d=d, significant=False,
+            )
+            continue
+
+        # B: Welch t-test pre-filter — parametric p >> alpha, skip permutation
+        if t_p > 0.2:
+            results[h] = HypothesisTestResult(
+                t_stat=t, p_value=t_p,
+                p_value_corrected=min(t_p * n_tests, 1.0),
+                cohens_d=d, significant=False,
+            )
+            continue
+
+        # C: Adaptive permutation — early-stop on clear outcomes
+        perm_p = permutation_test_adaptive(
+            cond, uncond, n_perms=n_perms, alpha=alpha,
+        )
         sig = perm_p < alpha and abs(d) >= 0.2
 
         results[h] = HypothesisTestResult(
-            t_stat=t,
-            p_value=perm_p,
+            t_stat=t, p_value=perm_p,
             p_value_corrected=min(perm_p * n_tests, 1.0),
-            cohens_d=d,
-            significant=sig,
+            cohens_d=d, significant=sig,
         )
 
     return results

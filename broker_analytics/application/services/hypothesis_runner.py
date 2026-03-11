@@ -550,6 +550,15 @@ class HypothesisRunner:
 
         print(f"\n  FDR 顯著股票數：{len(sig_by_symbol)}/{len(results)}")
 
+        # Direction consistency: among FDR-passing entries, what fraction has d > 0?
+        fdr_ds = [d for sym, h, p, d in entries
+                  if f"{sym}:{h}d" in passed_labels]
+        n_pos = sum(1 for d in fdr_ds if d > 0)
+        n_neg = sum(1 for d in fdr_ds if d < 0)
+        consistency = max(n_pos, n_neg) / len(fdr_ds) * 100 if fdr_ds else 0
+        dominant = "正(事件後漲)" if n_pos >= n_neg else "負(事件後跌)"
+        print(f"  方向一致性：{consistency:.1f}%（{dominant}，正{n_pos}/負{n_neg}）")
+
     @staticmethod
     def _empty_result(
         name: str, symbol: str, n_brokers: int, n_events: int, params: dict,

@@ -1,0 +1,82 @@
+{
+  "max_iterations": 50,
+  "pass_criteria": {
+    "significance_rate_min": 0.05,
+    "fdr_stocks_min": 10,
+    "direction_consistency_min": 0.60
+  },
+  "order": [
+    "large_trade_scar",
+    "contrarian_broker",
+    "dual_window",
+    "conviction",
+    "exodus",
+    "cross_stock",
+    "ta_regime",
+    "contrarian_smart",
+    "concentration",
+    "herding"
+  ],
+  "strategies": {
+    "large_trade_scar": {
+      "status": "exploring",
+      "iterations": 1,
+      "best_result": "sig=2.9%, FDR=0, d_consistency=N/A — regression to mean",
+      "notes": "v0: training SCAR top-K → test window. Full scan 1293 stocks, 2.9% < 5%. Buy/sell d≈0."
+    },
+    "contrarian_broker": {
+      "status": "exploring",
+      "iterations": 2,
+      "best_result": "sig=3.6%, FDR=119 stocks, d_consistency=mixed — no directional signal",
+      "notes": "v0: global bottom ∩ local top, 43 brokers avg (too loose). v1: niche selector (excl top 10% by amount), min_amount=1M, sig=3.6% still <5%."
+    },
+    "dual_window": {
+      "status": "pending",
+      "iterations": 0,
+      "best_result": null,
+      "notes": ""
+    },
+    "conviction": {
+      "status": "pending",
+      "iterations": 0,
+      "best_result": null,
+      "notes": ""
+    },
+    "exodus": {
+      "status": "pending",
+      "iterations": 0,
+      "best_result": null,
+      "notes": ""
+    },
+    "cross_stock": {
+      "status": "pending",
+      "iterations": 0,
+      "best_result": null,
+      "notes": ""
+    },
+    "ta_regime": {
+      "status": "pending",
+      "iterations": 0,
+      "best_result": null,
+      "notes": ""
+    },
+    "contrarian_smart": {
+      "status": "pending",
+      "iterations": 0,
+      "best_result": null,
+      "notes": ""
+    },
+    "concentration": {
+      "status": "pending",
+      "iterations": 0,
+      "best_result": null,
+      "notes": ""
+    },
+    "herding": {
+      "status": "pending",
+      "iterations": 0,
+      "best_result": null,
+      "notes": ""
+    }
+  }
+}

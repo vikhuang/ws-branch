@@ -224,6 +224,7 @@ def load_price_lookup(paths: DataPaths) -> dict[tuple[str, date], float]:
     from ws_core import prices as ws_prices
 
     df = ws_prices(columns=["coid", "mdate", "close_d"], start="2021-01-01")
+    df = df.filter(pl.col("close_d").is_not_null())
     lookup = {}
     for row in df.iter_rows(named=True):
         lookup[(row["coid"], row["mdate"])] = float(row["close_d"])

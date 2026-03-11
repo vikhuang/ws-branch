@@ -57,6 +57,7 @@ class PriceRepository:
         if self._df_cache is None:
             self._df_cache = (
                 ws_prices(columns=["coid", "mdate", "close_d"], start="2021-01-01")
+                .filter(pl.col("close_d").is_not_null())
                 .rename({"coid": "symbol_id", "mdate": "date", "close_d": "close_price"})
                 .cast({"close_price": pl.Float32})
             )

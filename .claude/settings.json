@@ -1,4 +1,46 @@
 {
+  "permissions": {
+    "allow": [
+      "Bash(uv run:*)",
+      "Bash(uv run python:*)",
+      "Bash(uv run pytest:*)",
+      "Bash(cd:*)",
+      "Bash(ls:*)",
+      "Bash(mkdir:*)",
+      "Bash(cat:*)",
+      "Bash(head:*)",
+      "Bash(tail:*)",
+      "Bash(grep:*)",
+      "Bash(wc:*)",
+      "Bash(chmod:*)",
+      "Bash(cp:*)",
+      "Bash(mv:*)",
+      "Bash(rm:*)",
+      "Bash(echo:*)",
+      "Bash(du:*)",
+      "Bash(find:*)",
+      "Bash(sort:*)",
+      "Bash(xargs:*)",
+      "Bash(touch:*)",
+      "Bash(python3:*)",
+      "Bash(git add:*)",
+      "Bash(git add -f:*)",
+      "Bash(git commit:*)",
+      "Bash(git diff:*)",
+      "Bash(git status:*)",
+      "Bash(git log:*)",
+      "Bash(git show:*)",
+      "Bash(git merge:*)",
+      "Bash(git stash:*)",
+      "Bash(git checkout:*)",
+      "Bash(git branch:*)",
+      "Read",
+      "Write",
+      "Edit",
+      "Glob",
+      "Grep"
+    ]
+  },
   "hooks": {
     "Stop": [
       {

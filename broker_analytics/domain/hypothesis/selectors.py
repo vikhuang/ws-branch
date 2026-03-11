@@ -30,28 +30,60 @@ def select_top_k_by_pnl(
     return df["broker"].cast(pl.Utf8).to_list()
 
 
-def select_contrarian_brokers(
+def select_niche_top_brokers(
     data: SymbolData, ctx: GlobalContext, params: dict,
 ) -> BrokerList:
-    """Strategy 1: Global PNL bottom 20% BUT per-stock PNL top 20%.
+    """Strategy 1: Small players with high per-stock PNL.
 
-    These brokers are globally "bad" but good at THIS specific stock.
-    params: global_pct (float, default 0.2), local_pct (float, default 0.2)
+    Excludes "big players" (top by trading amount in this stock),
+    then selects top-K among remaining brokers by rolling N-year PNL.
+
+    Rationale: if a normally unimportant broker ranks high in PNL for
+    a specific stock, that contrast is a stronger signal than PNL alone.
+
+    params: exclude_top_pct (float, default 0.1) — fraction of brokers to exclude,
+            top_k (int, default 10),
+            years (int, default 3),
+            train_end_date (str, default "2023-12-31")
     """
-    global_pct = params.get("global_pct", 0.2)
-    local_pct = params.get("local_pct", 0.2)
+    exclude_top_pct = params.get("exclude_top_pct", 0.1)
+    top_k = params.get("top_k", 10)
+    years = params.get("years", 3)
+    train_end_str = params.get("train_end_date", "2023-12-31")
+    train_end = date.fromisoformat(train_end_str)
 
-    # Global bottom
-    global_df = ctx.global_ranking.sort("total_pnl")
-    n_global = max(1, int(len(global_df) * global_pct))
-    global_bottom = set(global_df.head(n_global)["broker"].cast(pl.Utf8).to_list())
+    # 1. Training window trades only
+    train_trades = data.trade_df.filter(pl.col("date") <= train_end)
+    if len(train_trades) == 0:
+        return []
 
-    # Per-stock top
-    local_df = data.pnl_df.sort("total_pnl", descending=True)
-    n_local = max(1, int(len(local_df) * local_pct))
-    local_top = set(local_df.head(n_local)["broker"].cast(pl.Utf8).to_list())
+    # 2. Per-broker total trading amount in this stock (training window)
+    broker_amounts = (
+        train_trades
+        .with_columns(pl.col("broker").cast(pl.Utf8))
+        .with_columns(
+            (pl.col("buy_amount").fill_null(0) + pl.col("sell_amount").fill_null(0))
+            .alias("total_amount")
+        )
+        .group_by("broker")
+        .agg(pl.col("total_amount").sum())
+        .sort("total_amount", descending=True)
+    )
 
-    return list(global_bottom & local_top)
+    # 3. Exclude top N% by amount (the "big players" / 大戶)
+    n_exclude = max(1, int(len(broker_amounts) * exclude_top_pct))
+    big_players = set(broker_amounts.head(n_exclude)["broker"].to_list())
+
+    # 4. Among remaining "small players", rank by rolling N-year PNL
+    local_ranking = _rolling_ranking_to_date(data.pnl_daily_df, years, train_end)
+    if len(local_ranking) == 0:
+        return []
+
+    niche_ranking = local_ranking.filter(~pl.col("broker").is_in(big_players))
+    if len(niche_ranking) == 0:
+        return []
+
+    return niche_ranking.head(top_k)["broker"].to_list()
 
 
 def select_dual_window_intersection(
@@ -337,7 +369,6 @@ def _rolling_top_k(
     try:
         start = max_date.replace(year=max_date.year - years)
     except ValueError:
-        from datetime import date
         start = date(max_date.year - years, max_date.month, max_date.day - 1)
 
     window = pnl_daily.filter(pl.col("date") >= start)
@@ -355,6 +386,42 @@ def _rolling_top_k(
         .head(k)
     )
     return set(agg["broker"].cast(pl.Utf8).to_list())
+
+
+def _rolling_ranking_to_date(
+    pnl_daily: pl.DataFrame, years: int, end_date: date,
+) -> pl.DataFrame:
+    """Compute broker ranking from pnl_daily within [end_date - years, end_date].
+
+    Returns DataFrame[broker, total_pnl] sorted descending.
+    """
+    if len(pnl_daily) == 0:
+        return pl.DataFrame(schema={"broker": pl.Utf8, "total_pnl": pl.Float64})
+
+    try:
+        start = end_date.replace(year=end_date.year - years)
+    except ValueError:
+        start = date(end_date.year - years, end_date.month, end_date.day - 1)
+
+    window = pnl_daily.filter(
+        (pl.col("date") >= start) & (pl.col("date") <= end_date)
+    )
+    if len(window) == 0:
+        return pl.DataFrame(schema={"broker": pl.Utf8, "total_pnl": pl.Float64})
+
+    return (
+        window.sort("date")
+        .group_by("broker")
+        .agg([
+            pl.col("realized_pnl").sum(),
+            pl.col("unrealized_pnl").last(),
+        ])
+        .with_columns(
+            pl.col("broker").cast(pl.Utf8),
+            (pl.col("realized_pnl") + pl.col("unrealized_pnl")).alias("total_pnl"),
+        )
+        .sort("total_pnl", descending=True)
+    )
 
 
 def _build_price_dict(

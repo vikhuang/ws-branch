@@ -1,8 +1,11 @@
 # Signal Threshold Analysis - Key Findings
 
-**Analysis Date:** 2026-02-25  
-**Script Location:** `/tmp/threshold_analysis.py`  
-**Test Period:** 2024-07-01 to 2025-12-31 (OOS)  
+> **⚠️ 已封存 (2026-03-11)** — 本分析基於時區錯誤的資料，結果無效。
+> 詳見 `docs/information_fragmentation_alpha.md` 頂部說明。
+
+**Analysis Date:** 2026-02-25
+**Script Location:** `/tmp/threshold_analysis.py`
+**Test Period:** 2024-07-01 to 2025-12-31 (OOS)
 **Stocks Analyzed:** Top 10 by OOS Sharpe from market_scan.json
 
 ## Executive Summary

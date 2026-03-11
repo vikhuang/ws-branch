@@ -30,6 +30,7 @@ uv run python -m broker_analytics hypothesis --list                    # List 10
 uv run python -m broker_analytics hypothesis 2330 -s contrarian_broker # Single hypothesis
 uv run python -m broker_analytics hypothesis 2330 --all                # All 10 strategies
 uv run python -m broker_analytics hypothesis --batch 2330,2454 -s exodus --workers 4
+uv run python -m broker_analytics hypothesis --scan -s large_trade_scar  # Full market scan + FDR
 ```
 
 ## Architecture
@@ -39,13 +40,14 @@ Clean Architecture — violations break separation of concerns:
 | Layer | Path | Rule |
 |-------|------|------|
 | domain | `broker_analytics/domain/` | Pure functions only. NO I/O, NO side effects, NO imports from other layers |
-| infrastructure | `broker_analytics/infrastructure/` | I/O and external deps (config, repositories, BigQuery) |
+| infrastructure | `broker_analytics/infrastructure/` | I/O and external deps (config, repositories) |
 | application | `broker_analytics/application/` | Use cases combining domain + infrastructure |
 | interfaces | `broker_analytics/interfaces/` | CLI entry points only |
 
 Top-level scripts (`etl.py`, `pnl_engine.py`) are the data pipeline. Both support `--incr` for incremental updates.
 Prices come from ws-core (reads `~/r20/data/tej/prices.parquet`). Merged mode is the default (use `--no-merge` for raw).
 `signal_report.py`, `market_scan.py`, `export_signals.py` are thin wrappers around `broker_analytics.application.services`.
+**⚠️ signal_report/market_scan/export_signals are ARCHIVED** — T+1 intraday alpha invalidated after timezone fix (see `docs/information_fragmentation_alpha.md`).
 
 ### Domain Modules (shared, no duplication)
 
@@ -76,6 +78,29 @@ Prices come from ws-core (reads `~/r20/data/tej/prices.parquet`). Merged mode is
 - **Top-level functions for multiprocessing** — `ProcessPoolExecutor` workers must be module-level functions (pickle constraint)
 - **Workers write files directly** — in-worker parquet writes to avoid IPC overhead
 
+## Key Analytics Concepts
+
+### Rolling PNL Ranking vs Smart Money Signal — 容易混淆，務必區分
+
+| | Rolling PNL Ranking (`rolling`) | Smart Money Signal (`symbol`) |
+|---|---|---|
+| **問什麼** | 這個券商最近 N 年全市場賺多少？ | 這支股票上賺過錢的人現在在買還是賣？ |
+| **資料來源** | `pnl_daily/{symbol}.parquet`（全市場聚合） | `daily_summary/{symbol}.parquet`（淨買超） + `pnl/{symbol}.parquet`（個股排名） |
+| **範圍** | 跨所有股票 | 單一股票 |
+| **輸出** | 券商全市場排名 | 買方/賣方力道分數 |
+
+### `rolling --years N` vs `symbol --years N`
+
+兩者都對 `pnl_daily` 做滾動窗口排名，邏輯相同，差別在範圍：
+- `rolling --years 3`：聚合**全市場**所有股票的 pnl_daily → 全局券商排名
+- `symbol 2330 --years 3`：只用 **2330** 的 pnl_daily → 該股票的券商排名（用於 smart money 計算）
+
+### `symbol --detail N` ≠ N-day rolling PNL
+
+- `--detail 5`：顯示近 5 日各券商的**淨買超明細**（來自 `daily_summary`，是交易量資料）
+- 5-day rolling PNL：5 個交易日窗口的**損益排名**（來自 `pnl_daily`，是績效資料）
+- 兩者資料來源不同、意義不同、完全獨立
+
 ## Critical Guardrails
 
 These mistakes have been made before. Do NOT repeat them:
@@ -83,6 +108,7 @@ These mistakes have been made before. Do NOT repeat them:
 1. **Broker merge MUST precede FIFO** — merging after FIFO gives wrong cost basis and realized PNL
 2. **Smart Money Signal uses per-stock PNL ranking** (`data/pnl/{symbol}.parquet`), NOT global `broker_ranking.parquet` — global ranking biases toward large-cap activity
 3. **Timing alpha MUST normalize by `std(net_buy)`** — without normalization, high-volume brokers are automatically overrated
+4. **`symbol --detail N` 是淨買超明細，不是 N-day rolling PNL** — 資料來源和意義完全不同
 
 ## Data Conventions
 
@@ -110,7 +136,7 @@ Types: `feat`, `fix`, `refactor`, `docs`, `test`, `perf`, `chore`
 
 | # | Strategy | Selector | Filter | Core Logic |
 |---|----------|----------|--------|------------|
-| 0 | large_trade_scar | training SCAR top-K | test window 2σ+金額 | 訓練窗口大單準 → 測試窗口驗證 (**假說不成立**) |
+| 0 | large_trade_scar | training SCAR top-K | test window 2σ+金額 | 訓練窗口大單準 → 測試窗口驗證 (**假說不成立**：全市場 1293 股掃描，顯著率 2.9%<隨機 5%，買賣拆分 Cohen's d≈0，regression to the mean) |
 | 1 | contrarian_broker | global bottom ∩ local top | large_trades 2σ | 全市場虧損但特定股票強 = stock-specific 資訊優勢 |
 | 2 | dual_window | 1yr ∩ 3yr top-K | large_trades 2σ | 長期贏家重新進場 = regime change |
 | 3 | conviction | top_k | 浮盈>20% 且加碼 | 對抗 disposition effect 的強信號 |

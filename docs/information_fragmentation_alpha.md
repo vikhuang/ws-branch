@@ -1,5 +1,19 @@
 # Information Fragmentation Alpha：分散式私有資訊的聚合與 Alpha 萃取
 
+> **⚠️ 已封存 (2026-03-11)**
+>
+> 本文所有回測結果因 ETL 日期錯誤而無效。舊 ETL 未做時區轉換（UTC→Asia/Taipei），
+> 導致 daily_summary 的交易日期比實際交易日**提前一天**。信號使用了當天的券商交易量
+> 來交易當天（T+0 look-ahead bias），而非隔日（T+1）。
+>
+> 修正時區後，全市場 2,413 支股票中**沒有任何一支在 T+1 horizon 展現顯著 alpha**。
+> 原始 Sharpe 3.35~6.19 的結果完全是 concurrent correlation（當日交易量 × 當日報酬）的產物。
+>
+> 後續分析發現 T+2~T+60 的中長期 horizon 在部分股票上有初步顯著性，但尚未經過
+> 嚴格的多重檢定校正和更長的 OOS 驗證，不應視為已確認的 alpha。
+>
+> 詳見 git log `137aa8c feat: add incremental pipeline, merged default, and timezone fix`。
+
 ## 核心命題
 
 在台股分點資料中，我們觀察到兩個反直覺的現象：

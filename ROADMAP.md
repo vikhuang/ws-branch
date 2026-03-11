@@ -1,8 +1,8 @@
 # ws-branch
 
 ```
-████ ████ ████ ████ ████ ████ ████ ████ ████ ░░░░ ░░░░
-管線 分析 大單 加速 整合 預設 時區 增量 增量 共現 集中
+████ ████ ████ ████ ████ ████ ████ ████ ████ ████ ░░░░ ░░░░
+管線 分析 大單 加速 整合 預設 時區 增量 增量 掃描 共現 集中
                     ws核 合併      ETL  PNL
 
 ───────────────────────────────────────
@@ -21,7 +21,10 @@ ws-branch
 │
 └── (future)
     ├── strategy-0 — 假說不成立 ✓
-    ├── hypothesis-scan — ~8x 加速 ✓
+    │   全市場 1293 股，顯著率 2.9%<5%，買賣 d≈0，regression to mean
+    ├── hypothesis-scan ✓
+    │   ├── HypothesisConfig.requires — 策略宣告資料依賴，懶載入
+    │   └── --scan 全市場模式 — 進度輸出 + BH-FDR 校正
     ├── ws-core 整合 ✓
     │   sync_prices.py 刪除，改用 ws_core.prices()
     ├── pipeline-daily ✓

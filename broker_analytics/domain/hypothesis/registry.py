@@ -7,7 +7,7 @@ of selector + filter + outcome + baseline + stat_test.
 from broker_analytics.domain.hypothesis.types import HypothesisConfig
 from broker_analytics.domain.hypothesis.selectors import (
     select_by_large_trade_scar,
-    select_contrarian_brokers,
+    select_niche_top_brokers,
     select_dual_window_intersection,
     select_top_k_by_pnl,
     select_ta_regime_change,
@@ -54,18 +54,28 @@ STRATEGIES: dict[str, HypothesisConfig] = {
             "test_start_date": "2024-01-01",
         },
         horizons=(5, 10, 20, 60),
+        requires=frozenset({"trade_df", "prices"}),
     ),
 
     "contrarian_broker": HypothesisConfig(
         name="contrarian_broker",
         display_name="反差券商",
-        description="Global PNL bottom 20% but per-stock PNL top 20%",
-        selector=select_contrarian_brokers,
-        filter=filter_large_trades,
+        description="Small players (excl top 10% by amount) with top PNL — niche expertise signal",
+        selector=select_niche_top_brokers,
+        filter=filter_large_trades_test_window,
         outcome=outcome_forward_returns,
         baseline=baseline_unconditional,
         stat_test=stat_test_permutation,
-        params={"global_pct": 0.2, "local_pct": 0.2, "sigma": 2.0},
+        params={
+            "exclude_top_pct": 0.1,
+            "top_k": 10,
+            "sigma": 2.0,
+            "years": 3,
+            "train_end_date": "2023-12-31",
+            "test_start_date": "2024-01-01",
+            "min_amount": 10_000_000,
+        },
+        requires=frozenset({"trade_df", "pnl_daily_df", "prices"}),
     ),
 
     "dual_window": HypothesisConfig(
@@ -78,6 +88,7 @@ STRATEGIES: dict[str, HypothesisConfig] = {
         baseline=baseline_unconditional,
         stat_test=stat_test_permutation,
         params={"top_k": 20, "short_years": 1, "long_years": 3, "sigma": 2.0},
+        requires=frozenset({"trade_df", "pnl_daily_df", "prices"}),
     ),
 
     "conviction": HypothesisConfig(
@@ -90,6 +101,7 @@ STRATEGIES: dict[str, HypothesisConfig] = {
         baseline=baseline_unconditional,
         stat_test=stat_test_permutation,
         params={"top_k": 20, "min_brokers": 3, "min_profit_ratio": 0.2},
+        requires=frozenset({"trade_df", "pnl_daily_df", "pnl_df", "prices"}),
     ),
 
     "exodus": HypothesisConfig(
@@ -102,6 +114,7 @@ STRATEGIES: dict[str, HypothesisConfig] = {
         baseline=baseline_unconditional,
         stat_test=stat_test_permutation,
         params={"top_k": 20, "min_brokers": 5, "window_days": 20, "reduction_pct": 0.5},
+        requires=frozenset({"trade_df", "pnl_df", "prices"}),
     ),
 
     "cross_stock": HypothesisConfig(
@@ -114,6 +127,7 @@ STRATEGIES: dict[str, HypothesisConfig] = {
         baseline=baseline_unconditional,
         stat_test=stat_test_permutation,
         params={"top_k": 20, "sigma": 2.0, "min_cluster_stocks": 2},
+        requires=frozenset({"trade_df", "pnl_df", "prices"}),
         # cluster must be set via params_override at runtime (e.g. --params cluster=2330,3711)
     ),
 
@@ -127,6 +141,7 @@ STRATEGIES: dict[str, HypothesisConfig] = {
         baseline=baseline_unconditional,
         stat_test=stat_test_permutation,
         params={"window_days": 120, "z_threshold": 2.0, "sigma": 2.0},
+        requires=frozenset({"trade_df", "prices"}),
     ),
 
     "contrarian_smart": HypothesisConfig(
@@ -139,6 +154,7 @@ STRATEGIES: dict[str, HypothesisConfig] = {
         baseline=baseline_unconditional,
         stat_test=stat_test_permutation,
         params={"top_k": 20, "drop_pct": -0.02, "cum_drop_pct": -0.05, "min_brokers": 3},
+        requires=frozenset({"trade_df", "pnl_df", "prices"}),
     ),
 
     "concentration": HypothesisConfig(
@@ -151,11 +167,12 @@ STRATEGIES: dict[str, HypothesisConfig] = {
         baseline=baseline_unconditional,
         stat_test=stat_test_permutation,
         params={"min_concentration": 0.3, "min_brokers": 2},
+        requires=frozenset({"trade_df", "pnl_daily_df", "prices"}),
     ),
 
     "herding": HypothesisConfig(
         name="herding",
-        display_name="券商群聚",
+        display_name="券商群聯",
         description="Crowd vs smart money divergence: herding index signals",
         selector=select_top_k_by_pnl,
         filter=filter_herding_divergence,
@@ -163,6 +180,7 @@ STRATEGIES: dict[str, HypothesisConfig] = {
         baseline=baseline_unconditional,
         stat_test=stat_test_permutation,
         params={"top_k": 20, "herding_threshold": 0.3},
+        requires=frozenset({"trade_df", "pnl_df", "prices"}),
     ),
 }
 

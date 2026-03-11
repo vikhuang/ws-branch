@@ -4,9 +4,9 @@
 
 1. **哪些券商在賺錢？** — 依 FIFO 計算每家券商的已實現 + 未實現損益，全市場排名
 2. **聰明錢在買什麼？** — 給定一支股票，看「在這支股票上歷史績效最好的券商」現在站哪邊
-3. **大單有預測力嗎？** — 對個股進行大單偵測、統計驗證、TA 加權信號建構與回測
+3. ~~**大單有預測力嗎？**~~ — ⚠️ 已封存：T+1 intraday alpha 因時區修正後不存在
 4. **聰明錢的累積行為能預測報酬嗎？** — 事件研究：PNL top-K 券商的買賣異常 → 多期 forward return 統計檢定
-5. **各種券商行為假說是否成立？** — 可組合五步假說檢定框架，9 種策略（反差券商、加碼信號、集體撤退、逆勢操作等）
+5. **各種券商行為假說是否成立？** — 可組合五步假說檢定框架，10 種策略（反差券商、加碼信號、集體撤退、逆勢操作等）
 
 ## 快速開始
 
@@ -28,11 +28,11 @@ uv run python generate_merge_map.py         # → data/derived/broker_merge_map.
 uv run python -m broker_analytics ranking                  # 全市場券商排名
 uv run python -m broker_analytics query 1440               # 單一券商績效
 uv run python -m broker_analytics query 1440 --breakdown   # 含個股明細
-uv run python -m broker_analytics symbol 2330               # 個股 smart money signal
-uv run python -m broker_analytics symbol 2330 --detail 5    # 近 5 日明細
-uv run python -m broker_analytics symbol 2330 --years 3     # 用 3 年滾動排名
-uv run python -m broker_analytics rolling                   # 三年滾動 PNL 排名
-uv run python -m broker_analytics rolling --years 2         # 指定窗口
+uv run python -m broker_analytics symbol 2330               # 個股 smart money signal（淨買超 × 個股PNL排名）
+uv run python -m broker_analytics symbol 2330 --detail 5    # 近 5 日淨買超明細（daily_summary）
+uv run python -m broker_analytics symbol 2330 --years 3     # 用 3 年滾動排名計算 signal
+uv run python -m broker_analytics rolling                   # 全市場滾動 PNL 排名（pnl_daily 聚合）
+uv run python -m broker_analytics rolling --years 2         # 指定窗口（預設 3 年）
 uv run python -m broker_analytics rolling --xlsx            # 匯出 Excel
 uv run python -m broker_analytics verify                    # 資料完整性驗證
 
@@ -146,6 +146,8 @@ Layer 2（pnl/ + broker_ranking）從 Layer 1.5 聚合導出。
 | `total_pnl` | Float64 | 該券商在該股票的總損益 |
 | `realized_pnl` | Float64 | 已實現損益 |
 | `unrealized_pnl` | Float64 | 未實現損益 |
+| `total_buy_amount` | Float64 | 總買入金額 |
+| `total_sell_amount` | Float64 | 總賣出金額 |
 | `timing_alpha` | Float64 | 該股票的擇時能力 |
 
 排序：`total_pnl DESC`
@@ -223,7 +225,35 @@ timing_alpha = Σ((net_buy[t-1] - avg_net_buy) × return[t]) / std(net_buy)
 
 注意：使用的是**個股 PNL 排名**（`pnl/{symbol}.parquet`），不是全市場排名。在台積電排名第 1 的券商和在智邦排名第 1 的券商是不同的。
 
-### Signal Report（大單信號分析）
+**`--detail N`** 顯示近 N 日各券商的淨買超明細，資料來自 `daily_summary`（交易量），不是 N-day rolling PNL（績效）。
+
+**`--years N`** 改用 N 年滾動窗口計算個股 PNL 排名（從 `pnl_daily/{symbol}.parquet`），而非全期間排名。
+
+### Rolling PNL Ranking（滾動 PNL 排名）
+
+`broker_analytics rolling` 對全市場所有股票的 `pnl_daily` 做滾動窗口聚合，輸出券商全市場排名。
+
+**計算方式**：
+
+1. 設定窗口（預設 3 年 = 756 交易日）
+2. 讀取所有 `pnl_daily/{symbol}.parquet`，過濾到 `[max_date - window, max_date]`
+3. 每個券商加總所有股票的 realized_pnl，取最後一天的 unrealized_pnl
+4. total_pnl = realized + unrealized，按此排名
+
+**與 Smart Money Signal 的差異**：
+
+| | Rolling PNL (`rolling`) | Smart Money (`symbol`) |
+|---|---|---|
+| 資料來源 | `pnl_daily/`（全市場聚合） | `daily_summary`（淨買超）+ `pnl/`（個股排名） |
+| 範圍 | 跨所有股票 | 單一股票 |
+| 問什麼 | 券商最近 N 年全市場賺多少？ | 這支股票上的贏家現在在買還是賣？ |
+
+`rolling --years 3` 和 `symbol 2330 --years 3` 都對 `pnl_daily` 做滾動窗口，邏輯相同，但範圍不同：前者聚合全市場，後者只看單一股票。
+
+### Signal Report（大單信號分析）⚠️ 已封存
+
+> **⚠️ 已封存 (2026-03-11)** — T+1 intraday alpha 在時區修正後不存在。
+> 詳見 `docs/information_fragmentation_alpha.md`。
 
 `broker_analytics signal` 對個股執行 4 步分析，輸出 `data/reports/{symbol}.md` + `.json`：
 
@@ -234,7 +264,9 @@ timing_alpha = Σ((net_buy[t-1] - avg_net_buy) × return[t]) / std(net_buy)
 
 預設 train 2023-01~2024-06，test 2024-07~2025-12。開盤價從 ws-core 讀取。
 
-### Market Scan（全市場信號掃描）
+### Market Scan（全市場信號掃描）⚠️ 已封存
+
+> **⚠️ 已封存 (2026-03-11)** — 同上，T+1 intraday alpha 不存在。
 
 `broker_analytics scan` 對全市場 ~2,400 支股票執行 6 層篩選 + 回測，使用 BH-FDR 控制多重檢定：
 

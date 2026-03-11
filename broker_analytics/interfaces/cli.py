@@ -533,8 +533,18 @@ def cmd_hypothesis(args: argparse.Namespace) -> int:
             print(f"  {name:<24} {cfg.display_name:<12} {cfg.description}")
         return 0
 
+    # Parse params override (needed for both scan and single modes)
+    params_override = None
+    if args.params:
+        params_override = _parse_hypothesis_params(args.params)
+
+    # Scan mode: all symbols with FDR
+    if args.scan:
+        runner.run_scan(args.strategy, fdr=args.fdr, params_override=params_override)
+        return 0
+
     if not args.symbol and not args.batch:
-        print("Error: 需指定 symbol 或 --batch")
+        print("Error: 需指定 symbol、--batch 或 --scan")
         return 1
 
     # Batch mode
@@ -543,11 +553,6 @@ def cmd_hypothesis(args: argparse.Namespace) -> int:
         results = runner.run_batch(symbols, args.strategy, workers=args.workers)
         _print_batch_results(results)
         return 0
-
-    # Parse params override
-    params_override = None
-    if args.params:
-        params_override = _parse_hypothesis_params(args.params)
 
     if args.all:
         results = runner.run_all_strategies(args.symbol)
@@ -861,6 +866,14 @@ def main(argv: list[str] | None = None) -> int:
     hyp_parser.add_argument(
         "--workers", type=int, default=1,
         help="Parallel workers for batch mode (default: 1)",
+    )
+    hyp_parser.add_argument(
+        "--scan", action="store_true",
+        help="Run strategy on ALL symbols with FDR correction",
+    )
+    hyp_parser.add_argument(
+        "--fdr", type=float, default=0.05,
+        help="FDR threshold for scan mode (default: 0.05)",
     )
 
     # verify command

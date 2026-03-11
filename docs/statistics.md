@@ -42,7 +42,10 @@ This prevents declaring significance on trivially small effects.
 - Plus Cohen's d >= 0.2
 - Conclusion: 2+ significant horizons = "significant", 1 = "marginal", 0 = "no_effect"
 
-### Signal validation (signal_report.py)
+### Signal validation (signal_report.py) — ⚠️ ARCHIVED
+
+> **⚠️ Archived (2026-03-11)** — T+1 intraday alpha invalidated after timezone fix.
+> See `docs/information_fragmentation_alpha.md` for details.
 
 - Welch's t-test with early exit: skip if <5% brokers significant OR |test t-stat| < 2
 - Market scan uses Benjamini-Hochberg FDR correction across ~2400 stocks

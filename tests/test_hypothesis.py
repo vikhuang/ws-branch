@@ -19,7 +19,7 @@ from broker_analytics.domain.hypothesis.types import (
 from broker_analytics.domain.hypothesis.position import derive_positions
 from broker_analytics.domain.hypothesis.selectors import (
     select_top_k_by_pnl,
-    select_contrarian_brokers,
+    select_niche_top_brokers,
     select_concentrated_brokers,
 )
 from broker_analytics.domain.hypothesis.filters import (
@@ -259,32 +259,21 @@ class TestSelectors:
         expected = pnls["broker"].cast(pl.Utf8).to_list()
         assert brokers == expected
 
-    def test_contrarian_intersection(self):
-        """Contrarian: global bottom ∩ local top."""
-        # Make brokers that are globally bad but locally good
+    def test_niche_top_brokers(self):
+        """Niche: exclude big players by amount, select top PNL among rest."""
         brokers = [f"B{i:03d}" for i in range(20)]
         data = _make_symbol_data(brokers=brokers)
+        ctx = _make_global_context()
 
-        global_ranking = pl.DataFrame({
-            "rank": list(range(1, 21)),
-            "broker": brokers,
-            "total_pnl": list(range(20, 0, -1)),  # B000=highest, B019=lowest
-        }).cast({"rank": pl.UInt32})
-
-        ctx = GlobalContext(
-            global_ranking=global_ranking,
-            all_symbols=["TEST"],
-            prices=data.prices,
-        )
-
-        result = select_contrarian_brokers(data, ctx, {
-            "global_pct": 0.5,  # bottom 10
-            "local_pct": 0.5,   # top 10
+        result = select_niche_top_brokers(data, ctx, {
+            "exclude_top_pct": 0.1,  # exclude top 2 by amount
+            "top_k": 5,
+            "years": 3,
+            "train_end_date": "2025-12-31",  # covers all test dates
         })
-        # Should only include brokers that are in both bottom-10 globally
-        # and top-10 locally
         assert isinstance(result, list)
         assert all(isinstance(b, str) for b in result)
+        assert len(result) <= 5
 
     def test_concentrated_brokers_empty_without_data(self):
         """Without _broker_concentrations, returns empty list."""

@@ -96,6 +96,7 @@ class HypothesisConfig:
     stat_test: StatTestFn
     params: dict = field(default_factory=dict)
     horizons: tuple[int, ...] = (1, 5, 10, 20)
+    requires: frozenset[str] = frozenset({"trade_df", "pnl_daily_df", "pnl_df", "prices"})
 
 
 # =============================================================================

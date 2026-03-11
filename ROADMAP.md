@@ -1,16 +1,16 @@
 # ws-branch
 
 ```
-████ ████ ████ ████ ░░░░ ░░░░ ░░░░ ░░░░
-管線 分析 大單 加速 共現 驗證 整合 集中
+████ ████ ████ ████ ████ ████ ████ ████ ████ ░░░░ ░░░░
+管線 分析 大單 加速 整合 預設 時區 增量 增量 共現 集中
+                    ws核 合併      ETL  PNL
 
 ───────────────────────────────────────
 
 ws-branch
 ├── data-pipeline ✓
-│   ├── etl.py — 原始分點資料 streaming 聚合
-│   ├── sync_prices.py — BigQuery 收盤價同步
-│   ├── pnl_engine.py — FIFO PNL 計算引擎
+│   ├── etl.py — broker_tx → daily_summary
+│   ├── pnl_engine.py — FIFO PNL（prices via ws-core）
 │   └── generate_merge_map.py — 券商合併對照表
 │
 ├── broker_analytics ✓
@@ -19,10 +19,19 @@ ws-branch
 │   ├── application/services/ — 業務流程
 │   └── interfaces/cli.py — 10 subcommands
 │
-└── (future) ← HERE
+└── (future)
     ├── strategy-0 — 假說不成立 ✓
     ├── hypothesis-scan — ~8x 加速 ✓
-    ├── cluster-discovery
+    ├── ws-core 整合 ✓
+    │   sync_prices.py 刪除，改用 ws_core.prices()
+    ├── pipeline-daily ✓
+    │   ├── merged 設為預設 ✓
+    │   ├── timezone fix ✓
+    │   ├── ETL 增量 ✓
+    │   │   etl.py --incr：只處理新日期的 broker_tx
+    │   └── PNL 增量 ✓
+    │       pnl_engine.py --incr：從 fifo_state 恢復，只算新日期
+    ├── cluster-discovery ← HERE
     │   ├── 券商共現分析 ○
     │   │   daily_summary/*.parquet → co_occurrence.parquet
     │   ├── 產業知識驗證 ○

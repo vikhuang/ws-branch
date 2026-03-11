@@ -3,9 +3,11 @@
 ## Build & Run
 
 ```bash
-uv run python etl.py                        # Step 1: ETL (reads ~/r20/data/fugle/broker_tx/)
-uv run python pnl_engine.py                  # Step 2: FIFO PNL (prices via ws-core)
-uv run python pnl_engine.py --merged         # Step 2b: merged variant
+uv run python etl.py                        # Step 1: ETL full rebuild
+uv run python etl.py --incr                 # Step 1: ETL incremental (new dates only)
+uv run python pnl_engine.py                  # Step 2: FIFO PNL full (merged, prices via ws-core)
+uv run python pnl_engine.py --incr           # Step 2: FIFO PNL incremental (from checkpoint)
+uv run python pnl_engine.py --no-merge       # Step 2b: non-merged variant (archived)
 uv run python -m broker_analytics <subcommand>  # Analytics CLI
 uv run pytest                                # Tests
 ```
@@ -41,7 +43,8 @@ Clean Architecture — violations break separation of concerns:
 | application | `broker_analytics/application/` | Use cases combining domain + infrastructure |
 | interfaces | `broker_analytics/interfaces/` | CLI entry points only |
 
-Top-level scripts (`etl.py`, `pnl_engine.py`) are the data pipeline. Prices come from ws-core (reads `~/r20/data/tej/prices.parquet`).
+Top-level scripts (`etl.py`, `pnl_engine.py`) are the data pipeline. Both support `--incr` for incremental updates.
+Prices come from ws-core (reads `~/r20/data/tej/prices.parquet`). Merged mode is the default (use `--no-merge` for raw).
 `signal_report.py`, `market_scan.py`, `export_signals.py` are thin wrappers around `broker_analytics.application.services`.
 
 ### Domain Modules (shared, no duplication)
@@ -61,7 +64,6 @@ Top-level scripts (`etl.py`, `pnl_engine.py`) are the data pipeline. Prices come
 
 | Module | Provides |
 |--------|----------|
-| `infrastructure/bigquery.py` | Centralized BigQuery client (PROJECT_ID, fetch_ohlc, fetch_ohlc_batch) |
 | `infrastructure/config.py` | `DataPaths`, `AnalysisConfig` |
 | `infrastructure/repositories/` | `TradeRepository`, `RankingRepository`, `BrokerRepository`, `PriceRepository` |
 

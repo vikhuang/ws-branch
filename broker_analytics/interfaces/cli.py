@@ -40,7 +40,7 @@ from broker_analytics.domain.event_detection import EventConfig
 
 def cmd_ranking(args: argparse.Namespace) -> int:
     """Show broker ranking."""
-    mode = "（合併版）" if args.merged else ""
+    mode = "" if args.no_merge else "（合併版）"
     print(f"PNL Analytics v{__version__} {mode}")
     print("=" * 60)
 
@@ -319,7 +319,7 @@ def cmd_event_study(args: argparse.Namespace) -> int:
         return 1
 
     # Header
-    mode = "（合併版）" if args.merged else ""
+    mode = "" if args.no_merge else "（合併版）"
     print("=" * 70)
     print(f"EVENT STUDY: {report.symbol} {mode}")
     print(f"Config: top_k={config.top_k}, window={config.window_days}d, "
@@ -686,9 +686,9 @@ def main(argv: list[str] | None = None) -> int:
         version=f"%(prog)s {__version__}",
     )
     parser.add_argument(
-        "--merged",
+        "--no-merge",
         action="store_true",
-        help="使用合併版券商身份（讀取 _merged 目錄）",
+        help="使用未合併版券商身份（預設使用合併版）",
     )
 
     subparsers = parser.add_subparsers(dest="command", help="Commands")
@@ -867,7 +867,7 @@ def main(argv: list[str] | None = None) -> int:
     subparsers.add_parser("verify", help="Verify data integrity")
 
     args = parser.parse_args(argv)
-    args.paths = DataPaths(variant="merged") if args.merged else DEFAULT_PATHS
+    args.paths = DEFAULT_PATHS if args.no_merge else DataPaths(variant="merged")
 
     if args.command is None:
         parser.print_help()

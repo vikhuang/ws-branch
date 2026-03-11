@@ -15,11 +15,14 @@ uv sync
 
 # Pipeline（全市場 2,839 股，約 15 分鐘）
 uv run python etl.py                        # → data/daily_summary/
-uv run python pnl_engine.py                 # → data/pnl_daily/ + data/pnl/ + data/derived/
+uv run python pnl_engine.py                 # → data/pnl_daily_merged/ + data/pnl_merged/ + data/derived/
 
-# 合併版（將已停用券商代碼對應到存續券商，重新跑 FIFO）
+# 增量更新（每日只處理新資料）
+uv run python etl.py --incr                 # 只處理新 broker_tx → append to daily_summary
+uv run python pnl_engine.py --incr          # 從 fifo_state checkpoint 恢復，只算新日期
+
+# 券商合併對照表（首次需要）
 uv run python generate_merge_map.py         # → data/derived/broker_merge_map.json
-uv run python pnl_engine.py --merged        # → data/pnl_daily_merged/ + data/pnl_merged/ + data/derived/
 
 # 查詢
 uv run python -m broker_analytics ranking                  # 全市場券商排名
@@ -39,9 +42,9 @@ uv run python -m broker_analytics event-study 6285 --top-k 10 --window 10  # 調
 uv run python -m broker_analytics event-study 6285 --threshold 1.5         # 降低門檻（更多事件）
 uv run python -m broker_analytics event-study 6285 --no-robustness         # 跳過穩健性檢查
 
-# 合併版查詢（所有命令均支援 --merged）
-uv run python -m broker_analytics ranking --merged         # 合併版排名
-uv run python -m broker_analytics query 1650 --merged      # 含原瑞士信貸持倉
+# 非合併版查詢（預設使用合併版，加 --no-merge 切回原始版）
+uv run python -m broker_analytics ranking --no-merge       # 非合併版排名
+uv run python -m broker_analytics query 1650 --no-merge    # 不含券商合併
 
 # 個股信號分析
 uv run python -m broker_analytics signal 2345              # 大單信號回測報告
@@ -79,11 +82,11 @@ data/fifo_state/{symbol}.parquet (289 MB, 2839 檔) ← FIFO checkpoint
 data/pnl/{symbol}.parquet (79 MB, 2839 檔)  ← 個股維度
 data/derived/broker_ranking.parquet (56 KB)  ← 券商維度
 
-    │ pnl_engine.py --merged (broker code remap → re-FIFO)
+    │ pnl_engine.py (default: merged, broker code remap → re-FIFO)
     ▼
-data/pnl_daily_merged/  ← 合併版 Layer 1.5
-data/pnl_merged/         ← 合併版個股維度
-data/derived/broker_ranking_merged.parquet  ← 合併版券商維度
+data/pnl_daily_merged/  ← 合併版 Layer 1.5（預設）
+data/pnl_merged/         ← 合併版個股維度（預設）
+data/derived/broker_ranking_merged.parquet  ← 合併版券商維度（預設）
 ```
 
 ### Layer 0：供應商原始資料

@@ -538,6 +538,16 @@ def cmd_hypothesis(args: argparse.Namespace) -> int:
     if args.params:
         params_override = _parse_hypothesis_params(args.params)
 
+    # CV scan mode: rolling window cross-validation
+    if args.scan and args.cv:
+        runner.run_scan_cv(
+            args.strategy,
+            min_folds=args.min_folds,
+            fdr=args.fdr,
+            params_override=params_override,
+        )
+        return 0
+
     # Scan mode: all symbols with FDR
     if args.scan:
         runner.run_scan(args.strategy, fdr=args.fdr, params_override=params_override)
@@ -874,6 +884,14 @@ def main(argv: list[str] | None = None) -> int:
     hyp_parser.add_argument(
         "--fdr", type=float, default=0.05,
         help="FDR threshold for scan mode (default: 0.05)",
+    )
+    hyp_parser.add_argument(
+        "--cv", action="store_true",
+        help="Use rolling window cross-validation (5 folds)",
+    )
+    hyp_parser.add_argument(
+        "--min-folds", type=int, default=3,
+        help="Minimum folds to pass for CV mode (default: 3)",
     )
 
     # verify command

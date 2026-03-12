@@ -128,10 +128,12 @@ def _make_global_ranking(n: int = 50) -> pl.DataFrame:
     np.random.seed(321)
     brokers = [f"B{i:03d}" for i in range(n)]
     pnls = sorted(np.random.normal(0, 1e9, n), reverse=True)
+    amounts = [abs(p) * 10 for p in pnls]  # total_amount for contrast selector
     return pl.DataFrame({
         "rank": list(range(1, n + 1)),
         "broker": brokers,
         "total_pnl": pnls,
+        "total_amount": amounts,
     }).cast({"rank": pl.UInt32})
 
 
@@ -260,16 +262,17 @@ class TestSelectors:
         assert brokers == expected
 
     def test_niche_top_brokers(self):
-        """Niche: exclude big players by amount, select top PNL among rest."""
+        """Contrast score: high local PNL + low global PNL = information edge."""
         brokers = [f"B{i:03d}" for i in range(20)]
         data = _make_symbol_data(brokers=brokers)
         ctx = _make_global_context()
 
         result = select_niche_top_brokers(data, ctx, {
-            "exclude_top_pct": 0.1,  # exclude top 2 by amount
             "top_k": 5,
+            "min_contrast": 0.1,
+            "min_global_amount": 0,  # no amount filter for test
             "years": 3,
-            "train_end_date": "2025-12-31",  # covers all test dates
+            "train_end_date": "2025-12-31",
         })
         assert isinstance(result, list)
         assert all(isinstance(b, str) for b in result)
@@ -323,13 +326,14 @@ class TestFilters:
             dirs = set(events["direction"].to_list())
             assert dirs.issubset({1, -1})
 
-    def test_exodus_returns_sell_direction(self):
-        """Exodus events should have direction -1."""
+    def test_exodus_returns_valid_direction(self):
+        """Exodus events should have direction +1 or -1 (price-context dependent)."""
         data = _make_symbol_data(n_dates=200)
         brokers = select_top_k_by_pnl(data, _make_global_context(), {"top_k": 5})
         events = filter_collective_exodus(data, brokers, {"min_brokers": 2})
         if len(events) > 0:
-            assert all(d == -1 for d in events["direction"].to_list())
+            dirs = set(events["direction"].to_list())
+            assert dirs.issubset({1, -1})
 
     def test_empty_brokers_returns_empty(self):
         """Empty broker list → empty events."""

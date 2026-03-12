@@ -1,5 +1,8 @@
 # Hypothesis Exploration Final Report
 
+> **⚠️ 此報告為 Round 1 快照（單次掃描，無 CV）。**
+> 最終結果見 `round2_report.md`（Round 1-3，7/10 CV 通過）。
+
 ## 總覽
 
 10 個券商分點假說策略經全市場掃描（~2800+ 股），評估三項標準：

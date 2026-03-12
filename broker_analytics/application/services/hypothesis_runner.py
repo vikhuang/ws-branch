@@ -352,9 +352,10 @@ class HypothesisRunner:
         strategy_name: str,
         params_override: dict | None = None,
     ) -> pl.DataFrame:
-        """Export all events for a strategy as Signal Contract v1 CSV format.
+        """Export events from significant symbols as Signal Contract v1 CSV.
 
-        Runs selector + filter for all symbols (skips outcome/baseline/stat_test).
+        Runs the full 5-step pipeline per symbol. Only keeps events from
+        symbols where conclusion == "significant" (≥2 horizons pass).
         Returns DataFrame[symbol: Utf8, date: Date, direction: Int8].
         """
         config = get_strategy(strategy_name)
@@ -369,6 +370,7 @@ class HypothesisRunner:
         print(f"【信號匯出】{config.name}（{config.display_name}）")
         print(f"  策略：{config.description}")
         print(f"  股票數：{n_total}")
+        print(f"  篩選：只匯出統計顯著的股票（≥2 horizons pass）")
         print()
 
         self._price_repo.get_prices_df()
@@ -378,20 +380,33 @@ class HypothesisRunner:
 
         all_events: list[pl.DataFrame] = []
         n_skipped = 0
-        n_no_broker = 0
-        n_no_event = 0
+        n_no_result = 0
+        n_not_sig = 0
+        n_sig = 0
         t0 = time.time()
 
         for i, symbol in enumerate(all_symbols):
             data = self._load_symbol_data(symbol, requires)
             if data is None:
                 n_skipped += 1
-                self._print_progress(i + 1, n_total, symbol, "skip", len(all_events), t0)
+                self._print_progress(i + 1, n_total, symbol, "skip", n_sig, t0)
                 continue
 
             params = {**params_template}
+            result = self._run_pipeline(config, data, ctx, params)
 
-            # Inject concentration data (same as _run_pipeline)
+            if result is None or result.n_events == 0:
+                n_no_result += 1
+                self._print_progress(i + 1, n_total, symbol, "no_ev", n_sig, t0)
+                continue
+
+            if result.conclusion != "significant":
+                n_not_sig += 1
+                self._print_progress(i + 1, n_total, symbol, "no_sig", n_sig, t0)
+                continue
+
+            # Re-run filter to get events (pipeline doesn't return them)
+            # Reconstruct the same params used in pipeline
             if config.name == "concentration":
                 cache = params.get("_concentration_cache")
                 if cache is not None:
@@ -403,17 +418,9 @@ class HypothesisRunner:
                         data.symbol
                     )
 
-            # Step 1: Select brokers
             brokers = config.selector(data, ctx, params)
-            if not brokers:
-                n_no_broker += 1
-                self._print_progress(i + 1, n_total, symbol, "no_br", len(all_events), t0)
-                continue
-
-            # Inject broker list (for herding baseline)
             params["_brokers_list"] = brokers
 
-            # Inject cluster trade data for cross_stock strategy
             if "cluster" in params:
                 cluster_syms = params["cluster"]
                 if isinstance(cluster_syms, str):
@@ -425,30 +432,27 @@ class HypothesisRunner:
                         cluster_trades[sym] = pl.read_parquet(path)
                 params["_cluster_trades"] = cluster_trades
 
-            # Step 2: Filter events (this is all we need)
             events = config.filter(data, brokers, params)
+            if len(events) > 0:
+                events = events.with_columns(pl.lit(symbol).alias("symbol"))
+                all_events.append(events)
 
-            if len(events) == 0:
-                n_no_event += 1
-                self._print_progress(i + 1, n_total, symbol, "no_ev", len(all_events), t0)
-                continue
-
-            events = events.with_columns(pl.lit(symbol).alias("symbol"))
-            all_events.append(events)
-            self._print_progress(i + 1, n_total, symbol, f"ev={len(events)}", len(all_events), t0)
+            n_sig += 1
+            self._print_progress(i + 1, n_total, symbol, f"sig,ev={len(events)}", n_sig, t0)
 
         elapsed = time.time() - t0
         sys.stderr.write("\n")
         print(f"\n完成：{elapsed:.0f}s")
-        print(f"  跳過：{n_skipped}，無券商：{n_no_broker}，無事件：{n_no_event}")
-        print(f"  有事件股票：{len(all_events)}/{n_total}")
+        print(f"  總股票：{n_total}")
+        print(f"  跳過（資料不足）：{n_skipped}")
+        print(f"  無事件/無結果：{n_no_result}")
+        print(f"  不顯著：{n_not_sig}")
+        print(f"  顯著：{n_sig}")
 
         if not all_events:
             return pl.DataFrame(schema={"symbol": pl.Utf8, "date": pl.Date, "direction": pl.Int8})
 
         result = pl.concat(all_events).select("symbol", "date", "direction").sort("symbol", "date")
-
-        # Deduplicate: same (symbol, date) keep first
         result = result.unique(subset=["symbol", "date"], keep="first")
 
         total_events = len(result)

@@ -33,57 +33,76 @@ def select_top_k_by_pnl(
 def select_niche_top_brokers(
     data: SymbolData, ctx: GlobalContext, params: dict,
 ) -> BrokerList:
-    """Strategy 1: Small players with high per-stock PNL.
+    """Strategy 1: Contrarian contrast — rank by gap between local and global percentile.
 
-    Excludes "big players" (top by trading amount in this stock),
-    then selects top-K among remaining brokers by rolling N-year PNL.
+    Computes a contrast score = local_percentile - global_percentile for each broker.
+    High contrast means the broker is ranked much higher locally than globally,
+    indicating stock-specific information edge.
 
-    Rationale: if a normally unimportant broker ranks high in PNL for
-    a specific stock, that contrast is a stronger signal than PNL alone.
-
-    params: exclude_top_pct (float, default 0.1) — fraction of brokers to exclude,
-            top_k (int, default 10),
+    params: top_k (int, default 10) — number of highest-contrast brokers to select,
             years (int, default 3),
-            train_end_date (str, default "2023-12-31")
+            train_end_date (str, default "2023-12-31"),
+            min_contrast (float, default 0.3) — minimum contrast score,
+            min_global_amount (float, default 1e9) — min global trading to filter noise
     """
-    exclude_top_pct = params.get("exclude_top_pct", 0.1)
     top_k = params.get("top_k", 10)
     years = params.get("years", 3)
     train_end_str = params.get("train_end_date", "2023-12-31")
     train_end = date.fromisoformat(train_end_str)
+    min_contrast = params.get("min_contrast", 0.3)
+    min_global_amount = params.get("min_global_amount", 1e9)
 
-    # 1. Training window trades only
-    train_trades = data.trade_df.filter(pl.col("date") <= train_end)
-    if len(train_trades) == 0:
+    # 1. Global percentile: rank each broker by global metric
+    global_metric = params.get("global_metric", "total_pnl")
+    gr = ctx.global_ranking
+    if len(gr) == 0:
+        return []
+    if "total_amount" in gr.columns:
+        gr = gr.filter(pl.col("total_amount") >= min_global_amount)
+    if global_metric not in gr.columns:
+        global_metric = "total_pnl"
+    # Drop nulls in the metric column
+    gr = gr.filter(pl.col(global_metric).is_not_null())
+    if len(gr) == 0:
         return []
 
-    # 2. Per-broker total trading amount in this stock (training window)
-    broker_amounts = (
-        train_trades
-        .with_columns(pl.col("broker").cast(pl.Utf8))
-        .with_columns(
-            (pl.col("buy_amount").fill_null(0) + pl.col("sell_amount").fill_null(0))
-            .alias("total_amount")
-        )
-        .group_by("broker")
-        .agg(pl.col("total_amount").sum())
-        .sort("total_amount", descending=True)
-    )
+    n_global = len(gr)
+    global_sorted = gr.sort(global_metric, descending=True)
+    # percentile: rank 1 (best) = 1.0, rank N (worst) = 0.0
+    global_pct = {
+        row["broker"]: 1.0 - i / (n_global - 1) if n_global > 1 else 0.5
+        for i, row in enumerate(global_sorted.iter_rows(named=True))
+    }
 
-    # 3. Exclude top N% by amount (the "big players" / 大戶)
-    n_exclude = max(1, int(len(broker_amounts) * exclude_top_pct))
-    big_players = set(broker_amounts.head(n_exclude)["broker"].to_list())
-
-    # 4. Among remaining "small players", rank by rolling N-year PNL
+    # 2. Local percentile: rank brokers by rolling PNL on this stock
     local_ranking = _rolling_ranking_to_date(data.pnl_daily_df, years, train_end)
     if len(local_ranking) == 0:
         return []
 
-    niche_ranking = local_ranking.filter(~pl.col("broker").is_in(big_players))
-    if len(niche_ranking) == 0:
+    # Only consider brokers with positive local PNL
+    local_ranking = local_ranking.filter(pl.col("total_pnl") > 0)
+    n_local = len(local_ranking)
+    if n_local == 0:
         return []
 
-    return niche_ranking.head(top_k)["broker"].to_list()
+    local_pct = {
+        row["broker"]: 1.0 - i / (n_local - 1) if n_local > 1 else 0.5
+        for i, row in enumerate(local_ranking.iter_rows(named=True))
+    }
+
+    # 3. Contrast score = local_percentile - global_percentile
+    #    High contrast → globally weak but locally strong
+    contrasts = []
+    for broker in local_pct:
+        if broker not in global_pct:
+            continue
+        contrast = local_pct[broker] - global_pct[broker]
+        if contrast >= min_contrast:
+            contrasts.append((broker, contrast))
+
+    # 4. Sort by contrast descending, take top-K
+    contrasts.sort(key=lambda x: x[1], reverse=True)
+    return [b for b, _ in contrasts[:top_k]]
 
 
 def select_dual_window_intersection(
@@ -359,17 +378,15 @@ def select_by_large_trade_scar(
 # =============================================================================
 
 def _rolling_top_k(
-    pnl_daily: pl.DataFrame, years: int, k: int,
+    pnl_daily: pl.DataFrame, years: float, k: int,
 ) -> set[str]:
-    """Get top-K brokers by rolling PNL over trailing years."""
+    """Get top-K brokers by rolling PNL over trailing years (supports fractional)."""
     max_date = pnl_daily["date"].max()
     if max_date is None:
         return set()
 
-    try:
-        start = max_date.replace(year=max_date.year - years)
-    except ValueError:
-        start = date(max_date.year - years, max_date.month, max_date.day - 1)
+    from datetime import timedelta
+    start = max_date - timedelta(days=int(years * 365))
 
     window = pnl_daily.filter(pl.col("date") >= start)
     agg = (

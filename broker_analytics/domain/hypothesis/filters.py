@@ -110,6 +110,11 @@ def filter_collective_exodus(
 ) -> pl.DataFrame:
     """Strategy 4: Multiple top brokers exiting or significantly reducing positions.
 
+    v3: Price-context direction assignment.
+    - Exodus after rally (price up > rally_pct in window) → profit-taking → direction -1
+    - Exodus after drop (price down > rally_pct in window) → capitulation → direction +1
+    - Exodus with no strong trend → skip (ambiguous)
+
     Exit = net_shares crosses from positive to <= 0.
     Significant reduction = net_shares drops by > reduction_pct in one day.
     Uses rolling window to count collective exits.
@@ -145,9 +150,7 @@ def filter_collective_exodus(
         .select("broker", "date", "net_shares", "prev_shares")
     )
 
-    # Detect exit events per broker-date:
-    # 1) Position crosses from positive to zero/negative
-    # 2) Position drops by > reduction_pct (and was meaningful)
+    # Detect exit events per broker-date
     exit_events = positions.filter(
         pl.col("prev_shares").is_not_null()
         & (pl.col("prev_shares") > 0)
@@ -163,18 +166,37 @@ def filter_collective_exodus(
     if len(exit_events) == 0:
         return _EMPTY_EVENTS.clone()
 
-    # Rolling window: for each date, count unique brokers with exit
-    # events in the trailing window_days
-    all_dates = positions.select("date").unique().sort("date")
-    exit_list = exit_events.to_dicts()
+    # Get price context for direction classification
+    rally_pct = params.get("rally_pct", 0.05)
+    sym_prices = (
+        data.prices
+        .filter(pl.col("symbol_id") == data.symbol)
+        .select("date", "close_price")
+        .sort("date")
+    )
+    if len(sym_prices) == 0:
+        return _EMPTY_EVENTS.clone()
 
+    # Compute trailing return over window_days
+    sym_prices = sym_prices.with_columns(
+        (pl.col("close_price") / pl.col("close_price").shift(window_days) - 1.0)
+        .alias("trailing_return")
+    ).drop_nulls("trailing_return")
+    price_map = dict(zip(
+        sym_prices["date"].to_list(),
+        sym_prices["trailing_return"].to_list(),
+    ))
+
+    # Rolling window: for each date, count exits and classify by price context
     from datetime import timedelta
+
+    exit_list = exit_events.to_dicts()
     date_broker_exits: dict = {}
     for row in exit_list:
         date_broker_exits.setdefault(row["date"], set()).add(row["broker"])
 
     results = []
-    sorted_dates = all_dates["date"].to_list()
+    sorted_dates = positions.select("date").unique().sort("date")["date"].to_list()
     for d in sorted_dates:
         window_start = d - timedelta(days=window_days)
         n_exiting = len({
@@ -183,8 +205,25 @@ def filter_collective_exodus(
             if window_start <= exit_d <= d
             for b in brokers_set
         })
-        if n_exiting >= min_brokers:
-            results.append({"date": d, "direction": -1})
+
+        if n_exiting < min_brokers:
+            continue
+
+        trailing_ret = price_map.get(d)
+        if trailing_ret is None:
+            continue
+
+        if trailing_ret > rally_pct:
+            # Exodus after rally → profit-taking → bearish
+            direction = -1
+        elif trailing_ret < -rally_pct:
+            # Exodus after drop → capitulation → bullish (oversold)
+            direction = 1
+        else:
+            # No strong trend → skip ambiguous events
+            continue
+
+        results.append({"date": d, "direction": direction})
 
     if not results:
         return _EMPTY_EVENTS.clone()
@@ -374,10 +413,20 @@ def filter_herding_divergence(
     Herding index = crowd_buy_pct - smart_buy_pct.
     High herding (crowd buys, smart doesn't) → direction = -1 (short).
     Low herding (crowd sells, smart buys) → direction = +1 (long).
-    params: herding_threshold (float, default 0.3)
+
+    v3: Rolling window cumulative divergence + per-stock percentile.
+    Smooths daily noise by averaging herding_index over rolling_days,
+    then picks top/bottom quantile as extreme events.
+
+    params:
+        herding_quantile (float, default 0.05): percentile for extreme events
+        min_crowd_brokers (int, default 5): minimum non-smart brokers per day
+        rolling_days (int, default 5): rolling window for herding_index smoothing
     """
-    threshold = params.get("herding_threshold", 0.3)
-    smart_set = set(brokers)  # top-K from selector
+    quantile = params.get("herding_quantile", 0.05)
+    min_crowd = params.get("min_crowd_brokers", 5)
+    rolling_days = params.get("rolling_days", 5)
+    smart_set = set(brokers)
 
     daily_net = (
         data.trade_df
@@ -396,24 +445,53 @@ def filter_herding_divergence(
         )
     )
 
-    # Crowd: fraction of non-top-K that are net buyers per day
+    # Crowd: fraction of non-top-K that are net buyers per day + count
     crowd_daily = (
         daily_net.filter(~pl.col("broker").is_in(smart_set))
         .group_by("date")
         .agg(
             (pl.col("net_buy") > 0).mean().alias("crowd_buy_pct"),
+            pl.col("broker").n_unique().alias("n_crowd"),
         )
     )
 
     merged = smart_daily.join(crowd_daily, on="date", how="inner")
-    merged = merged.with_columns(
+    # Filter: require minimum crowd participation
+    merged = merged.filter(pl.col("n_crowd") >= min_crowd)
+
+    if len(merged) < 20:
+        return _EMPTY_EVENTS.clone()
+
+    merged = merged.sort("date").with_columns(
         (pl.col("crowd_buy_pct") - pl.col("smart_buy_pct"))
-        .alias("herding_index")
+        .alias("herding_raw")
     )
+
+    # v3: Rolling mean to smooth daily noise
+    if rolling_days > 1:
+        merged = merged.with_columns(
+            pl.col("herding_raw")
+            .rolling_mean(window_size=rolling_days, min_periods=rolling_days)
+            .alias("herding_index")
+        ).drop_nulls("herding_index")
+    else:
+        merged = merged.with_columns(
+            pl.col("herding_raw").alias("herding_index")
+        )
+
+    if len(merged) < 20:
+        return _EMPTY_EVENTS.clone()
+
+    # Per-stock percentile thresholds
+    hi_upper = merged.select(pl.col("herding_index").quantile(1 - quantile)).item()
+    hi_lower = merged.select(pl.col("herding_index").quantile(quantile)).item()
 
     events = (
         merged
-        .filter(pl.col("herding_index").abs() > threshold)
+        .filter(
+            (pl.col("herding_index") >= hi_upper)
+            | (pl.col("herding_index") <= hi_lower)
+        )
         .with_columns(
             pl.when(pl.col("herding_index") > 0)
             .then(pl.lit(-1, dtype=pl.Int8))   # crowd buys, smart doesn't → bearish

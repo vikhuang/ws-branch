@@ -30,7 +30,9 @@ uv run python -m broker_analytics hypothesis --list                    # List 10
 uv run python -m broker_analytics hypothesis 2330 -s contrarian_broker # Single hypothesis
 uv run python -m broker_analytics hypothesis 2330 --all                # All 10 strategies
 uv run python -m broker_analytics hypothesis --batch 2330,2454 -s exodus --workers 4
-uv run python -m broker_analytics hypothesis --scan -s large_trade_scar  # Full market scan + FDR
+uv run python -m broker_analytics hypothesis --scan -s conviction        # Full market scan + FDR
+uv run python -m broker_analytics hypothesis --scan --cv -s conviction   # 5-fold rolling CV (recommended)
+uv run python -m broker_analytics hypothesis --scan --cv -s conviction --min-folds 4  # Stricter CV
 ```
 
 ## Architecture
@@ -133,19 +135,24 @@ Types: `feat`, `fix`, `refactor`, `docs`, `test`, `perf`, `chore`
 ## Hypothesis Strategy Design
 
 10 strategies follow a 5-step pipeline: Selector → Filter → Outcome → Baseline → StatTest.
+Validated via 5-fold rolling CV (≥3/5 folds pass: sig>5%, FDR≥10, dir>60%).
 
-| # | Strategy | Selector | Filter | Core Logic |
-|---|----------|----------|--------|------------|
-| 0 | large_trade_scar | training SCAR top-K | test window 2σ+金額 | 訓練窗口大單準 → 測試窗口驗證 (**假說不成立**：全市場 1293 股掃描，顯著率 2.9%<隨機 5%，買賣拆分 Cohen's d≈0，regression to the mean) |
-| 1 | contrarian_broker | global bottom ∩ local top | large_trades 2σ | 全市場虧損但特定股票強 = stock-specific 資訊優勢 |
-| 2 | dual_window | 1yr ∩ 3yr top-K | large_trades 2σ | 長期贏家重新進場 = regime change |
-| 3 | conviction | top_k | 浮盈>20% 且加碼 | 對抗 disposition effect 的強信號 |
-| 4 | exodus | top_k | 持倉歸零/減半（20天窗口） | 聰明錢集體撤退 = negative signal |
-| 5 | cross_stock | top_k | cluster 內≥2股同時大單 | 同一券商跨產業鏈同步買進 |
-| 6 | ta_regime | TA temporal z-score | large_trades 2σ | 券商擇時能力突然「開竅」 |
-| 7 | contrarian_smart | top_k | 恐慌日逆勢買（單日>2%或3日>5%跌） | 恐慌時承接 = 高成本決策 |
-| 8 | concentration | cross-stock HHI>30% | 集中券商加倉日 | 跨股票持倉高度集中 = 高信心 |
-| 9 | herding | top_k | herding index（散戶vs聰明錢） | 散戶一致但聰明錢缺席 = 危險 |
+| # | Strategy | Selector | Filter | CV | Core Logic |
+|---|----------|----------|--------|----|------------|
+| 3 | **conviction** | top_k | 浮盈>20% 且加碼 | **5/5** | 對抗 disposition effect（最強，sig=14-21%） |
+| 7 | **contrarian_smart** | top_k | 恐慌日逆勢買 | **5/5** | 恐慌承接 = 高成本決策（最廣覆蓋 2000+ 股） |
+| 9 | **herding** | top_k | 滾動群聯分歧百分位 | **5/5** | 持續散戶群聚 + 聰明錢缺席（v3: rolling mean） |
+| 8 | **concentration** | HHI>8% | 集中券商加倉日 | **5/5** | 高信心（dir 97%，覆蓋少但品質極高） |
+| 1 | **contrarian_broker** | contrast score | conviction signals | **5/5** | 局部強+全局弱 = stock-specific 資訊優勢 |
+| 2 | **dual_window** | 1yr ∩ 3yr top-K | conviction signals | **5/5** | 持續贏家加碼浮盈 |
+| 4 | **exodus** | top_k | price-context 撤退 | **3/5** | 漲後撤退→空，跌後撤退→多（v3: 方向分類） |
+| 0 | ~~large_trade_scar~~ | training SCAR top-K | test window 2σ | ❌ | 假說不成立（regression to mean，d≈0） |
+| 6 | ~~ta_regime~~ | TA z-score | large_trades | ❌ | 事件太稀疏 + 計算太慢（107min/CV） |
+| 5 | cross_stock | top_k | cluster 內≥2股同時大單 | ⏭ | 需 cluster 定義（blocked） |
+
+**注意**：contrarian_broker、dual_window 與 conviction 共用 conviction filter，信號高度相關。
+獨立信號源：conviction、contrarian_smart、herding、concentration（4 個獨立）。
+詳見 `docs/hypothesis_exploration_guide.md` 和 `data/reports/round2_report.md`。
 
 ### Cluster Discovery（未實作，方向 D）
 

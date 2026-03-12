@@ -538,6 +538,39 @@ def cmd_hypothesis(args: argparse.Namespace) -> int:
     if args.params:
         params_override = _parse_hypothesis_params(args.params)
 
+    # Export mode: generate Signal Contract CSV
+    if args.export:
+        if not args.strategy:
+            print("Error: --export 需指定 -s <strategy>")
+            return 1
+        import polars as pl
+        from pathlib import Path
+
+        strategies = [s.strip() for s in args.strategy.split(",")]
+        signals_dir = args.paths.data_dir / "signals"
+        signals_dir.mkdir(exist_ok=True)
+
+        for strategy_name in strategies:
+            events = runner.run_export(strategy_name, params_override=params_override)
+            if events.is_empty():
+                print(f"  {strategy_name}: 無事件，跳過")
+                continue
+
+            # Convert direction Int8 → string for Signal Contract v1
+            out = events.with_columns(
+                pl.when(pl.col("direction") == 1)
+                .then(pl.lit("long"))
+                .otherwise(pl.lit("short"))
+                .alias("direction"),
+                pl.col("date").cast(pl.Utf8),
+            ).select("symbol", "date", "direction")
+
+            path = signals_dir / f"{strategy_name}.csv"
+            out.write_csv(path)
+            print(f"  → {path}（{len(out)} 筆）")
+
+        return 0
+
     # CV scan mode: rolling window cross-validation
     if args.scan and args.cv:
         runner.run_scan_cv(
@@ -892,6 +925,10 @@ def main(argv: list[str] | None = None) -> int:
     hyp_parser.add_argument(
         "--min-folds", type=int, default=3,
         help="Minimum folds to pass for CV mode (default: 3)",
+    )
+    hyp_parser.add_argument(
+        "--export", action="store_true",
+        help="Export Signal Contract CSV (comma-separated strategies with -s)",
     )
 
     # verify command

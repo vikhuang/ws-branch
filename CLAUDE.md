@@ -33,6 +33,8 @@ uv run python -m broker_analytics hypothesis --batch 2330,2454 -s exodus --worke
 uv run python -m broker_analytics hypothesis --scan -s conviction        # Full market scan + FDR
 uv run python -m broker_analytics hypothesis --scan --cv -s conviction   # 5-fold rolling CV (recommended)
 uv run python -m broker_analytics hypothesis --scan --cv -s conviction --min-folds 4  # Stricter CV
+uv run python -m broker_analytics hypothesis --export -s conviction                  # Export Signal Contract CSV
+uv run python -m broker_analytics hypothesis --export -s "conviction,herding,exodus"  # Export multiple strategies
 ```
 
 ## Architecture
@@ -118,6 +120,7 @@ These mistakes have been made before. Do NOT repeat them:
 - `DataPaths(variant="merged")` → output paths get `_merged` suffix, input paths shared
 - Significance requires BOTH `p < 0.05` AND `|Cohen's d| >= 0.2`
 - Statistical method details: @docs/statistics.md
+- `--export` outputs Signal Contract v1 CSV to `data/signals/{strategy}.csv` (for ws-quant `backtest-external-daily`)
 
 ## Git Conventions
 

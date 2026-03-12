@@ -347,6 +347,117 @@ class HypothesisRunner:
             "elapsed": elapsed_all,
         }
 
+    def run_export(
+        self,
+        strategy_name: str,
+        params_override: dict | None = None,
+    ) -> pl.DataFrame:
+        """Export all events for a strategy as Signal Contract v1 CSV format.
+
+        Runs selector + filter for all symbols (skips outcome/baseline/stat_test).
+        Returns DataFrame[symbol: Utf8, date: Date, direction: Int8].
+        """
+        config = get_strategy(strategy_name)
+        if params_override:
+            merged_params = {**config.params, **params_override}
+            config = replace(config, params=merged_params)
+
+        requires = config.requires
+        all_symbols = self._paths.list_symbols()
+        n_total = len(all_symbols)
+
+        print(f"【信號匯出】{config.name}（{config.display_name}）")
+        print(f"  策略：{config.description}")
+        print(f"  股票數：{n_total}")
+        print()
+
+        self._price_repo.get_prices_df()
+        ctx = self._get_global_context()
+        params_template = {**config.params, "horizons": config.horizons}
+        self._inject_global_params(config, params_template)
+
+        all_events: list[pl.DataFrame] = []
+        n_skipped = 0
+        n_no_broker = 0
+        n_no_event = 0
+        t0 = time.time()
+
+        for i, symbol in enumerate(all_symbols):
+            data = self._load_symbol_data(symbol, requires)
+            if data is None:
+                n_skipped += 1
+                self._print_progress(i + 1, n_total, symbol, "skip", len(all_events), t0)
+                continue
+
+            params = {**params_template}
+
+            # Inject concentration data (same as _run_pipeline)
+            if config.name == "concentration":
+                cache = params.get("_concentration_cache")
+                if cache is not None:
+                    params["_broker_concentrations"] = self._concentration_for_symbol(
+                        cache, data.symbol
+                    )
+                else:
+                    params["_broker_concentrations"] = self._load_broker_concentrations(
+                        data.symbol
+                    )
+
+            # Step 1: Select brokers
+            brokers = config.selector(data, ctx, params)
+            if not brokers:
+                n_no_broker += 1
+                self._print_progress(i + 1, n_total, symbol, "no_br", len(all_events), t0)
+                continue
+
+            # Inject broker list (for herding baseline)
+            params["_brokers_list"] = brokers
+
+            # Inject cluster trade data for cross_stock strategy
+            if "cluster" in params:
+                cluster_syms = params["cluster"]
+                if isinstance(cluster_syms, str):
+                    cluster_syms = [s.strip() for s in cluster_syms.split(",")]
+                cluster_trades = {}
+                for sym in cluster_syms:
+                    path = self._paths.symbol_trade_path(sym)
+                    if path.exists():
+                        cluster_trades[sym] = pl.read_parquet(path)
+                params["_cluster_trades"] = cluster_trades
+
+            # Step 2: Filter events (this is all we need)
+            events = config.filter(data, brokers, params)
+
+            if len(events) == 0:
+                n_no_event += 1
+                self._print_progress(i + 1, n_total, symbol, "no_ev", len(all_events), t0)
+                continue
+
+            events = events.with_columns(pl.lit(symbol).alias("symbol"))
+            all_events.append(events)
+            self._print_progress(i + 1, n_total, symbol, f"ev={len(events)}", len(all_events), t0)
+
+        elapsed = time.time() - t0
+        sys.stderr.write("\n")
+        print(f"\n完成：{elapsed:.0f}s")
+        print(f"  跳過：{n_skipped}，無券商：{n_no_broker}，無事件：{n_no_event}")
+        print(f"  有事件股票：{len(all_events)}/{n_total}")
+
+        if not all_events:
+            return pl.DataFrame(schema={"symbol": pl.Utf8, "date": pl.Date, "direction": pl.Int8})
+
+        result = pl.concat(all_events).select("symbol", "date", "direction").sort("symbol", "date")
+
+        # Deduplicate: same (symbol, date) keep first
+        result = result.unique(subset=["symbol", "date"], keep="first")
+
+        total_events = len(result)
+        n_long = result.filter(pl.col("direction") == 1).height
+        n_short = result.filter(pl.col("direction") == -1).height
+        print(f"  總事件數：{total_events}（多={n_long}，空={n_short}）")
+
+        return result
+
     def run_all_strategies(
         self,
         symbol: str,

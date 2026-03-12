@@ -66,6 +66,8 @@ uv run python -m broker_analytics hypothesis 2330 -s conviction --params top_k=3
 uv run python -m broker_analytics hypothesis --batch 2330,2454 -s exodus --workers 4
 uv run python -m broker_analytics hypothesis --scan -s conviction        # 全市場掃描 + FDR
 uv run python -m broker_analytics hypothesis --scan --cv -s conviction   # 5-fold 滾動窗口 CV（推薦）
+uv run python -m broker_analytics hypothesis --export -s conviction     # 匯出 Signal Contract CSV
+uv run python -m broker_analytics hypothesis --export -s "conviction,herding,exodus"  # 多策略匯出
 ```
 
 ## Pipeline

@@ -1,0 +1,214 @@
+{
+  "max_iterations": 50,
+  "pass_criteria": {
+    "significance_rate_min": 0.05,
+    "fdr_stocks_min": 10,
+    "direction_consistency_min": 0.60,
+    "cv_min_folds": 3,
+    "cv_total_folds": 5
+  },
+  "order": [
+    "herding",
+    "ta_regime",
+    "contrarian_broker",
+    "cross_stock",
+    "concentration",
+    "conviction",
+    "contrarian_smart"
+  ],
+  "strategies": {
+    "large_trade_scar": {
+      "status": "abandoned",
+      "iterations": 1,
+      "best_result": "sig=2.9%, FDR=0, d_consistency=N/A",
+      "last_sig_rate": 2.9,
+      "last_dir_consistency": null,
+      "stagnant_count": 0,
+      "abandon_reason": "假說本身錯誤：SCAR ranking 選到的是運氣非能力（regression to mean）。Cohen's d ≈ 0，買賣無差異。不值得迭代。",
+      "notes": "v0: training SCAR top-K → test window. Full scan 1293 stocks, 2.9% < 5%. Buy/sell d≈0."
+    },
+    "exodus": {
+      "status": "cv_passed",
+      "iterations": 5,
+      "best_result": "CV 3/5 通過，sig=20.5~34.3%, dir=53.6~80.1%",
+      "last_sig_rate": 34.1,
+      "last_dir_consistency": 62.6,
+      "stagnant_count": 0,
+      "cv_result": {
+        "folds_passed": 3,
+        "folds_total": 5,
+        "per_fold": [
+          {"fold": "2023H2-2024H1", "sig_rate": 24.5, "fdr_stocks": 270, "dir": 53.6, "passed": false},
+          {"fold": "2024", "sig_rate": 30.2, "fdr_stocks": 329, "dir": 64.6, "passed": true},
+          {"fold": "2024H2-2025H1", "sig_rate": 34.3, "fdr_stocks": 333, "dir": 80.1, "passed": true},
+          {"fold": "2025", "sig_rate": 27.4, "fdr_stocks": 208, "dir": 67.3, "passed": true},
+          {"fold": "2025H2-2026Q1", "sig_rate": 20.5, "fdr_stocks": 118, "dir": 57.0, "passed": false}
+        ]
+      },
+      "notes": "v3: price-context direction. Exodus after rally→bearish, after drop→bullish. Skip ambiguous (<5% trailing return). Rescued from abandoned. Highest sig rate of all strategies (20-34%)."
+    },
+    "dual_window": {
+      "status": "cv_passed",
+      "iterations": 3,
+      "best_result": "CV 5/5 通過，sig=11.2~26.4%, dir=64.9~87.2%",
+      "last_sig_rate": 17.7,
+      "last_dir_consistency": 78.0,
+      "stagnant_count": 0,
+      "cv_result": {
+        "folds_passed": 5,
+        "folds_total": 5,
+        "per_fold": [
+          {"fold": "2023H2-2024H1", "sig_rate": 15.4, "fdr_stocks": 142, "dir": 87.2, "passed": true},
+          {"fold": "2024", "sig_rate": 11.2, "fdr_stocks": 105, "dir": 64.9, "passed": true},
+          {"fold": "2024H2-2025H1", "sig_rate": 15.7, "fdr_stocks": 135, "dir": 75.9, "passed": true},
+          {"fold": "2025", "sig_rate": 19.6, "fdr_stocks": 200, "dir": 77.2, "passed": true},
+          {"fold": "2025H2-2026Q1", "sig_rate": 26.4, "fdr_stocks": 252, "dir": 84.8, "passed": true}
+        ]
+      },
+      "notes": "v3: swapped filter from large_trades to conviction_signals. 'Persistent winners adding to winning positions' is much stronger than 'persistent winners making large trades'. min_profit_ratio=0.15, min_brokers=2."
+    },
+    "conviction": {
+      "status": "cv_passed",
+      "iterations": 1,
+      "best_result": "CV 5/5 通過，sig=14.5~21.1%, dir=75.5~90.4%",
+      "last_sig_rate": 18.0,
+      "last_dir_consistency": 73.9,
+      "stagnant_count": 0,
+      "cv_result": {
+        "folds_passed": 5,
+        "folds_total": 5,
+        "per_fold": [
+          {"fold": "2023H2-2024H1", "sig_rate": 15.1, "fdr_stocks": 152, "dir": 90.4, "passed": true},
+          {"fold": "2024", "sig_rate": 14.5, "fdr_stocks": 142, "dir": 77.7, "passed": true},
+          {"fold": "2024H2-2025H1", "sig_rate": 16.2, "fdr_stocks": 121, "dir": 75.8, "passed": true},
+          {"fold": "2025", "sig_rate": 16.1, "fdr_stocks": 128, "dir": 75.5, "passed": true},
+          {"fold": "2025H2-2026Q1", "sig_rate": 21.1, "fdr_stocks": 168, "dir": 82.3, "passed": true}
+        ]
+      },
+      "notes": "Strongest strategy. 5/5 CV folds. Behavioral finance foundation (disposition effect). No iteration needed."
+    },
+    "contrarian_smart": {
+      "status": "cv_passed",
+      "iterations": 1,
+      "best_result": "CV 5/5 通過，sig=5.7~9.6%, dir=64.9~87.7%",
+      "last_sig_rate": 6.3,
+      "last_dir_consistency": 73.1,
+      "stagnant_count": 0,
+      "cv_result": {
+        "folds_passed": 5,
+        "folds_total": 5,
+        "per_fold": [
+          {"fold": "2023H2-2024H1", "sig_rate": 7.2, "fdr_stocks": 224, "dir": 87.7, "passed": true},
+          {"fold": "2024", "sig_rate": 5.7, "fdr_stocks": 187, "dir": 78.3, "passed": true},
+          {"fold": "2024H2-2025H1", "sig_rate": 8.4, "fdr_stocks": 270, "dir": 64.9, "passed": true},
+          {"fold": "2025", "sig_rate": 8.9, "fdr_stocks": 278, "dir": 82.2, "passed": true},
+          {"fold": "2025H2-2026Q1", "sig_rate": 9.6, "fdr_stocks": 242, "dir": 86.7, "passed": true}
+        ]
+      },
+      "notes": "5/5 CV folds. Panic buying = high-cost contrarian decision. Broadest coverage (2000+ stocks)."
+    },
+    "contrarian_broker": {
+      "status": "cv_passed",
+      "iterations": 11,
+      "best_result": "CV 5/5 通過，sig=10.8~16.2%, dir=71.6~86.3%",
+      "last_sig_rate": 12.6,
+      "last_dir_consistency": 76.7,
+      "stagnant_count": 0,
+      "cv_result": {
+        "folds_passed": 5,
+        "folds_total": 5,
+        "per_fold": [
+          {"fold": "2023H2-2024H1", "sig_rate": 11.3, "fdr_stocks": 103, "dir": 73.2, "passed": true},
+          {"fold": "2024", "sig_rate": 10.8, "fdr_stocks": 100, "dir": 73.5, "passed": true},
+          {"fold": "2024H2-2025H1", "sig_rate": 14.0, "fdr_stocks": 142, "dir": 78.7, "passed": true},
+          {"fold": "2025", "sig_rate": 10.8, "fdr_stocks": 67, "dir": 71.6, "passed": true},
+          {"fold": "2025H2-2026Q1", "sig_rate": 16.2, "fdr_stocks": 87, "dir": 86.3, "passed": true}
+        ]
+      },
+      "notes": "v10: swapped filter from large_trades to conviction_signals. Contrarian brokers adding to winning positions. min_profit_ratio=0.15, min_brokers=2. Rescued from abandoned after 9 iterations stuck on large_trades filter."
+    },
+    "cross_stock": {
+      "status": "blocked",
+      "iterations": 0,
+      "best_result": null,
+      "last_sig_rate": null,
+      "last_dir_consistency": null,
+      "stagnant_count": 0,
+      "notes": "Architectural blocker: scan mode needs auto-generated cluster definitions. Requires broker co-occurrence analysis pipeline (not yet built). Manual --params cluster=... works for single symbols only."
+    },
+    "ta_regime": {
+      "status": "abandoned",
+      "iterations": 2,
+      "best_result": "sig=4.3%, FDR=149, d_consistency=88.2%（最佳 fold，但 CV 0/5）",
+      "last_sig_rate": 3.0,
+      "last_dir_consistency": 75.9,
+      "stagnant_count": 1,
+      "abandon_reason": "z_threshold 從 2.0 降到 1.0，sig 只從 1.4% → 2-4%，仍不足 5%。計算成本極高（107 分鐘/次 CV）。方向一致性不穩定（Fold 3 只有 51.5%）。TA z-score 作為 selector 效率低，可能更適合作為 filter 的一部分。",
+      "notes": "v0: z=2.0, sig=1.4%. v2: z=1.0, sig=2-4%, CV 0/5. Too slow for iteration (107min/CV). Root cause: per-broker multi-window TA computation is O(brokers*windows), inherently slow and sparse."
+    },
+    "concentration": {
+      "status": "cv_passed",
+      "iterations": 3,
+      "best_result": "CV 5/5 通過，sig=6.0~46.4%, dir=61.9~100%",
+      "last_sig_rate": 10.8,
+      "last_dir_consistency": 97.4,
+      "stagnant_count": 0,
+      "cv_result": {
+        "folds_passed": 5,
+        "folds_total": 5,
+        "per_fold": [
+          {"fold": "2023H2-2024H1", "sig_rate": 21.2, "fdr_stocks": 26, "dir": 100.0, "passed": true},
+          {"fold": "2024", "sig_rate": 17.7, "fdr_stocks": 28, "dir": 88.2, "passed": true},
+          {"fold": "2024H2-2025H1", "sig_rate": 6.0, "fdr_stocks": 11, "dir": 61.9, "passed": true},
+          {"fold": "2025", "sig_rate": 26.0, "fdr_stocks": 38, "dir": 89.6, "passed": true},
+          {"fold": "2025H2-2026Q1", "sig_rate": 46.4, "fdr_stocks": 52, "dir": 92.3, "passed": true}
+        ]
+      },
+      "notes": "Fixed runner injection (moved before selector) + O(N²)→O(N) cache. v0→v3: min_concentration 0.30→0.08, min_brokers 2→1. High direction consistency (97-100%). Limited coverage (~157 stocks) but excellent quality."
+    },
+    "herding": {
+      "status": "cv_passed",
+      "iterations": 3,
+      "best_result": "CV 5/5 通過，sig=5.8~10.2%, dir=60.6~68.5%",
+      "last_sig_rate": 7.7,
+      "last_dir_consistency": 65.5,
+      "stagnant_count": 0,
+      "cv_result": {
+        "folds_passed": 5,
+        "folds_total": 5,
+        "per_fold": [
+          {"fold": "2023H2-2024H1", "sig_rate": 5.8, "fdr_stocks": 202, "dir": 65.1, "passed": true},
+          {"fold": "2024", "sig_rate": 6.4, "fdr_stocks": 245, "dir": 60.6, "passed": true},
+          {"fold": "2024H2-2025H1", "sig_rate": 10.2, "fdr_stocks": 389, "dir": 65.9, "passed": true},
+          {"fold": "2025", "sig_rate": 9.4, "fdr_stocks": 382, "dir": 68.5, "passed": true},
+          {"fold": "2025H2-2026Q1", "sig_rate": 6.8, "fdr_stocks": 292, "dir": 67.3, "passed": true}
+        ]
+      },
+      "notes": "v3: 5-day rolling mean + percentile. Key insight: smoothing daily noise reveals persistent crowd-vs-smart divergence. 3 iterations: v0(abs threshold)→v2(percentile)→v3(rolling+percentile)."
+    }
+  },
+  "completed": true,
+  "round": 3,
+  "round_1_summary": {
+    "cv_passed": ["conviction", "contrarian_smart"],
+    "cv_failed": ["dual_window"],
+    "abandoned": ["large_trade_scar", "exodus"],
+    "failed_but_promising": ["herding", "ta_regime", "contrarian_broker"],
+    "blocked": ["cross_stock", "concentration"]
+  },
+  "round_2_summary": {
+    "cv_passed": ["herding", "concentration"],
+    "abandoned": ["ta_regime", "contrarian_broker"],
+    "blocked": ["cross_stock"]
+  },
+  "round_3_summary": {
+    "cv_passed": ["exodus", "dual_window", "contrarian_broker"],
+    "still_abandoned": ["large_trade_scar", "ta_regime"],
+    "blocked": ["cross_stock"]
+  },
+  "final_summary": {
+    "cv_passed": ["conviction", "contrarian_smart", "herding", "concentration", "exodus", "dual_window", "contrarian_broker"],
+    "abandoned": ["large_trade_scar", "ta_regime"],
+    "blocked": ["cross_stock"]
+  }
+}

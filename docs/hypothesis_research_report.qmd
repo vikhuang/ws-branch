@@ -1,0 +1,528 @@
+---
+title: "台灣券商分點資料假說驅動信號研究"
+subtitle: "從行為金融異象到可驗證交易信號的系統化框架"
+author: "Vik Huang"
+date: "2026-03-13"
+format:
+  html:
+    embed-resources: true
+    toc: true
+    toc-depth: 3
+    number-sections: true
+    theme: cosmo
+    fontsize: 0.95em
+    linestretch: 1.6
+    mainfont: "Noto Sans TC, sans-serif"
+    code-fold: true
+    fig-width: 8
+    fig-height: 5
+---
+
+## 研究摘要 {#sec-abstract}
+
+本研究利用台灣證券交易所獨有的券商分點交易資料，建構了一個假說驅動的信號發現框架。核心發現：
+
+- **4 個統計獨立的行為金融信號**通過 5-fold rolling cross-validation，涵蓋 disposition effect（處置效應）、panic buying（恐慌承接）、herding divergence（群聯分歧）、portfolio concentration（持倉集中度）四種行為異象。
+- **框架設計**：每個假說被分解為 5 步 pipeline（Selector → Filter → Outcome → Baseline → StatTest），確保信號邏輯可獨立迭代、統計驗證標準化。
+- **驗證標準**：三重門檻（顯著比例 >5%、FDR 校正後 ≥10 支、方向一致性 >60%），在 5 個時間滾動窗口中至少 3 個通過。
+- **從統計顯著到可交易**：7 個通過 CV 的策略已產出 Signal Contract CSV（合計 101,326 事件），進入外部回測驗證階段。
+
+---
+
+## 資料來源：台股分點交易資料 {#sec-data}
+
+### 什麼是分價量 {#sec-fenjianliang}
+
+台灣證券交易所每日公開一份獨特的資料：**分價量表**。它記錄了每支股票在每個「價位」上，每家券商分點（營業據點）的買賣張數。這是全球主要市場中**唯一公開到券商層級的每日交易資料**。
+
+- 美國 13F 只披露機構季度持倉，無法知道日度交易行為
+- 歐洲 MiFID II 要求交易報告但不公開至 broker 層級
+- 日本只有大股東揭露義務
+
+分價量的原始格式是「每個 price tick 一列」——同一家券商在同一天、同一支股票上可能在多個價位成交，因此會有多筆記錄。以智邦(2345)為例，2026-03-12 國泰證券總部（代碼 8880）在多個價位上成交：
+
+| 價位 | 買入（股） | 賣出（股） |
+|------|-----------|-----------|
+| 1,450 | 0 | 3,000 |
+| 1,455 | 3 | 2,000 |
+| 1,460 | 2 | 9,000 |
+| 1,465 | 14 | 2,000 |
+| 1,470 | 7 | 2,000 |
+| ... | ... | ... |
+| 1,495 | 1,001 | 0 |
+| 1,505 | 2,000 | 0 |
+| 1,510 | 5 | 0 |
+
+其中 3、2、14 等小量為零股交易。這些記錄在 ETL 後會聚合為一筆日度摘要：買入約 3 張（459 萬元）、賣出約 34 張（4,994 萬元）——國泰當日明顯賣超。
+
+### 原始資料結構 {#sec-raw-schema}
+
+我們使用的上游資料集經每日自動拉取並儲存為 parquet 格式：
+
+| 欄位 | 型別 | 說明 | 範例 |
+|------|------|------|------|
+| `symbol_id` | String | 股票代碼 | `2345` |
+| `date` | Datetime (UTC) | 交易時間戳 | `2026-03-11 16:00:00 UTC` |
+| `broker` | String | 券商分點代碼 | `8880` |
+| `broker_name` | String | 券商分點名稱 | `國泰` |
+| `price` | String | 成交價位 | `1,480.00`（自營商為 `-`） |
+| `buy` | Int64 | 該價位買入股數 | `3000` |
+| `sell` | Int64 | 該價位賣出股數 | `0` |
+
+每日一個 parquet 檔，檔名格式 `broker_tx_YYYYMMDD.parquet`，每日約 170 萬筆記錄。
+
+### 資料規模 {#sec-data-scale}
+
+| 項目 | 數值 |
+|------|------|
+| 原始資料量 | ~20 億筆交易，~10 GB |
+| 涵蓋股票數 | 2,839 支（台股全市場） |
+| 活躍券商分點 | ~900 家 |
+| 時間範圍 | 2021-01 ~ 2026-03（5 年+） |
+
+---
+
+## 資料清洗與匯總 {#sec-etl}
+
+### ETL Pipeline {#sec-etl-pipeline}
+
+原始分價量資料需要兩個關鍵處理步驟，才能成為分析可用的格式。
+
+**步驟一：時區轉換**
+
+原始 `date` 欄位為 UTC 時間戳。台股收盤後的資料（台北時間下午 1:30 後）在 UTC 中是當天，但直接取 `.dt.date()` 會導致日期錯誤——時間戳實際上指向 UTC 午夜，需要先轉換至 `Asia/Taipei` 時區再取日期。
+
+```python
+pl.col("date").dt.convert_time_zone("Asia/Taipei").dt.date()
+```
+
+早期版本未做時區轉換，導致所有交易日期提前一天，使得信號包含 look-ahead bias。修正後，原先 Sharpe 3.35~6.19 的 T+1 日內策略全數失效——這個教訓促成了本研究更嚴謹的假說驅動框架。
+
+**步驟二：分價量 → 日度匯總**
+
+將每個 price tick 的記錄聚合為「每支股票 × 每家券商 × 每日」的摘要：
+
+```
+原始：2345, 2026-03-12, 國泰(8880), 1450元, buy=0張,  sell=3張
+      2345, 2026-03-12, 國泰(8880), 1460元, buy=0張,  sell=9張
+      2345, 2026-03-12, 國泰(8880), 1505元, buy=2張,  sell=0張
+      ... (多筆 price tick)
+                    ↓ group_by(symbol, broker, date).sum()
+匯總：2345, 2026-03-12, 國泰(8880), buy=3張, sell=34張,
+                                     buy_amount=459萬, sell_amount=4,994萬
+```
+
+輸出為 `daily_summary/{symbol}.parquet`，每支股票一個檔案，按 `(broker, date)` 排序以最佳化後續 FIFO 計算。
+
+**步驟三：過濾自營商**
+
+原始資料中 `price = "-"` 的記錄為券商自營部門交易，不代表客戶行為，在 ETL 階段即被排除。
+
+### 增量更新 {#sec-incremental}
+
+Pipeline 支援增量模式（`--incr`），只處理新增日期的資料並 append 到現有 parquet 檔，避免每次全量重建（全量約需 15 分鐘）。
+
+---
+
+## 損益計算：FIFO 成本法 {#sec-pnl}
+
+### 為什麼需要追蹤 PNL {#sec-why-pnl}
+
+分點資料只告訴我們「誰買了多少、誰賣了多少」，但不告訴我們「誰賺了錢」。要區分聰明錢和噪音交易者，我們需要知道每家券商在每支股票上的**累積損益**——這需要從歷史交易中重建每筆部位的成本基礎。
+
+### FIFO 機制 {#sec-fifo-mechanism}
+
+我們採用 **First-In-First-Out（FIFO）** 成本法，為每個 `(股票, 券商)` 組合維護一個獨立帳戶：
+
+1. **買入**：如果有空頭部位（short lots），先回補最早的空頭（FIFO 順序），剩餘部分建立新的多頭部位（long lot），成本 = 當日均價
+2. **賣出**：如果有多頭部位（long lots），先平倉最早的多頭（FIFO 順序），剩餘部分建立新的空頭部位，成本 = 當日均價
+3. **已實現損益**：平倉時，`(賣價 - 成本) × 張數`，逐 lot 計算
+4. **未實現損益**：未平倉部位以當日收盤價 mark-to-market
+
+### 為什麼用 FIFO 而非均價法 {#sec-why-fifo}
+
+均價法（average cost）在每次交易時將所有持股平均化，丟失了時間結構資訊。FIFO 保留了「哪些股票是什麼時候買的」，因此能準確計算：
+
+- **浮盈比例**（unrealized PNL / cost basis）：判斷券商是否在「贏的時候加碼」（conviction filter 的核心）
+- **持有期間**：區分短線交易者和長期持有者
+- **成本基礎的精確性**：避免均價法在大量加碼後稀釋早期成本的問題
+
+### 暖身期與績效窗口 {#sec-warmup}
+
+| 期間 | 用途 |
+|------|------|
+| 2021-01 ~ 2022-12（2 年） | FIFO 暖身期：累積部位，建立成本基礎 |
+| 2023-01 ~ 2026-03（3 年+） | 績效衡量期：計算 PNL、timing alpha |
+
+暖身期是必要的——一家券商如果在 2020 年買入 1000 張並在 2023 年賣出，我們需要知道 2021-01 起的完整交易歷史才能正確計算成本。
+
+### PNL 衍生指標：Timing Alpha {#sec-timing-alpha}
+
+Timing Alpha（TA）衡量一家券商的「擇時能力」——是否傾向在漲之前買、跌之前賣：
+
+$$
+\text{TA}_b = \frac{\sum_{t} (n_t^{b} - \bar{n}^{b}) \times r_{t+1}}{\sigma(n^{b})}
+$$
+
+其中 $n_t^{b}$ 是券商 $b$ 在第 $t$ 日的淨買超，$r_{t+1}$ 是次日報酬。
+
+- 減去均值 $\bar{n}^{b}$：去除方向性偏誤（避免長期淨買入者自動獲得正 TA）
+- 除以 $\sigma(n^{b})$：正規化交易量，使大戶和小券商可以比較
+
+### 券商合併 {#sec-broker-merge}
+
+台灣金融業近年多次合併（如日盛證券併入富邦），導致同一實體在不同時期使用不同分點代碼。如果不處理，同一家券商的交易歷史會被拆成兩段，FIFO 成本計算錯誤。
+
+合併處理流程：
+
+1. 維護 `broker_merge_map.json`：紀錄舊代碼 → 新代碼的映射（含遞移閉包，如 A→B→C 直接解析為 A→C）
+2. **在 FIFO 計算前**重新映射所有券商代碼
+3. 同一日期下舊新代碼的交易量合併加總
+
+::: {.callout-important}
+**順序至關重要**：合併必須在 FIFO 之前執行。如果先做 FIFO 再合併，舊代碼的部位無法正確繼承到新代碼，成本基礎和已實現損益都會出錯。
+:::
+
+### Pipeline 全貌 {#sec-pipeline-overview}
+
+```
+原始分點資料（~20億筆, per-day parquet）
+  │  ETL: 時區轉換 + 聚合為日度摘要
+  ▼
+daily_summary/{symbol}.parquet（2,839 檔）
+  │  + 收盤價（TEJ prices.parquet）
+  │  + 券商合併映射
+  ▼
+pnl_engine: FIFO 逐日計算
+  ▼
+├─ pnl_daily/{symbol}.parquet   ← 每日每券商損益（Layer 1.5）
+├─ pnl/{symbol}.parquet         ← 個股維度券商排名（Layer 2）
+└─ broker_ranking.parquet       ← 全市場券商排名（~910 家）
+```
+
+---
+
+## 假說檢驗框架：5 步 Pipeline {#sec-framework}
+
+### 設計理念 {#sec-design}
+
+傳統量化研究常將「信號發現」和「統計驗證」混為一談，導致兩個問題：(1) 信號邏輯難以獨立迭代；(2) 不同信號的驗證標準不一致。
+
+我們將每個假說分解為 5 個可獨立替換的步驟：
+
+| 步驟 | 功能 | 輸入 | 輸出 |
+|------|------|------|------|
+| **Selector** | 選出「誰值得觀察」 | 券商交易/PNL 資料 | 券商清單 `list[str]` |
+| **Filter** | 識別「什麼時候發出信號」 | 交易資料 + 選出的券商 | 事件表 `(date, direction)` |
+| **Outcome** | 衡量「事件後發生什麼」 | 事件日期 + 價格 | 前瞻報酬（1/5/10/20 日） |
+| **Baseline** | 建立「沒有信號時的基準」 | 價格 | 無條件前瞻報酬 |
+| **StatTest** | 判定「信號 vs 基準的差異是否顯著」 | 事件報酬 + 基準報酬 | p-value, Cohen's d, 結論 |
+
+### 可組合性 {#sec-composability}
+
+同一個 Filter 可以搭配不同的 Selector，形成不同策略。例如 `filter_conviction_signals`（conviction filter）被三個策略共用：
+
+- **conviction**：`select_top_k_by_pnl` × `filter_conviction_signals`
+- **contrarian_broker**：`select_niche_top_brokers` × `filter_conviction_signals`
+- **dual_window**：`select_dual_window_intersection` × `filter_conviction_signals`
+
+這三個策略問的問題不同（哪些券商值得觀察），但觀察的行為模式相同（浮盈加碼）。
+
+### 每個假說的輸出 {#sec-hypothesis-output}
+
+對每支股票，pipeline 產出：
+
+- **4 個 horizon 的前瞻報酬檢定**（1 日、5 日、10 日、20 日）
+- 每個 horizon：p-value（Bonferroni 校正後）+ Cohen's d（效果量）
+- **結論**：≥2 個 horizon 同時顯著 = `significant`，1 個 = `marginal`，0 個 = `no_effect`
+
+---
+
+## 四個獨立信號源 {#sec-signals}
+
+10 個策略中，7 個通過了 5-fold rolling CV。但其中 3 個（contrarian_broker、dual_window、conviction）共用同一個 filter，信號高度相關。**真正獨立的信號來源有 4 個**。
+
+### Conviction：處置效應的反面 {#sec-conviction}
+
+**行為金融基礎**：Disposition effect（Shefrin & Statman, 1985）指出投資人傾向「賣掉贏的、留住輸的」——過早獲利了結，過晚停損。這意味著：**在浮盈狀態下仍加碼的行為是反常的**，代表該券商對後續走勢有強烈信心。
+
+**信號邏輯**：
+
+1. **Selector**：取個股維度 PNL 排名前 20 名券商（per-stock top-K，非全市場排名）
+2. **Filter**：在這些券商中，找到同時滿足以下條件的日期——
+   - 持有正部位（`net_shares > 0`）
+   - 浮盈比例超過 20%（`unrealized_pnl / cost_basis > 0.2`）
+   - 當日仍為淨買超（`buy_shares > sell_shares`）
+   - 同日至少 3 家券商符合
+
+**CV 結果**：5/5 通過，顯著比例 14-21%，方向一致性 75-90%。
+
+**為什麼有效**：浮盈 20% 是一個高心理門檻——多數人在這個位置會賣出（disposition effect）。仍選擇加碼的券商，要不是有未反映在價格中的正面資訊，就是有與多數人不同的分析框架。當 3 家以上券商同時做出這個決定，偶然性大幅降低。
+
+### Contrarian Smart：恐慌日的逆勢承接 {#sec-contrarian-smart}
+
+**行為金融基礎**：恐慌拋售通常是非理性的過度反應（DeLong et al., 1990）。在恐慌時買入需要承擔巨大的心理成本和資金風險，這是一個高成本決策——只有真正認為價格低估的參與者才會這樣做。
+
+**信號邏輯**：
+
+1. **Selector**：個股 PNL 排名前 20 名
+2. **Filter**：恐慌日定義——
+   - 單日跌幅 > 2%，或
+   - 3 日累計跌幅 > 5%
+   - 在恐慌日中，至少 3 家 top-K 券商為淨買超
+
+**CV 結果**：5/5 通過，顯著比例 5.7-9.6%，方向一致性 64-87%。覆蓋最廣（2,000+ 支股票有信號）。
+
+**為什麼有效**：恐慌日買入是 costly signal——不像「某天多買了一點」可以是噪音，在全市場恐慌時逆勢大買需要資金和勇氣。如果這些券商的歷史 PNL 排名靠前，代表他們的逆勢操作過去確實是對的。
+
+### Herding：群眾與聰明錢的分歧 {#sec-herding}
+
+**行為金融基礎**：Herding（Bikhchandani et al., 1992）描述投資人忽略自身資訊、跟隨他人行為的現象。當散戶群聚買入但聰明錢缺席（或反向），代表群體行為是由模仿而非資訊驅動。
+
+**信號邏輯**：
+
+1. **Selector**：個股 PNL 排名前 20 名（定義為「聰明錢」）
+2. **Filter**：計算每日 herding index——
+   - `herding_index = crowd_buy_pct - smart_buy_pct`
+   - 其中 crowd = 非 top-K 券商的淨買超比例，smart = top-K 的淨買超比例
+   - 取 5 日滾動平均（v3 改進：消除日度噪音）
+   - 取個股歷史的上下 5% 百分位作為事件觸發門檻
+   - 高 herding（散戶買、聰明錢不買）→ 做空
+   - 低 herding（散戶賣、聰明錢在買）→ 做多
+
+**CV 結果**：5/5 通過，顯著比例 5.8-10.2%，方向一致性 60-68%。
+
+**迭代歷史**：此策略經歷 3 次重大修改——v0 用絕對閾值（0.3），事件極稀疏，覆蓋率 <1%；v2 改用百分位，覆蓋率翻倍但仍不足；v3 加入 5 日滾動平均，關鍵發現——**持續的分歧才是真信號，單日分歧只是噪音**。
+
+### Concentration：持倉集中度 {#sec-concentration}
+
+**行為金融基礎**：Portfolio concentration 是信心的代理變數。將投資組合高度集中於少數股票（HHI > 8%），代表該券商對特定股票有異於常人的確信。當這樣的券商仍在加碼，信號更強。
+
+**信號邏輯**：
+
+1. **Selector**：計算每家券商的跨股票持倉 HHI（Herfindahl-Hirschman Index），選出 HHI > 8% 的券商
+2. **Filter**：在集中度高的券商中，找到他們仍在加碼的日期——
+   - 持有正部位（`net_shares > 0`）
+   - 當日淨買超（`net_buy > 0`）
+
+**CV 結果**：5/5 通過，方向一致性 61-100%（最高）。覆蓋較窄（14 支顯著股票），但品質極高——方向一致性在部分 fold 達到 97%。
+
+**為什麼有效**：HHI > 8% 意味著該券商將超過 8% 的資金集中在單一股票上，這在正常投資組合管理中是非常激進的配置。如果這不是因為擁有特殊資訊，那就是嚴重的風險管理失誤——但我們已經通過 Selector 確認這些券商的歷史 PNL 排名靠前，排除了後者。
+
+---
+
+## 統計驗證與穩健性 {#sec-validation}
+
+### 雙重顯著性門檻 {#sec-dual-threshold}
+
+一個結果被判定為「顯著」，必須**同時**滿足兩個條件：
+
+1. **統計顯著**：Bonferroni 校正後 p-value < 0.05（校正因子 = horizon 數量）
+2. **實質顯著**：|Cohen's d| ≥ 0.2（至少小效果量）
+
+第一個條件防止 false positive；第二個條件防止「統計顯著但效果量微乎其微」的 trivial results。大樣本中，即使極小的差異也能通過 t-test，但如果 Cohen's d < 0.2，對投資決策毫無意義。
+
+### 個股結論邏輯 {#sec-per-symbol}
+
+每支股票的 4 個 horizon（1, 5, 10, 20 日）分別檢定。結論規則：
+
+| 顯著 horizon 數 | 結論 |
+|:---:|------|
+| ≥ 2 | `significant`（信號確認） |
+| 1 | `marginal`（需更多證據） |
+| 0 | `no_effect`（此股票無效） |
+
+要求 ≥2 個 horizon 而非 1 個，是為了避免單一 horizon 偶然顯著的問題。
+
+### 5-Fold Rolling Cross-Validation {#sec-cv}
+
+所有策略的最終驗證採用 **5 個時間滾動窗口**，每個窗口約 1 年：
+
+| Fold | 期間 |
+|------|------|
+| 1 | 2023-H2 ~ 2024-H1 |
+| 2 | 2024 全年 |
+| 3 | 2024-H2 ~ 2025-H1 |
+| 4 | 2025 全年 |
+| 5 | 2025-H2 ~ 2026-Q1 |
+
+每個 fold 獨立對全市場 ~2,800 支股票執行完整 pipeline，產出三個指標：
+
+- **Sig%**：結論為 `significant` 的股票佔比（門檻：>5%）
+- **FDR count**：通過 Benjamini-Hochberg FDR 校正後的顯著 symbol × horizon 組合數（門檻：≥10）
+- **Dir%**：方向一致性——顯著股票中，事件日後報酬方向與信號方向一致的比例（門檻：>60%）
+
+**通過標準**：≥3/5 folds 三項指標全部達標。
+
+### 多重檢定校正：Benjamini-Hochberg FDR {#sec-fdr}
+
+全市場掃描涉及 ~2,800 支股票 × 4 個 horizon = ~11,200 次檢定。不做校正會導致大量 false positive。
+
+我們使用 Benjamini-Hochberg 法控制 False Discovery Rate：
+
+1. 將所有 p-value 從小到大排序
+2. 找到最大的 $k$ 使得 $p_{(k)} \leq \frac{k}{m} \times q$（$m$ = 檢定數，$q$ = 0.05）
+3. 拒絕前 $k$ 個假設
+
+BH-FDR 比 Bonferroni 寬鬆但更合理——它控制的是「被拒絕假設中 false positive 的比例」，而非「任意 false positive 的機率」。
+
+### 無 scipy 依賴 {#sec-no-scipy}
+
+所有統計函數（Welch's t-test、Cohen's d、permutation test、BH-FDR）皆手動實作，使用 `math.erfc` 進行常態 CDF 近似（樣本數 >30 時有效）。這避免了大型依賴，也確保統計邏輯完全透明可審計。
+
+---
+
+## 家族相關性與獨立信號 {#sec-family}
+
+### 信號家族結構 {#sec-family-structure}
+
+7 個通過 CV 的策略並非完全獨立：
+
+```
+conviction filter 家族（共用 filter_conviction_signals）：
+├─ conviction      ← select_top_k_by_pnl
+├─ contrarian_broker ← select_niche_top_brokers（contrast score）
+└─ dual_window     ← select_dual_window_intersection（1yr ∩ 3yr）
+
+獨立信號：
+├─ contrarian_smart ← filter_contrarian_on_panic
+├─ herding          ← filter_herding_divergence
+├─ concentration    ← filter_concentration_increase
+└─ exodus           ← filter_collective_exodus（邊緣通過 3/5）
+```
+
+conviction 家族的三個策略觀察的是**同一種行為**（浮盈加碼），只是篩選不同群體的券商。因此它們的信號高度重疊，不應視為獨立 alpha 來源。
+
+### 真正獨立的 alpha 數量 {#sec-independent-alpha}
+
+保守估計：**4 個獨立信號**（conviction、contrarian_smart、herding、concentration）。
+
+- **exodus** 邊緣通過（3/5 folds），且 v3 的 price-context 方向分類邏輯較複雜，穩健性待驗證
+- conviction 家族雖然有 3 個策略通過，但底層只有 1 個獨立信號源
+
+---
+
+## 從信號到策略 {#sec-signal-to-strategy}
+
+### Signal Contract：跨系統橋接 {#sec-signal-contract}
+
+假說框架產出的是「統計顯著性判定」，而非可直接交易的策略。為了將信號送入獨立的回測引擎驗證，我們定義了 Signal Contract v1：
+
+| 欄位 | 型別 | 說明 |
+|------|------|------|
+| `symbol` | String | 股票代碼 |
+| `date` | Date (YYYY-MM-DD) | 信號日期（交易日） |
+| `direction` | String | `"long"` 或 `"short"` |
+
+只有結論為 `significant` 的股票的事件才會被匯出——這是關鍵的品質閘門。
+
+### 匯出統計 {#sec-export-stats}
+
+| 策略 | 事件數 | 顯著股票數 | 方向分佈 |
+|------|--------|-----------|---------|
+| conviction | 9,499 | 219 | 100% long |
+| contrarian_smart | 10,713 | 150 | 100% long |
+| herding | 24,714 | 231 | ~50/50 long/short |
+| concentration | 1,383 | 14 | 100% long |
+| contrarian_broker | 4,849 | 100 | 100% long |
+| dual_window | 14,262 | 209 | 100% long |
+| exodus | 36,003 | 625 | 22% long / 78% short |
+
+### 初步回測結果 {#sec-backtest-results}
+
+將 7 個策略的 Signal Contract CSV 送入獨立回測引擎（ws-quant），以 T+1 開盤進場、固定持有 N 日後收盤出場，測試 5 個 horizon（1/5/10/20/60 日），結果如下（Sharpe Ratio）：
+
+| 策略 | 1d | 5d | 10d | 20d | 60d |
+|------|---:|---:|----:|----:|----:|
+| **conviction** | 0.18 | -0.60 | **5.10** | **6.56** | **8.12** |
+| **dual_window** | -0.40 | -1.25 | **4.08** | **5.43** | **7.24** |
+| **concentration** | -0.80 | 1.11 | **4.11** | **4.92** | **6.47** |
+| contrarian_broker | -0.47 | -0.60 | **4.27** | **5.43** | **6.50** |
+| herding | -1.79 | -0.92 | 1.90 | 2.22 | 2.26 |
+| contrarian_smart | -2.36 | -3.01 | 0.68 | 1.31 | 1.76 |
+| exodus | -0.79 | -1.75 | -0.08 | -0.46 | -0.93 |
+
+**關鍵觀察**：
+
+1. **短期（1-5 日）幾乎全部為負或接近零**——信號的預測力在短期內不足以覆蓋交易成本，或信號反映的是中長期結構性資訊而非短期動量。
+2. **中長期（10-60 日）conviction 家族表現最強**——conviction、dual_window、contrarian_broker 三者在 10d+ 的 Sharpe 均超過 4，印證了 disposition effect 信號的持續性。
+3. **60 日 Sharpe 極高需謹慎解讀**——5/7 策略為 long-only，2023-2026 期間台股整體上漲，60 日持有的高 Sharpe 可能包含大量 beta 成分而非純 alpha。
+4. **exodus 全滅**——作為 CV 邊緣通過（3/5）的策略，回測確認其信號品質不足。
+
+### 待解決問題 {#sec-open-issues}
+
+**Beta 分離**：中長期策略的 alpha 需要扣除同期市場報酬才能確認。可行做法包括：與大盤等權重組合對沖、計算 beta-adjusted alpha、或在多空混合策略（herding）上觀察是否有類似的 horizon 效應。
+
+**出場機制**：假說框架驗證 4 個 horizon 的前瞻報酬，但不指定出場時機。目前由外部回測引擎透過 exit specification（固定持有 N 日）處理。回測結果顯示 10-20 日可能是信號的最佳 sweet spot。
+
+**聚合策略**：4 個獨立信號如何組合成投資組合級別的配置？conviction 家族與 herding/concentration 的組合特別值得探索——前者長期持有表現強，後者提供不同的信號觸發時機。
+
+---
+
+## 局限性與風險 {#sec-limitations}
+
+1. **樣本內過擬合風險**：儘管使用 rolling CV，策略設計本身（filter 的參數選擇、v1→v3 的迭代）仍受到歷史數據的影響。真正的 out-of-sample 驗證需要在未來數據上觀察。
+
+2. **資料偏存者偏誤**：分析的 2,839 支股票是「目前仍在交易」的股票，不包含已下市股票。信號在瀕臨下市的股票上的表現未知。
+
+3. **執行滑點**：Signal Contract 假設可以在 T+1 開盤價進場，但實際執行可能面臨流動性限制，尤其是小型股。concentration 策略只有 14 支顯著股票，部分可能流動性不足。
+
+4. **券商合併的動態性**：合併映射是靜態的，但金融業持續整合。如果未來有新的合併事件未被更新，會導致 PNL 計算偏誤。
+
+5. **策略容量**：分點資料是公開的，理論上所有人都可以複製相同的信號。如果大量資金追蹤相同信號，alpha 會被套利至零。目前信號的 coverage（14~625 支股票）和方向分佈提供了一定的容量緩衝。
+
+---
+
+## 理論基礎與參考文獻 {#sec-references}
+
+### 行為金融理論
+
+本研究的四個獨立信號各自根植於不同的行為金融理論：
+
+**Disposition Effect（處置效應）**——Shefrin & Statman (1985) 首次提出：投資人傾向「太早賣掉贏家、太晚賣掉輸家」。Odean (1998) 用折扣券商帳戶數據實證確認。Barber, Lee, Liu & Odean (2009) 在台股上發現散戶因過度交易年損 3.8%。conviction 策略利用的正是 disposition effect 的反面——**浮盈加碼是反常行為，反常 ≈ 資訊驅動**。
+
+**Noise Trader Theory（噪音交易者理論）**——DeLong, Shleifer, Summers & Waldmann (1990) 證明噪音交易者可以在市場中長期存在，因為套利者面臨 noise trader risk（噪音交易者的非理性行為可能持續甚至加劇）。contrarian_smart 策略在恐慌日（噪音交易者過度反應時）尋找聰明錢的逆勢行為。
+
+**Herding（群聚效應）**——Bikhchandani, Hirshleifer & Welch (1992) 建立了 information cascade 模型：當早期行動者的選擇足夠強，後續者會理性地忽略自身資訊而跟隨群體。herding 策略捕捉的是散戶群聚買入（information cascade）但聰明錢不跟隨的分歧時刻。
+
+**Portfolio Concentration（持倉集中度）**——Kacperczyk, Sialm & Zheng (2005) 發現持倉集中度高的基金表現優於分散基金，因為集中反映了基金經理的資訊優勢。concentration 策略將此邏輯延伸到券商層級——HHI > 8% 的券商等同於「把所有蛋放在少數籃子裡」，如果這些券商的歷史績效排名靠前，集中就是信心的代理變數。
+
+### 市場微結構
+
+**Kyle (1985)**——informed trading 的經典模型。informed trader 策略性地分散交易以隱藏資訊，而我們的 2σ 大單偵測試圖捕捉 informed trader 的異常行為。
+
+**Hasbrouck (1991)**——將價格變動拆解為 permanent component（資訊）和 transitory component（噪音）。我們的 timing alpha 實質上是 Hasbrouck 分解的券商層級版本。
+
+**Easley & O'Hara (1996)**——PIN 模型量化 informed trading 的機率。我們的方法比 PIN 更 granular：不只知道是否有 informed trading，還知道哪些券商 informed、方向為何、信心多強。
+
+### 統計方法
+
+**Welch's t-test**——不假設等變異數的兩樣本 t 檢定，適用於事件報酬（高波動）與基準報酬（低波動）的比較。
+
+**Cohen's d (1988)**——效果量指標。d = 0.2（小）、0.5（中）、0.8（大）。搭配 p-value 使用，防止大樣本下的 trivial significance。
+
+**Benjamini & Hochberg (1995)**——控制 False Discovery Rate 的多重檢定校正方法。比 Bonferroni 校正保守度低，更適合大規模篩選場景。
+
+**Permutation Test**——非參數檢定。隨機打亂事件日標籤 10,000 次，計算觀測到的統計量在隨機分佈中的位置。不依賴分佈假設，適用於小樣本或非常態分佈的場景。
+
+### 參考文獻列表
+
+| 文獻 | 核心概念 |
+|------|---------|
+| Shefrin & Statman (1985). "The Disposition to Sell Winners Too Early and Ride Losers Too Long." *JF* | Disposition effect：過早獲利了結、過晚停損 |
+| Kyle (1985). "Continuous Auctions and Insider Trading." *Econometrica* | Informed trading 模型，lambda, price impact |
+| DeLong, Shleifer, Summers & Waldmann (1990). "Noise Trader Risk in Financial Markets." *JPE* | 噪音交易者的持續存在與 noise trader risk |
+| Bikhchandani, Hirshleifer & Welch (1992). "A Theory of Fads, Fashion, Custom, and Cultural Change as Informational Cascades." *JPE* | Information cascade 與 herding 行為 |
+| Hasbrouck (1991). "Measuring the Information Content of Stock Trades." *JF* | Order flow 的資訊含量分解 |
+| Benjamini & Hochberg (1995). "Controlling the False Discovery Rate." *JRSS-B* | BH-FDR 多重檢定校正 |
+| Easley, Kiefer, O'Hara & Paperman (1996). "Liquidity, Information, and Infrequently Traded Stocks." *JF* | PIN 模型 |
+| Odean (1998). "Are Investors Reluctant to Realize Their Losses?" *JF* | Disposition effect 的實證確認 |
+| Hong & Stein (1999). "A Unified Theory of Underreaction, Momentum Trading, and Overreaction." *JF* | 資訊在異質投資者間的漸進擴散 |
+| Barber & Odean (2000). "Trading Is Hazardous to Your Wealth." *JF* | 散戶過度交易導致虧損 |
+| Kacperczyk, Sialm & Zheng (2005). "On the Industry Concentration of Actively Managed Equity Mutual Funds." *JF* | 持倉集中度與基金績效 |
+| Barber, Lee, Liu & Odean (2009). "Just How Much Do Individual Investors Lose by Trading?" *RFS* | **台股散戶**年損 3.8% |
+| Cohen (1988). *Statistical Power Analysis for the Behavioral Sciences*. Routledge | Cohen's d 效果量標準 |
+
+---
+
+*本報告由 ws-branch 研究框架自動產出，資料截至 2026-03-12。所有統計結果均為歷史分析，不構成投資建議。*

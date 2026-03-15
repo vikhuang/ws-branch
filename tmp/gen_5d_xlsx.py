@@ -68,6 +68,16 @@ def compute_rolling_ranking(
     start_idx = max(0, idx - WINDOW_DAYS + 1)
     window_dates = all_dates[start_idx : idx + 1]
 
+    # Baseline unrealized (day before window)
+    if start_idx > 0:
+        baseline_date = all_dates[start_idx - 1]
+        baseline_df = (
+            df.filter(pl.col("date") == baseline_date)
+            .select(["broker", pl.col("unrealized_pnl").alias("_base")])
+        )
+    else:
+        baseline_df = pl.DataFrame(schema={"broker": pl.Utf8, "_base": pl.Float64})
+
     window_df = df.filter(pl.col("date").is_in(window_dates))
     if len(window_df) == 0:
         return pl.DataFrame()
@@ -79,6 +89,12 @@ def compute_rolling_ranking(
             pl.col("realized_pnl").sum(),
             pl.col("unrealized_pnl").last(),
         ])
+        .join(baseline_df, on="broker", how="left")
+        .with_columns(pl.col("_base").fill_null(0.0))
+        .with_columns(
+            (pl.col("unrealized_pnl") - pl.col("_base")).alias("unrealized_pnl")
+        )
+        .drop("_base")
         .with_columns(
             (pl.col("realized_pnl") + pl.col("unrealized_pnl")).alias("total_pnl")
         )

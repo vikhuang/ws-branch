@@ -113,6 +113,7 @@ These mistakes have been made before. Do NOT repeat them:
 2. **Smart Money Signal uses per-stock PNL ranking** (`data/pnl/{symbol}.parquet`), NOT global `broker_ranking.parquet` — global ranking biases toward large-cap activity
 3. **Timing alpha MUST normalize by `std(net_buy)`** — without normalization, high-volume brokers are automatically overrated
 4. **`symbol --detail N` 是淨買超明細，不是 N-day rolling PNL** — 資料來源和意義完全不同
+5. **Rolling window PNL = realized.sum() + (unrealized[end] − unrealized[start])** — `unrealized_pnl` 是存量快照，不是流量；少減 baseline 會把累計持倉損益灌入窗口排名
 
 ## Data Conventions
 

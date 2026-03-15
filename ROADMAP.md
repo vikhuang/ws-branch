@@ -1,9 +1,9 @@
 # ws-branch
 
 ```
-████ ████ ████ ████ ████ ████ ████ ████ ████ ████ ████ ░░░░ ░░░░
-管線 分析 大單 加速 整合 預設 時區 增量 增量 掃描 探索 共現 集中
-                    ws核 合併      ETL  PNL       CV
+████ ████ ████ ████ ████ ████ ████ ████ ████ ████ ████ ████ ░░░░ ░░░░
+管線 分析 大單 加速 整合 預設 時區 增量 增量 掃描 探索 滾動 共現 集中
+                    ws核 合併      ETL  PNL       CV  修正
 
 ───────────────────────────────────────
 
@@ -48,6 +48,11 @@ ws-branch
 │   │   etl.py --incr：只處理新日期的 broker_tx
 │   └── PNL 增量 ✓
 │       pnl_engine.py --incr：從 fifo_state 恢復，只算新日期
+│
+├── rolling-window-fix ✓
+│   unrealized_pnl 是快照非流量，窗口 PNL 須減 baseline
+│   ├── rolling_ranking.py — realized.sum() + (unrealized[end] − unrealized[start])
+│   └── tmp/gen_xlsx.py, gen_5d_xlsx.py — 同步修正
 │
 └── (future) ← HERE
     ├── cluster-discovery ○

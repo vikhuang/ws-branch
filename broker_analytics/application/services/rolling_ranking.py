@@ -27,17 +27,31 @@ def _process_one_symbol(
     """Process a single pnl_daily file for one symbol.
 
     Returns:
-        {broker: (realized_sum, unrealized_at_end)} for the window.
+        {broker: (realized_sum, unrealized_change)} for the window.
     """
     df = pl.read_parquet(path)
-    df = df.filter(
+
+    # Baseline: last unrealized before window start
+    baseline_df = (
+        df.filter(pl.col("date") < window_start)
+        .sort("date")
+        .group_by("broker")
+        .agg(pl.col("unrealized_pnl").last())
+    )
+    baseline = {
+        row["broker"]: row["unrealized_pnl"]
+        for row in baseline_df.iter_rows(named=True)
+    }
+
+    # Window aggregation
+    window_df = df.filter(
         (pl.col("date") >= window_start) & (pl.col("date") <= window_end)
     )
-    if len(df) == 0:
+    if len(window_df) == 0:
         return {}
 
     agg = (
-        df.sort("date")
+        window_df.sort("date")
         .group_by("broker")
         .agg([
             pl.col("realized_pnl").sum(),
@@ -46,7 +60,10 @@ def _process_one_symbol(
     )
 
     return {
-        row["broker"]: (row["realized_pnl"], row["unrealized_pnl"])
+        row["broker"]: (
+            row["realized_pnl"],
+            row["unrealized_pnl"] - baseline.get(row["broker"], 0.0),
+        )
         for row in agg.iter_rows(named=True)
     }
 

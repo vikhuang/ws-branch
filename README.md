@@ -240,9 +240,11 @@ timing_alpha = Σ((net_buy[t-1] - avg_net_buy) × return[t]) / std(net_buy)
 **計算方式**：
 
 1. 設定窗口（預設 3 年 = 756 交易日）
-2. 讀取所有 `pnl_daily/{symbol}.parquet`，過濾到 `[max_date - window, max_date]`
-3. 每個券商加總所有股票的 realized_pnl，取最後一天的 unrealized_pnl
-4. total_pnl = realized + unrealized，按此排名
+2. 讀取所有 `pnl_daily/{symbol}.parquet`，過濾到 `[window_start, window_end]`
+3. 每個券商：realized_pnl.sum()（窗口內流量）+ unrealized_pnl 變動（窗口末 − 窗口前）
+4. window_pnl = realized + unrealized_change，按此排名
+
+注意：`unrealized_pnl` 是存量快照（全部未平倉部位的 mark-to-market），不是流量。必須取窗口前後差值，否則排名被累計持倉灌水。
 
 **與 Smart Money Signal 的差異**：
 

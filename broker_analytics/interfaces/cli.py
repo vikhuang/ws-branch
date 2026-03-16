@@ -722,6 +722,92 @@ def cmd_export(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_analyze(args: argparse.Namespace) -> int:
+    """Post-hoc strategy analysis: beta decomposition."""
+    from broker_analytics.application.services.strategy_analysis import (
+        analyze_beta, analyze_beta_batch,
+    )
+    from broker_analytics.infrastructure.repositories import PriceRepository
+
+    price_repo = PriceRepository(args.paths)
+    quant_dir = Path(args.quant_dir)
+
+    if args.strategy:
+        # Batch mode: scan ws-quant logs for all horizons
+        results = analyze_beta_batch(quant_dir, args.strategy, price_repo)
+        if not results:
+            print(f"找不到策略 '{args.strategy}' 的回測記錄（tag: post-bias-fix）")
+            return 1
+
+        print(f"【Beta 分析】{args.strategy}")
+        print()
+        print(f"  {'Hold':<6} {'Total':>8} {'Excess':>8} {'Market':>8} {'Beta':>6} {'R²':>6} {'Avg ret':>8} {'Avg exc':>8} {'Avg mkt':>8}")
+        print(f"  {'':─<6} {'Sharpe':─>8} {'Sharpe':─>8} {'Sharpe':─>8} {'':─>6} {'':─>6} {'(bps)':─>8} {'(bps)':─>8} {'(bps)':─>8}")
+
+        for hold, d in sorted(results.items(), key=lambda x: int(x[0].rstrip("d"))):
+            print(
+                f"  {hold:<6} {d.total_sharpe:>8.2f} {d.excess_sharpe:>8.2f} "
+                f"{d.market_sharpe:>8.2f} {d.beta:>6.2f} {d.r_squared:>6.3f} "
+                f"{d.avg_return_bps:>8.1f} {d.avg_excess_bps:>8.1f} {d.avg_market_bps:>8.1f}"
+            )
+
+        print()
+        # Interpretation
+        d10 = results.get("10d")
+        if d10:
+            if d10.excess_sharpe < 0.5 and d10.total_sharpe > 2:
+                print("  ⚠ Total Sharpe 高但 Excess Sharpe 低 → 收益主要來自市場 beta")
+            elif d10.excess_sharpe > 1.0:
+                print("  ✅ Excess Sharpe > 1 → 存在獨立於市場的 alpha")
+
+    elif args.trade_log:
+        # Single file mode
+        path = Path(args.trade_log)
+        if not path.exists():
+            print(f"檔案不存在：{path}")
+            return 1
+
+        d = analyze_beta(path, price_repo)
+        print(f"【Beta 分析】{path.name}")
+        print(f"  交易數：{d.n_trades}")
+        print(f"  Total Sharpe：{d.total_sharpe:.2f}")
+        print(f"  Excess Sharpe：{d.excess_sharpe:.2f}（扣大盤）")
+        print(f"  Market Sharpe：{d.market_sharpe:.2f}（同期大盤）")
+        print(f"  Beta：{d.beta:.2f}")
+        print(f"  R²：{d.r_squared:.3f}")
+        print(f"  Alpha（年化）：{d.alpha_annualized_bps:.0f} bps")
+        print(f"  平均報酬：{d.avg_return_bps:.1f} bps")
+        print(f"  平均超額：{d.avg_excess_bps:.1f} bps")
+        print(f"  平均大盤：{d.avg_market_bps:.1f} bps")
+
+    else:
+        # Default: all strategies
+        strategies = [
+            "conviction", "contrarian_smart", "concentration",
+            "contrarian_broker", "dual_window", "exodus",
+        ]
+
+        print("【Beta 分析】全策略 × 全 horizon")
+        print()
+
+        for strat in strategies:
+            results = analyze_beta_batch(quant_dir, strat, price_repo)
+            if not results:
+                continue
+
+            print(f"  {strat}")
+            print(f"    {'Hold':<6} {'Total':>8} {'Excess':>8} {'Market':>8} {'Beta':>6} {'Avg exc':>8}")
+            for hold, d in sorted(results.items(), key=lambda x: int(x[0].rstrip("d"))):
+                flag = "✅" if d.excess_sharpe > 1.0 else "⚠" if d.excess_sharpe < 0.5 and d.total_sharpe > 2 else "  "
+                print(
+                    f"    {hold:<6} {d.total_sharpe:>8.2f} {d.excess_sharpe:>8.2f} "
+                    f"{d.market_sharpe:>8.2f} {d.beta:>6.2f} {d.avg_excess_bps:>8.1f} {flag}"
+                )
+            print()
+
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     """Main entry point for CLI."""
     parser = argparse.ArgumentParser(
@@ -931,6 +1017,23 @@ def main(argv: list[str] | None = None) -> int:
         help="Export Signal Contract CSV (comma-separated strategies with -s)",
     )
 
+    # analyze command
+    analyze_parser = subparsers.add_parser(
+        "analyze", help="Post-hoc strategy analysis (beta decomposition)",
+    )
+    analyze_parser.add_argument(
+        "trade_log", nargs="?",
+        help="Path to ws-quant trade log CSV (or experiment log dir)",
+    )
+    analyze_parser.add_argument(
+        "-s", "--strategy", default=None,
+        help="Strategy name (scans ws-quant logs for all horizons)",
+    )
+    analyze_parser.add_argument(
+        "--quant-dir", default=str(Path.home() / "r20/wp/ws-quant/experiments/logs"),
+        help="ws-quant experiment logs directory",
+    )
+
     # verify command
     subparsers.add_parser("verify", help="Verify data integrity")
 
@@ -952,6 +1055,7 @@ def main(argv: list[str] | None = None) -> int:
         "export": cmd_export,
         "verify": cmd_verify,
         "hypothesis": cmd_hypothesis,
+        "analyze": cmd_analyze,
     }
 
     return commands[args.command](args)

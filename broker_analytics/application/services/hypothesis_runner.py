@@ -563,9 +563,12 @@ class HypothesisRunner:
             if len(ret_df) == 0:
                 continue
 
-            # Join signal_count back to ret_df
+            # Join signal metadata back to ret_df
+            meta_cols = ["date", "signal_count"]
+            if "churn_ratio" in events.columns:
+                meta_cols.append("churn_ratio")
             ret_df = ret_df.join(
-                events.select("date", "signal_count"),
+                events.select(meta_cols),
                 on="date",
                 how="inner",
             )
@@ -584,47 +587,61 @@ class HypothesisRunner:
         combined = pl.concat(all_events)
         print(f"  完成：{elapsed:.0f}s，{len(combined)} events from {len(all_events)} symbols")
 
-        result = analyze_strength(combined, n_groups=n_groups, horizons=horizons)
+        results = {}
 
-        # Print results
-        print()
-        print(f"  {'Group':<8} {'Count':>10} {'N':>6}", end="")
+        # Analyze signal_count
+        print(f"\n  ── signal_count（broker 數量）──")
+        r_count = analyze_strength(combined, n_groups=n_groups, horizons=horizons,
+                                   group_col="signal_count")
+        self._print_strength_result(r_count, horizons)
+        results["signal_count"] = r_count
+
+        # Analyze churn_ratio (if available)
+        if "churn_ratio" in combined.columns:
+            valid_churn = combined.filter(pl.col("churn_ratio").is_not_null())
+            if len(valid_churn) > 100:
+                print(f"\n  ── churn_ratio（方向一致性，低=強）──")
+                r_churn = analyze_strength(valid_churn, n_groups=n_groups, horizons=horizons,
+                                           group_col="churn_ratio", invert=True)
+                self._print_strength_result(r_churn, horizons)
+                results["churn_ratio"] = r_churn
+
+                # Compare
+                print(f"\n  ── 比較 ──")
+                for h in horizons:
+                    rc = r_count.spearman_corr.get(h, 0.0)
+                    rch = r_churn.spearman_corr.get(h, 0.0)
+                    better = "churn" if abs(rch) > abs(rc) else "count"
+                    print(f"  {h}d: count ρ={rc:+.3f} vs churn ρ={rch:+.3f} → {better} wins")
+
+        return results
+
+    @staticmethod
+    def _print_strength_result(result: "StrengthResult", horizons):
+        print(f"    {'Group':<8} {'Range':>12} {'N':>6}", end="")
         for h in horizons:
             print(f"  {h}d avg", end="")
-        print()
-        print(f"  {'─'*8} {'─'*10} {'─'*6}", end="")
-        for _ in horizons:
-            print(f"  {'─'*7}", end="")
         print()
 
         for g in result.groups:
             lo, hi = g.count_range
-            print(f"  {g.label:<8} {lo:>4}-{hi:<4}  {g.n_events:>6}", end="")
+            print(f"    {g.label:<8} {lo:>5.1f}-{hi:<5.1f} {g.n_events:>6}", end="")
             for h in horizons:
                 v = g.mean_returns.get(h, 0.0)
                 print(f"  {v:>6.0f}b", end="")
             print()
 
-        print()
-        print(f"  Spearman ρ:", end="")
+        print(f"    Spearman ρ:", end="")
         for h in horizons:
             r = result.spearman_corr.get(h, 0.0)
             print(f"  {h}d={r:+.3f}", end="")
         print()
 
-        print(f"  Monotonic: ", end="")
+        print(f"    Monotonic: ", end="")
         for h in horizons:
             m = result.monotonic.get(h, False)
             print(f"  {h}d={'✅' if m else '❌'}", end="")
         print()
-
-        print(f"  Top-Bottom:", end="")
-        for h in horizons:
-            d = result.top_vs_bottom_diff.get(h, 0.0)
-            print(f"  {h}d={d:+.0f}b", end="")
-        print()
-
-        return result
 
     def run_all_strategies(
         self,

@@ -36,22 +36,27 @@ def analyze_strength(
     events_with_returns: pl.DataFrame,
     n_groups: int = 3,
     horizons: tuple[int, ...] = (1, 5, 10, 20),
+    group_col: str = "signal_count",
+    invert: bool = False,
 ) -> StrengthResult:
-    """Test whether signal_count predicts forward return magnitude.
+    """Test whether a signal metric predicts forward return magnitude.
 
     Args:
         events_with_returns: DataFrame with columns:
-            signal_count (Int32), direction (Int8),
+            {group_col}, direction (Int8),
             ret_1d, ret_5d, ret_10d, ret_20d (Float64, bps).
             Returns should NOT be direction-adjusted (raw).
-        n_groups: Number of groups to split signal_count into.
+        n_groups: Number of groups to split into.
         horizons: Forward return horizons to analyze.
+        group_col: Column to group by (e.g. "signal_count" or "churn_ratio").
+        invert: If True, lower values → stronger signal (for churn_ratio).
+            Groups are labeled so G1=weakest, G_last=strongest.
 
     Returns:
         StrengthResult with per-group means, monotonicity test,
         and rank correlation.
     """
-    if len(events_with_returns) == 0 or "signal_count" not in events_with_returns.columns:
+    if len(events_with_returns) == 0 or group_col not in events_with_returns.columns:
         empty_groups = tuple(
             GroupStats(f"G{i+1}", (0, 0), 0, {}) for i in range(n_groups)
         )
@@ -63,7 +68,7 @@ def analyze_strength(
             n_total=0,
         )
 
-    df = events_with_returns.filter(pl.col("signal_count").is_not_null())
+    df = events_with_returns.filter(pl.col(group_col).is_not_null())
 
     # Direction-adjust returns
     ret_cols = [f"ret_{h}d" for h in horizons]
@@ -73,8 +78,8 @@ def analyze_strength(
                 (pl.col(col) * pl.col("direction")).alias(col)
             )
 
-    # Compute group boundaries using quantiles on signal_count
-    counts = df["signal_count"].to_numpy()
+    # Compute group boundaries using quantiles
+    counts = df[group_col].to_numpy().astype(float)
     boundaries = np.quantile(counts, np.linspace(0, 1, n_groups + 1))
     # Ensure unique boundaries (if many ties at min value)
     boundaries = np.unique(boundaries)
@@ -122,15 +127,25 @@ def analyze_strength(
             for i in range(len(group_means) - 1)
         )
 
-    # Spearman rank correlation: signal_count vs direction-adjusted return
+    # If inverted (lower = stronger), reverse group order for reporting
+    if invert:
+        groups = list(reversed(groups))
+        for i, g in enumerate(groups):
+            groups[i] = GroupStats(f"G{i+1}", g.count_range, g.n_events, g.mean_returns)
+
+    # Spearman rank correlation: metric vs direction-adjusted return
+    # For inverted metrics, negate so positive ρ = "stronger signal → better return"
     spearman_corr = {}
     for h in horizons:
         col = f"ret_{h}d"
         if col in df.columns:
             valid = df.filter(pl.col(col).is_not_null())
             if len(valid) > 2:
+                metric = valid[group_col].to_numpy().astype(float)
+                if invert:
+                    metric = -metric
                 spearman_corr[h] = _spearman(
-                    valid["signal_count"].to_numpy().astype(float),
+                    metric,
                     valid[col].to_numpy(),
                 )
             else:

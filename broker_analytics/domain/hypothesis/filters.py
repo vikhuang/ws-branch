@@ -11,6 +11,7 @@ from datetime import date
 import polars as pl
 
 from broker_analytics.domain.large_trade import flag_large_trades
+from broker_analytics.domain.churn import compute_daily_churn, compute_rolling_churn
 from broker_analytics.domain.hypothesis.types import SymbolData
 from broker_analytics.domain.hypothesis.position import derive_positions
 
@@ -18,6 +19,7 @@ from broker_analytics.domain.hypothesis.position import derive_positions
 _EMPTY_EVENTS = pl.DataFrame(schema={
     "date": pl.Date, "direction": pl.Int8,
     "signal_value": pl.Float64, "signal_count": pl.Int32,
+    "churn_ratio": pl.Float64,
 })
 
 
@@ -53,8 +55,9 @@ def filter_large_trades(
             .alias("direction"),
             pl.lit(1.0).alias("signal_value"),
             pl.col("signal_count").cast(pl.Int32),
+            pl.lit(None, dtype=pl.Float64).alias("churn_ratio"),
         )
-        .select("date", "direction", "signal_value", "signal_count")
+        .select("date", "direction", "signal_value", "signal_count", "churn_ratio")
         .sort("date")
     )
     return events
@@ -111,10 +114,19 @@ def filter_conviction_signals(
             pl.lit(1.0).alias("signal_value"),
             pl.col("n_conviction").cast(pl.Int32).alias("signal_count"),
         )
-        .select("date", "direction", "signal_value", "signal_count")
         .sort("date")
     )
-    return conv
+
+    if len(conv) == 0:
+        return _EMPTY_EVENTS.clone()
+
+    # Attach churn ratio for event dates
+    churn = compute_daily_churn(data.trade_df, brokers)
+    conv = conv.join(
+        churn.select("date", "churn_ratio"), on="date", how="left",
+    ).with_columns(pl.col("churn_ratio").fill_null(1.0))
+
+    return conv.select("date", "direction", "signal_value", "signal_count", "churn_ratio")
 
 
 def filter_collective_exodus(
@@ -249,6 +261,7 @@ def filter_collective_exodus(
         pl.col("direction").cast(pl.Int8),
         pl.col("signal_value").cast(pl.Float64),
         pl.col("signal_count").cast(pl.Int32),
+        pl.lit(None, dtype=pl.Float64).alias("churn_ratio"),
     ).sort("date")
 
 
@@ -310,8 +323,9 @@ def filter_contrarian_on_panic(
             pl.lit(1, dtype=pl.Int8).alias("direction"),
             pl.lit(1.0).alias("signal_value"),
             pl.col("n_buyers").cast(pl.Int32).alias("signal_count"),
+            pl.lit(None, dtype=pl.Float64).alias("churn_ratio"),
         )
-        .select("date", "direction", "signal_value", "signal_count")
+        .select("date", "direction", "signal_value", "signal_count", "churn_ratio")
         .sort("date")
     )
     return daily_net
@@ -382,6 +396,7 @@ def filter_cluster_accumulation(
         pl.col("direction").cast(pl.Int8),
         pl.col("signal_value").cast(pl.Float64),
         pl.col("signal_count").cast(pl.Int32),
+        pl.lit(None, dtype=pl.Float64).alias("churn_ratio"),
     ).sort("date")
 
 
@@ -430,10 +445,18 @@ def filter_concentration_increase(
             pl.lit(1.0).alias("signal_value"),
             pl.col("n_adding").cast(pl.Int32).alias("signal_count"),
         )
-        .select("date", "direction", "signal_value", "signal_count")
         .sort("date")
     )
-    return adding
+
+    if len(adding) == 0:
+        return _EMPTY_EVENTS.clone()
+
+    churn = compute_daily_churn(data.trade_df, brokers)
+    adding = adding.join(
+        churn.select("date", "churn_ratio"), on="date", how="left",
+    ).with_columns(pl.col("churn_ratio").fill_null(1.0))
+
+    return adding.select("date", "direction", "signal_value", "signal_count", "churn_ratio")
 
 
 def filter_herding_divergence(
@@ -530,8 +553,9 @@ def filter_herding_divergence(
             .alias("direction"),
             pl.lit(1.0).alias("signal_value"),
             pl.lit(0, dtype=pl.Int32).alias("signal_count"),
+            pl.lit(None, dtype=pl.Float64).alias("churn_ratio"),
         )
-        .select("date", "direction", "signal_value", "signal_count")
+        .select("date", "direction", "signal_value", "signal_count", "churn_ratio")
         .sort("date")
     )
     return events
@@ -596,8 +620,9 @@ def filter_large_trades_test_window(
             .alias("direction"),
             pl.lit(1.0).alias("signal_value"),
             pl.col("signal_count").cast(pl.Int32),
+            pl.lit(None, dtype=pl.Float64).alias("churn_ratio"),
         )
-        .select("date", "direction", "signal_value", "signal_count")
+        .select("date", "direction", "signal_value", "signal_count", "churn_ratio")
         .sort("date")
     )
     return events

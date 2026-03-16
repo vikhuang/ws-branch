@@ -66,7 +66,7 @@ ws-branch
 │   │   ├── !8 beta 分離 ✓ — domain/beta_analysis.py + analyze CLI
 │   │   ├── !7 重疊持倉去重 ✓ — domain/event_dedup.py + --hold-days flag
 │   │   ├── 去重+beta 回測 ✓ — 真 alpha: conviction, concentration, contrarian_broker
-│   │   └── !5 signal_value 欄位 ○（deferred — 需改 filter output schema）
+│   │   └── !5 signal_value 欄位 ✓ — filters 輸出 n_brokers/top_k 強度
 │   └── cross-project ○
 │       blocked: bias-fix
 │       ├── !6 Signal Contract v2 metadata ○

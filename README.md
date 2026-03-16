@@ -66,8 +66,9 @@ uv run python -m broker_analytics hypothesis 2330 -s conviction --params top_k=3
 uv run python -m broker_analytics hypothesis --batch 2330,2454 -s exodus --workers 4
 uv run python -m broker_analytics hypothesis --scan -s conviction        # 全市場掃描 + FDR
 uv run python -m broker_analytics hypothesis --scan --cv -s conviction   # 5-fold 滾動窗口 CV（推薦）
-uv run python -m broker_analytics hypothesis --export -s conviction     # 匯出 Signal Contract CSV
-uv run python -m broker_analytics hypothesis --export -s "conviction,herding,exodus"  # 多策略匯出
+uv run python -m broker_analytics hypothesis --export -s conviction                    # 匯出 Signal Contract CSV
+uv run python -m broker_analytics hypothesis --export -s "conviction,concentration"    # 多策略匯出
+uv run python -m broker_analytics hypothesis --export -s conviction --hold-days 10     # 去重疊持倉
 ```
 
 ## Pipeline
@@ -312,24 +313,32 @@ Selector → Filter → Outcome → Baseline → StatTest
 
 每步是純函數，策略只是「五個函數的組合 + 參數」，新增策略零改框架。
 
-**10 策略**（經 5-fold 滾動窗口 CV 驗證，7/10 通過）：
+**10 策略**（經 5-fold CV + bias 修正 + beta 分離 + 去重疊持倉驗證）：
 
-| # | 策略 | CV | 說明 |
-|---|------|----|------|
-| 3 | `conviction` | **5/5** | 績優券商浮盈 >20% 仍加碼（最強，sig=14-21%） |
-| 7 | `contrarian_smart` | **5/5** | 績優券商在大跌日逆勢買入（最廣覆蓋） |
-| 9 | `herding` | **5/5** | 散戶群聚 + 聰明錢缺席（滾動平均 + 百分位） |
-| 8 | `concentration` | **5/5** | 持倉高度集中的券商加碼（dir 97%，品質極高） |
-| 1 | `contrarian_broker` | **5/5** | 全市場差但個股強的反差券商（contrast score） |
-| 2 | `dual_window` | **5/5** | 1yr ∩ 3yr PNL 交集的持續贏家 |
-| 4 | `exodus` | **3/5** | 集體撤退 + 價格背景方向分類 |
-| 0 | ~~`large_trade_scar`~~ | ❌ | 假說不成立（regression to mean） |
-| 6 | ~~`ta_regime`~~ | ❌ | 事件太稀疏 + 計算太慢 |
-| 5 | `cross_stock` | ⏭ | 需 cluster 定義（blocked） |
+| # | 策略 | CV | 10d Excess Sharpe | 說明 |
+|---|------|----|-------------------|------|
+| 3 | `conviction` | **4/5** | **3.31** ✅ | 績優券商浮盈 >20% 仍加碼 |
+| 8 | `concentration` | **4/5** | **3.22** ✅ | 持倉高度集中的券商加碼 |
+| 1 | `contrarian_broker` | **5/5** | **3.36** ✅ | 全市場差但個股強的反差券商 |
+| 2 | `dual_window` | **4/5** | **2.51** ✅ | 1yr ∩ 3yr PNL 交集持續贏家 |
+| 7 | ~~`contrarian_smart`~~ | 5/5 | -0.20 ❌ | CV 通過但去重後 alpha 消失 |
+| 4 | ~~`exodus`~~ | 3/5 | -0.15 ❌ | 牛市做空無效 |
+| 9 | ~~`herding`~~ | ❌ 1/5 | — | selector bias 修正後崩掉 |
+| 0 | ~~`large_trade_scar`~~ | ❌ | — | 假說不成立 |
+| 6 | ~~`ta_regime`~~ | ❌ | — | 事件太稀疏 |
+| 5 | `cross_stock` | ⏭ | — | 需 cluster 定義 |
 
-CV 通過標準：≥3/5 folds 三項全過（sig>5%, FDR≥10, dir>60%）。
-統計檢定：permutation（10,000 次），要求 `p < 0.05` AND `|Cohen's d| >= 0.2`。
-詳見 `docs/hypothesis_exploration_guide.md`。
+Excess Sharpe = 扣大盤 + 去重疊持倉後的 Sharpe ratio（10d hold）。
+真正有 alpha 的獨立信號：conviction + concentration（contrarian_broker 共用 conviction filter）。
+詳見 `docs/harshreview.md` 和 `CLAUDE.md`。
+
+```bash
+# 策略分析（post-hoc）
+uv run python -m broker_analytics analyze                              # 全策略 beta 分析
+uv run python -m broker_analytics analyze -s conviction                # 單策略 beta 分析
+uv run python -m broker_analytics analyze --tag deduped                # 去重版 beta 分析
+uv run python -m broker_analytics hypothesis --strength -s conviction  # 信號強度 quintile 分析
+```
 
 ## 效能
 

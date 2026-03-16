@@ -737,7 +737,7 @@ def cmd_analyze(args: argparse.Namespace) -> int:
 
     if args.strategy:
         # Batch mode: scan ws-quant logs for all horizons
-        results = analyze_beta_batch(quant_dir, args.strategy, price_repo)
+        results = analyze_beta_batch(quant_dir, args.strategy, price_repo, tag=args.tag)
         if not results:
             print(f"找不到策略 '{args.strategy}' 的回測記錄（tag: post-bias-fix）")
             return 1
@@ -1039,6 +1039,10 @@ def main(argv: list[str] | None = None) -> int:
     analyze_parser.add_argument(
         "--quant-dir", default=str(Path.home() / "r20/wp/ws-quant/experiments/logs"),
         help="ws-quant experiment logs directory",
+    )
+    analyze_parser.add_argument(
+        "--tag", default="post-bias-fix",
+        help="Experiment tag to filter (default: post-bias-fix)",
     )
 
     # verify command

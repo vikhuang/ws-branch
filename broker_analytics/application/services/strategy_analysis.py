@@ -55,10 +55,15 @@ def analyze_beta_batch(
     strategy_name: str,
     price_repo: PriceRepository | None = None,
     market_symbol: str = _MARKET_SYMBOL,
+    tag: str = "post-bias-fix",
 ) -> dict[str, BetaDecomposition]:
     """Analyze beta for all horizons of a strategy.
 
-    Scans trade_log_dir for files matching {strategy_name}_*_trades.csv.
+    Scans trade_log_dir for experiment logs with matching tag and factor_name.
+
+    Args:
+        tag: Required experiment tag (default "post-bias-fix").
+            Use "deduped" for deduped backtest results.
 
     Returns:
         Dict mapping hold label (e.g. "10d") to BetaDecomposition.
@@ -70,13 +75,17 @@ def analyze_beta_batch(
     for path in sorted(trade_log_dir.glob("*.json")):
         import json
         meta = json.loads(path.read_text())
-        if "post-bias-fix" not in meta.get("tags", []):
+        if tag not in meta.get("tags", []):
             continue
         factor_name = meta.get("factor_name", "")
-        if not factor_name.startswith(strategy_name + "_"):
+        # Match both "strat_10d" and "strat_dedup_10d"
+        prefix = strategy_name + "_"
+        if not factor_name.startswith(prefix):
             continue
 
-        hold_label = factor_name.removeprefix(strategy_name + "_")
+        hold_label = factor_name.removeprefix(prefix)
+        # Strip "dedup_" prefix from hold label if present
+        hold_label = hold_label.removeprefix("dedup_")
         trade_csv = path.with_name(path.stem + "_trades.csv")
         if not trade_csv.exists():
             continue

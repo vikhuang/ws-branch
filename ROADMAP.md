@@ -62,10 +62,11 @@ ws-branch
 │   │   ├── CV rerun ✓ — 6/7 存活，herding 1/5 失效
 │   │   ├── !2 export 暖身期過濾 ✓ — _WARMUP_CUTOFF = 2023-01-01
 │   │   └── !3 export significance windowing ✓ — inject test_start_date 排除暖身期
-│   ├── backtest-quality ◐
+│   ├── backtest-quality ✓
 │   │   ├── !8 beta 分離 ✓ — domain/beta_analysis.py + analyze CLI
 │   │   ├── !7 重疊持倉去重 ✓ — domain/event_dedup.py + --hold-days flag
-│   │   └── !5 signal_value 欄位 ○
+│   │   ├── 去重+beta 回測 ✓ — 真 alpha: conviction, concentration, contrarian_broker
+│   │   └── !5 signal_value 欄位 ○（deferred — 需改 filter output schema）
 │   └── cross-project ○
 │       blocked: bias-fix
 │       ├── !6 Signal Contract v2 metadata ○

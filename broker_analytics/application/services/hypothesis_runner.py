@@ -469,9 +469,12 @@ class HypothesisRunner:
         print(f"  顯著：{n_sig}")
 
         if not all_events:
-            return pl.DataFrame(schema={"symbol": pl.Utf8, "date": pl.Date, "direction": pl.Int8})
+            return pl.DataFrame(schema={"symbol": pl.Utf8, "date": pl.Date, "direction": pl.Int8, "signal_value": pl.Float64})
 
-        result = pl.concat(all_events).select("symbol", "date", "direction").sort("symbol", "date")
+        # Select columns available in events (signal_value may or may not exist)
+        available = all_events[0].columns
+        cols = [c for c in ["symbol", "date", "direction", "signal_value"] if c in available]
+        result = pl.concat(all_events).select(cols).sort("symbol", "date")
         result = result.unique(subset=["symbol", "date"], keep="first")
 
         total_before = len(result)

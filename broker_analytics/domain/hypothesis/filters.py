@@ -15,7 +15,7 @@ from broker_analytics.domain.hypothesis.types import SymbolData
 from broker_analytics.domain.hypothesis.position import derive_positions
 
 
-_EMPTY_EVENTS = pl.DataFrame(schema={"date": pl.Date, "direction": pl.Int8})
+_EMPTY_EVENTS = pl.DataFrame(schema={"date": pl.Date, "direction": pl.Int8, "signal_value": pl.Float64})
 
 
 def filter_large_trades(
@@ -44,9 +44,10 @@ def filter_large_trades(
             pl.when(pl.col("net_dir") > 0)
             .then(pl.lit(1, dtype=pl.Int8))
             .otherwise(pl.lit(-1, dtype=pl.Int8))
-            .alias("direction")
+            .alias("direction"),
+            pl.lit(1.0).alias("signal_value"),
         )
-        .select("date", "direction")
+        .select("date", "direction", "signal_value")
         .sort("date")
     )
     return events
@@ -98,8 +99,11 @@ def filter_conviction_signals(
         .group_by("date")
         .agg(pl.len().alias("n_conviction"))
         .filter(pl.col("n_conviction") >= min_brokers)
-        .with_columns(pl.lit(1, dtype=pl.Int8).alias("direction"))
-        .select("date", "direction")
+        .with_columns(
+            pl.lit(1, dtype=pl.Int8).alias("direction"),
+            (pl.col("n_conviction") / len(brokers)).alias("signal_value"),
+        )
+        .select("date", "direction", "signal_value")
         .sort("date")
     )
     return conv
@@ -223,13 +227,18 @@ def filter_collective_exodus(
             # No strong trend → skip ambiguous events
             continue
 
-        results.append({"date": d, "direction": direction})
+        results.append({
+            "date": d,
+            "direction": direction,
+            "signal_value": n_exiting / max(len(brokers), 1),
+        })
 
     if not results:
         return _EMPTY_EVENTS.clone()
 
     return pl.DataFrame(results).with_columns(
-        pl.col("direction").cast(pl.Int8)
+        pl.col("direction").cast(pl.Int8),
+        pl.col("signal_value").cast(pl.Float64),
     ).sort("date")
 
 
@@ -287,8 +296,11 @@ def filter_contrarian_on_panic(
         .group_by("date")
         .agg(pl.len().alias("n_buyers"))
         .filter(pl.col("n_buyers") >= min_brokers)
-        .with_columns(pl.lit(1, dtype=pl.Int8).alias("direction"))
-        .select("date", "direction")
+        .with_columns(
+            pl.lit(1, dtype=pl.Int8).alias("direction"),
+            (pl.col("n_buyers") / len(brokers)).alias("signal_value"),
+        )
+        .select("date", "direction", "signal_value")
         .sort("date")
     )
     return daily_net
@@ -348,13 +360,15 @@ def filter_cluster_accumulation(
             results.append({
                 "date": date,
                 "direction": 1 if net > 0 else -1,
+                "signal_value": 1.0,
             })
 
     if not results:
         return _EMPTY_EVENTS.clone()
 
     return pl.DataFrame(results).with_columns(
-        pl.col("direction").cast(pl.Int8)
+        pl.col("direction").cast(pl.Int8),
+        pl.col("signal_value").cast(pl.Float64),
     ).sort("date")
 
 
@@ -398,8 +412,11 @@ def filter_concentration_increase(
         .group_by("date")
         .agg(pl.len().alias("n_adding"))
         .filter(pl.col("n_adding") >= min_brokers)
-        .with_columns(pl.lit(1, dtype=pl.Int8).alias("direction"))
-        .select("date", "direction")
+        .with_columns(
+            pl.lit(1, dtype=pl.Int8).alias("direction"),
+            (pl.col("n_adding") / max(len(brokers), 1)).alias("signal_value"),
+        )
+        .select("date", "direction", "signal_value")
         .sort("date")
     )
     return adding
@@ -496,9 +513,10 @@ def filter_herding_divergence(
             pl.when(pl.col("herding_index") > 0)
             .then(pl.lit(-1, dtype=pl.Int8))   # crowd buys, smart doesn't → bearish
             .otherwise(pl.lit(1, dtype=pl.Int8))  # crowd sells, smart buys → bullish
-            .alias("direction")
+            .alias("direction"),
+            pl.col("herding_index").abs().alias("signal_value"),
         )
-        .select("date", "direction")
+        .select("date", "direction", "signal_value")
         .sort("date")
     )
     return events
@@ -557,9 +575,10 @@ def filter_large_trades_test_window(
             pl.when(pl.col("net_dir") > 0)
             .then(pl.lit(1, dtype=pl.Int8))
             .otherwise(pl.lit(-1, dtype=pl.Int8))
-            .alias("direction")
+            .alias("direction"),
+            pl.lit(1.0).alias("signal_value"),
         )
-        .select("date", "direction")
+        .select("date", "direction", "signal_value")
         .sort("date")
     )
     return events

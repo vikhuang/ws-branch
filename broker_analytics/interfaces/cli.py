@@ -560,13 +560,18 @@ def cmd_hypothesis(args: argparse.Namespace) -> int:
                 continue
 
             # Convert direction Int8 → string for Signal Contract v1
+            # Include signal_value if present (!5)
+            cols = ["symbol", "date", "direction"]
+            if "signal_value" in events.columns:
+                cols.append("signal_value")
+
             out = events.with_columns(
                 pl.when(pl.col("direction") == 1)
                 .then(pl.lit("long"))
                 .otherwise(pl.lit("short"))
                 .alias("direction"),
                 pl.col("date").cast(pl.Utf8),
-            ).select("symbol", "date", "direction")
+            ).select(cols)
 
             path = signals_dir / f"{strategy_name}.csv"
             out.write_csv(path)

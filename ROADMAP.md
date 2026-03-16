@@ -81,16 +81,11 @@ ws-branch
 │   │   └── n_conviction quintile: ρ=0.056 太弱，維持 uniform ✓
 │   │   ⚠ 方法論待修：stock effect 未控制、用 raw return 非 excess
 │   │
-│   ├── churn ratio ○
-│   │   domain/churn.py — 純函數，不改 data pipeline
-│   │   ├── compute_daily_churn(trade_df, brokers) ○
-│   │   │   per-date: gross/net among top-K → 方向一致性
-│   │   ├── compute_rolling_churn(trade_df, brokers, window) ○
-│   │   │   N-day rolling: 持續性方向共識 vs 換手
-│   │   ├── filters 加 churn_ratio 欄位 ○
-│   │   │   conviction filter join daily churn on event dates
-│   │   └── quintile 驗證 churn_ratio vs n_conviction ○
-│   │       用 --strength 比較 ρ，取較強者作為 signal_value
+│   ├── churn ratio ✓ — 反向！高 churn = 逆勢加碼 = return 更好
+│   │   domain/churn.py — daily + rolling churn 純函數
+│   │   conviction: count ρ=+0.056 vs churn ρ=-0.022 → count wins（但都太弱）
+│   │   concentration: count ρ=+0.176 vs churn ρ=-0.052 → count wins
+│   │   結論：signal_value = 1.0（uniform），不加權
 │   │
 │   └── 方法論修正（deferred）
 │       ├── per-stock z-score 正規化（控制 stock effect）

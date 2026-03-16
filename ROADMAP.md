@@ -73,20 +73,28 @@ ws-branch
 │       └── !9 策略相關性標註 ○
 │
 ├── signal-strength-analysis ← HERE
-│   驗證「更多 broker conviction = 更強信號？」假設
-│   ├── step 1: filters 改回 signal_value=1.0 + 加 signal_count metadata ✓
-│   ├── step 2: domain/signal_strength.py ✓
-│   │   純函數：events+forward_returns → 按 count 分組 → 各組 mean return
-│   │   input: DataFrame[date, direction, signal_count, ret_1d..ret_60d]
-│   │   output: GroupAnalysis[group, n_events, mean_return per horizon, monotonic?]
-│   ├── step 3: hypothesis_runner.run_strength_analysis() ✓
-│   │   per-symbol: filter(含 count) → forward_returns → 聚合
-│   │   全市場 ~2800 股 → ~3 min
-│   ├── step 4: CLI subcommand ✓
-│   │   hypothesis --strength -s conviction
-│   └── step 5: 結論 ✓ — 維持 signal_value = 1.0
-│       conviction ρ=0.056（太弱），concentration ρ=0.176（中等但覆蓋窄）
-│       兩者 monotonic ✅ 但 economic significance 不足
+│   驗證「信號強度 → 更好 return？」假設
+│   ├── quintile framework ✓
+│   │   ├── filters: signal_value=1.0 + signal_count metadata ✓
+│   │   ├── domain/signal_strength.py: quintile analysis 純函數 ✓
+│   │   ├── hypothesis_runner.run_strength_analysis() ✓
+│   │   └── n_conviction quintile: ρ=0.056 太弱，維持 uniform ✓
+│   │   ⚠ 方法論待修：stock effect 未控制、用 raw return 非 excess
+│   │
+│   ├── churn ratio ○
+│   │   domain/churn.py — 純函數，不改 data pipeline
+│   │   ├── compute_daily_churn(trade_df, brokers) ○
+│   │   │   per-date: gross/net among top-K → 方向一致性
+│   │   ├── compute_rolling_churn(trade_df, brokers, window) ○
+│   │   │   N-day rolling: 持續性方向共識 vs 換手
+│   │   ├── filters 加 churn_ratio 欄位 ○
+│   │   │   conviction filter join daily churn on event dates
+│   │   └── quintile 驗證 churn_ratio vs n_conviction ○
+│   │       用 --strength 比較 ρ，取較強者作為 signal_value
+│   │
+│   └── 方法論修正（deferred）
+│       ├── per-stock z-score 正規化（控制 stock effect）
+│       └── 用 excess return 取代 raw return
 │
 └── (future)
     ├── cluster-discovery ○

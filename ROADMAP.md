@@ -1,9 +1,9 @@
 # ws-branch
 
 ```
-████ ████ ████ ████ ████ ████ ████ ████ ████ ████ ████ ████ ▓▓▓▓ ░░░░ ░░░░ ░░░░
-管線 分析 大單 加速 整合 預設 時區 增量 增量 掃描 探索 滾動 偏差 匯出 共現 集中
-                    ws核 合併      ETL  PNL       CV  修正 修復 修復
+████ ████ ████ ████ ████ ████ ████ ████ ████ ████ ████ ████ ████ ░░░░ ░░░░ ░░░░
+管線 分析 大單 加速 整合 預設 時區 增量 增量 掃描 探索 滾動 偏差 回測 共現 集中
+                    ws核 合併      ETL  PNL       CV  修正 修復 品質
 
 ───────────────────────────────────────
 
@@ -56,12 +56,12 @@ ws-branch
 │
 ├── harshreview-fixes ← HERE
 │   docs/harshreview.md — 9 個系統性問題的修復
-│   ├── bias-fix ◐
+│   ├── bias-fix ✓
 │   │   ├── !1+!4 selector look-ahead ✓ — selectors 改用 rolling ranking + train_end_date
 │   │   ├── !10 helper unrealized baseline ✓ — _rolling_top_k, _rolling_ranking_to_date 修正
 │   │   ├── CV rerun ✓ — 6/7 存活，herding 1/5 失效
-│   │   ├── !2 export 暖身期過濾 ○ — 排除 2021-2022 事件
-│   │   └── !3 export significance windowing ○ — per-fold 判定取代全期間
+│   │   ├── !2 export 暖身期過濾 ✓ — _WARMUP_CUTOFF = 2023-01-01
+│   │   └── !3 export significance windowing ✓ — inject test_start_date 排除暖身期
 │   ├── backtest-quality ○
 │   │   blocked: bias-fix
 │   │   ├── !8 beta 分離 ○

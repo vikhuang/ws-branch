@@ -161,6 +161,23 @@ Validated via 5-fold rolling CV (≥3/5 folds pass: sig>5%, FDR≥10, dir>60%).
 herding 於 v0.34.0 bias 修正後失效（1/5），selector 用全期間 PNL 是唯一支撐。
 詳見 `docs/harshreview.md` 和 `data/reports/round2_report.md`。
 
+### Beta 分析結果（2026-03-16, post-bias-fix baseline）
+
+10d Excess Sharpe（扣大盤 IX0001 同期 return）是判斷真 alpha 的關鍵指標。
+
+| Strategy | 10d Total | 10d Excess | 20d Excess | Alpha? |
+|----------|----------|-----------|-----------|--------|
+| conviction | 4.90 | **3.70** | **4.65** | ✅ 真 alpha |
+| concentration | 5.45 | **3.94** | **4.99** | ✅ 真 alpha |
+| contrarian_broker | 5.54 | **4.37** | **5.10** | ✅ 最強 alpha |
+| dual_window | 4.68 | **3.11** | **4.27** | ✅ 真 alpha |
+| contrarian_smart | 2.43 | 0.64 | 1.02 | ⚠️ 弱，主要是 beta |
+| exodus | -1.03 | -0.53 | -1.02 | ❌ 牛市做空虧損 |
+
+- 1d-5d **全部策略 excess Sharpe 為負** — 短期交易成本吃掉 alpha
+- 所有 long-only 策略 beta ≈ 0.8-1.5，R² ≈ 0.05-0.11
+- `analyze` CLI：`uv run python -m broker_analytics analyze [-s strategy]`
+
 ### Cluster Discovery（未實作，方向 D）
 
 `cross_stock` 策略需要產業鏈 cluster 定義。計劃分三步：

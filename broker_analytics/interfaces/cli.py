@@ -551,7 +551,10 @@ def cmd_hypothesis(args: argparse.Namespace) -> int:
         signals_dir.mkdir(exist_ok=True)
 
         for strategy_name in strategies:
-            events = runner.run_export(strategy_name, params_override=params_override)
+            events = runner.run_export(
+                strategy_name, params_override=params_override,
+                hold_days=args.hold_days,
+            )
             if events.is_empty():
                 print(f"  {strategy_name}: 無事件，跳過")
                 continue
@@ -1015,6 +1018,10 @@ def main(argv: list[str] | None = None) -> int:
     hyp_parser.add_argument(
         "--export", action="store_true",
         help="Export Signal Contract CSV (comma-separated strategies with -s)",
+    )
+    hyp_parser.add_argument(
+        "--hold-days", type=int, default=0,
+        help="Dedup overlapping events within hold period (0=disabled)",
     )
 
     # analyze command

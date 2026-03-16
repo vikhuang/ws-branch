@@ -356,6 +356,7 @@ class HypothesisRunner:
         self,
         strategy_name: str,
         params_override: dict | None = None,
+        hold_days: int = 0,
     ) -> pl.DataFrame:
         """Export events from significant symbols as Signal Contract v1 CSV.
 
@@ -363,6 +364,7 @@ class HypothesisRunner:
         symbols where conclusion == "significant" (≥2 horizons pass).
         Events before 2023-01-01 are excluded (FIFO warmup period, !2).
         Selector uses rolling ranking up to latest date (no look-ahead, !3).
+        If hold_days > 0, overlapping events are suppressed (!7).
         Returns DataFrame[symbol: Utf8, date: Date, direction: Int8].
         """
         config = get_strategy(strategy_name)
@@ -472,10 +474,20 @@ class HypothesisRunner:
         result = pl.concat(all_events).select("symbol", "date", "direction").sort("symbol", "date")
         result = result.unique(subset=["symbol", "date"], keep="first")
 
+        total_before = len(result)
+
+        # Dedup overlapping events within hold period (!7)
+        if hold_days > 0:
+            from broker_analytics.domain.event_dedup import dedup_overlapping_events
+            result = dedup_overlapping_events(result, hold_days)
+
         total_events = len(result)
         n_long = result.filter(pl.col("direction") == 1).height
         n_short = result.filter(pl.col("direction") == -1).height
         print(f"  總事件數：{total_events}（多={n_long}，空={n_short}）")
+        if hold_days > 0:
+            removed = total_before - total_events
+            print(f"  去重疊（{hold_days}d hold）：移除 {removed} 筆（{removed/total_before*100:.0f}%）")
 
         return result
 

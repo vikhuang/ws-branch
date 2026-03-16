@@ -538,6 +538,17 @@ def cmd_hypothesis(args: argparse.Namespace) -> int:
     if args.params:
         params_override = _parse_hypothesis_params(args.params)
 
+    # Strength analysis mode
+    if args.strength:
+        if not args.strategy:
+            print("Error: --strength 需指定 -s <strategy>")
+            return 1
+        runner.run_strength_analysis(
+            args.strategy,
+            n_groups=args.groups,
+        )
+        return 0
+
     # Export mode: generate Signal Contract CSV
     if args.export:
         if not args.strategy:
@@ -1027,6 +1038,14 @@ def main(argv: list[str] | None = None) -> int:
     hyp_parser.add_argument(
         "--hold-days", type=int, default=0,
         help="Dedup overlapping events within hold period (0=disabled)",
+    )
+    hyp_parser.add_argument(
+        "--strength", action="store_true",
+        help="Analyze signal_count → return relationship (quintile analysis)",
+    )
+    hyp_parser.add_argument(
+        "--groups", type=int, default=3,
+        help="Number of groups for strength analysis (default: 3)",
     )
 
     # analyze command

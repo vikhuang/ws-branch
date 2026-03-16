@@ -494,6 +494,138 @@ class HypothesisRunner:
 
         return result
 
+    def run_strength_analysis(
+        self,
+        strategy_name: str,
+        n_groups: int = 3,
+        horizons: tuple[int, ...] = (1, 5, 10, 20),
+    ):
+        """Analyze whether signal_count predicts forward return magnitude.
+
+        For each symbol: run selector + filter (with signal_count) + forward returns.
+        Aggregate across symbols, then run quintile analysis.
+        """
+        from broker_analytics.domain.signal_strength import analyze_strength
+        from broker_analytics.domain.forward_returns import compute_forward_returns
+
+        config = get_strategy(strategy_name)
+        requires = config.requires
+        all_symbols = self._paths.list_symbols()
+        n_total = len(all_symbols)
+
+        print(f"【信號強度分析】{config.name}（{config.display_name}）")
+        print(f"  股票數：{n_total}，分組數：{n_groups}")
+        print()
+
+        self._price_repo.get_prices_df()
+        ctx = self._get_global_context()
+        params_template = {**config.params, "horizons": horizons}
+        self._inject_global_params(config, params_template)
+
+        all_events = []
+        t0 = time.time()
+
+        for i, symbol in enumerate(all_symbols):
+            data = self._load_symbol_data(symbol, requires)
+            if data is None:
+                continue
+
+            params = {**params_template}
+
+            # Inject concentration data if needed
+            if config.name == "concentration":
+                cache = params.get("_concentration_cache")
+                if cache is not None:
+                    params["_broker_concentrations"] = self._concentration_for_symbol(
+                        cache, data.symbol
+                    )
+
+            brokers = config.selector(data, ctx, params)
+            if not brokers:
+                continue
+            params["_brokers_list"] = brokers
+
+            events = config.filter(data, brokers, params)
+            if len(events) == 0 or "signal_count" not in events.columns:
+                continue
+
+            # Filter to post-warmup
+            events = events.filter(pl.col("date") >= self._WARMUP_CUTOFF)
+            if len(events) == 0:
+                continue
+
+            # Add signal_value column if missing
+            if "signal_value" not in events.columns:
+                events = events.with_columns(pl.lit(1.0).alias("signal_value"))
+
+            # Compute forward returns
+            ret_df = compute_forward_returns(events, data.prices, symbol, horizons)
+            if len(ret_df) == 0:
+                continue
+
+            # Join signal_count back to ret_df
+            ret_df = ret_df.join(
+                events.select("date", "signal_count"),
+                on="date",
+                how="inner",
+            )
+            all_events.append(ret_df)
+
+            if (i + 1) % 500 == 0 or i + 1 == n_total:
+                self._print_progress(i + 1, n_total, symbol, "", len(all_events), t0)
+
+        elapsed = time.time() - t0
+        sys.stderr.write("\n")
+
+        if not all_events:
+            print("  無事件")
+            return None
+
+        combined = pl.concat(all_events)
+        print(f"  完成：{elapsed:.0f}s，{len(combined)} events from {len(all_events)} symbols")
+
+        result = analyze_strength(combined, n_groups=n_groups, horizons=horizons)
+
+        # Print results
+        print()
+        print(f"  {'Group':<8} {'Count':>10} {'N':>6}", end="")
+        for h in horizons:
+            print(f"  {h}d avg", end="")
+        print()
+        print(f"  {'─'*8} {'─'*10} {'─'*6}", end="")
+        for _ in horizons:
+            print(f"  {'─'*7}", end="")
+        print()
+
+        for g in result.groups:
+            lo, hi = g.count_range
+            print(f"  {g.label:<8} {lo:>4}-{hi:<4}  {g.n_events:>6}", end="")
+            for h in horizons:
+                v = g.mean_returns.get(h, 0.0)
+                print(f"  {v:>6.0f}b", end="")
+            print()
+
+        print()
+        print(f"  Spearman ρ:", end="")
+        for h in horizons:
+            r = result.spearman_corr.get(h, 0.0)
+            print(f"  {h}d={r:+.3f}", end="")
+        print()
+
+        print(f"  Monotonic: ", end="")
+        for h in horizons:
+            m = result.monotonic.get(h, False)
+            print(f"  {h}d={'✅' if m else '❌'}", end="")
+        print()
+
+        print(f"  Top-Bottom:", end="")
+        for h in horizons:
+            d = result.top_vs_bottom_diff.get(h, 0.0)
+            print(f"  {h}d={d:+.0f}b", end="")
+        print()
+
+        return result
+
     def run_all_strategies(
         self,
         symbol: str,

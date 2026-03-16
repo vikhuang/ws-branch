@@ -74,15 +74,15 @@ ws-branch
 │
 ├── signal-strength-analysis ← HERE
 │   驗證「更多 broker conviction = 更強信號？」假設
-│   ├── step 1: filters 改回 signal_value=1.0 + 加 signal_count metadata ○
-│   ├── step 2: domain/signal_strength.py ○
+│   ├── step 1: filters 改回 signal_value=1.0 + 加 signal_count metadata ✓
+│   ├── step 2: domain/signal_strength.py ✓
 │   │   純函數：events+forward_returns → 按 count 分組 → 各組 mean return
 │   │   input: DataFrame[date, direction, signal_count, ret_1d..ret_60d]
 │   │   output: GroupAnalysis[group, n_events, mean_return per horizon, monotonic?]
-│   ├── step 3: hypothesis_runner.run_strength_analysis() ○
+│   ├── step 3: hypothesis_runner.run_strength_analysis() ✓
 │   │   per-symbol: filter(含 count) → forward_returns → 聚合
 │   │   全市場 ~2800 股 → ~3 min
-│   ├── step 4: CLI subcommand ○
+│   ├── step 4: CLI subcommand ✓
 │   │   hypothesis --strength -s conviction
 │   └── step 5: 根據結果決定 ○
 │       monotonic + 顯著 → signal_value = f(count)

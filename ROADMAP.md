@@ -84,9 +84,9 @@ ws-branch
 │   │   全市場 ~2800 股 → ~3 min
 │   ├── step 4: CLI subcommand ✓
 │   │   hypothesis --strength -s conviction
-│   └── step 5: 根據結果決定 ○
-│       monotonic + 顯著 → signal_value = f(count)
-│       無差異 → 維持 signal_value = 1.0
+│   └── step 5: 結論 ✓ — 維持 signal_value = 1.0
+│       conviction ρ=0.056（太弱），concentration ρ=0.176（中等但覆蓋窄）
+│       兩者 monotonic ✅ 但 economic significance 不足
 │
 └── (future)
     ├── cluster-discovery ○

@@ -192,6 +192,12 @@ filter 輸出 `signal_value=1.0`（uniform）+ `signal_count`（metadata）。
 
 n_conviction 分佈（200 股取樣）：n=3 佔 32%、n=4-5 佔 34%、n≥6 佔 34%，變異足夠。
 
+**Quintile 結果（2026-03-16）**：兩個 filter 都 monotonic ✅ 但 economic significance 不足。
+- conviction: ρ=+0.056, top-bottom=+17bps@10d → 太弱，不加權
+- concentration: ρ=+0.176, top-bottom=+28bps@10d → 中等但覆蓋僅 119 股
+
+**結論：維持 signal_value = 1.0（uniform）。** Count 作為 metadata 保留供未來分析。
+
 ### Cluster Discovery（未實作，方向 D）
 
 `cross_stock` 策略需要產業鏈 cluster 定義。計劃分三步：

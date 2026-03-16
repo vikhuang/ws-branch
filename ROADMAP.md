@@ -1,9 +1,9 @@
 # ws-branch
 
 ```
-████ ████ ████ ████ ████ ████ ████ ████ ████ ████ ████ ████ ████ ░░░░ ░░░░ ░░░░
-管線 分析 大單 加速 整合 預設 時區 增量 增量 掃描 探索 滾動 偏差 回測 共現 集中
-                    ws核 合併      ETL  PNL       CV  修正 修復 品質
+████ ████ ████ ████ ████ ████ ████ ████ ████ ████ ████ ████ ████ ░░░░ ░░░░ ░░░░ ░░░░
+管線 分析 大單 加速 整合 預設 時區 增量 增量 掃描 探索 滾動 偏差 信號 回測 共現 集中
+                    ws核 合併      ETL  PNL       CV  修正 強度 品質
 
 ───────────────────────────────────────
 
@@ -66,11 +66,27 @@ ws-branch
 │   │   ├── !8 beta 分離 ✓ — domain/beta_analysis.py + analyze CLI
 │   │   ├── !7 重疊持倉去重 ✓ — domain/event_dedup.py + --hold-days flag
 │   │   ├── 去重+beta 回測 ✓ — 真 alpha: conviction, concentration, contrarian_broker
-│   │   └── !5 signal_value 欄位 ✓ — filters 輸出 n_brokers/top_k 強度
+│   │   └── !5 signal_value ◐ — 改回 1.0，count 作為 metadata，待 quintile 驗證
 │   └── cross-project ○
 │       blocked: bias-fix
 │       ├── !6 Signal Contract v2 metadata ○
 │       └── !9 策略相關性標註 ○
+│
+├── signal-strength-analysis ← HERE
+│   驗證「更多 broker conviction = 更強信號？」假設
+│   ├── step 1: filters 改回 signal_value=1.0 + 加 signal_count metadata ○
+│   ├── step 2: domain/signal_strength.py ○
+│   │   純函數：events+forward_returns → 按 count 分組 → 各組 mean return
+│   │   input: DataFrame[date, direction, signal_count, ret_1d..ret_60d]
+│   │   output: GroupAnalysis[group, n_events, mean_return per horizon, monotonic?]
+│   ├── step 3: hypothesis_runner.run_strength_analysis() ○
+│   │   per-symbol: filter(含 count) → forward_returns → 聚合
+│   │   全市場 ~2800 股 → ~3 min
+│   ├── step 4: CLI subcommand ○
+│   │   hypothesis --strength -s conviction
+│   └── step 5: 根據結果決定 ○
+│       monotonic + 顯著 → signal_value = f(count)
+│       無差異 → 維持 signal_value = 1.0
 │
 └── (future)
     ├── cluster-discovery ○

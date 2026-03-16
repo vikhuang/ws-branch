@@ -256,9 +256,14 @@ class TestSelectors:
         data = _make_symbol_data()
         ctx = _make_global_context()
         brokers = select_top_k_by_pnl(data, ctx, {"top_k": 5})
-        # Should be in PNL descending order
-        pnls = data.pnl_df.sort("total_pnl", descending=True).head(5)
-        expected = pnls["broker"].cast(pl.Utf8).to_list()
+        # Should return top-K from rolling pnl_daily ranking (not full-period pnl_df)
+        assert len(brokers) == 5
+        assert all(isinstance(b, str) for b in brokers)
+        # Verify ranking uses pnl_daily_df via _rolling_ranking_to_date
+        from broker_analytics.domain.hypothesis.selectors import _rolling_ranking_to_date
+        max_date = data.pnl_daily_df["date"].max()
+        expected_ranking = _rolling_ranking_to_date(data.pnl_daily_df, 3, max_date)
+        expected = expected_ranking.head(5)["broker"].to_list()
         assert brokers == expected
 
     def test_niche_top_brokers(self):

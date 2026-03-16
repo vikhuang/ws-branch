@@ -1,9 +1,9 @@
 # ws-branch
 
 ```
-████ ████ ████ ████ ████ ████ ████ ████ ████ ████ ████ ████ ░░░░ ░░░░
-管線 分析 大單 加速 整合 預設 時區 增量 增量 掃描 探索 滾動 共現 集中
-                    ws核 合併      ETL  PNL       CV  修正
+████ ████ ████ ████ ████ ████ ████ ████ ████ ████ ████ ████ ▓▓▓▓ ░░░░ ░░░░ ░░░░
+管線 分析 大單 加速 整合 預設 時區 增量 增量 掃描 探索 滾動 偏差 匯出 共現 集中
+                    ws核 合併      ETL  PNL       CV  修正 修復 修復
 
 ───────────────────────────────────────
 
@@ -54,7 +54,24 @@ ws-branch
 │   ├── rolling_ranking.py — realized.sum() + (unrealized[end] − unrealized[start])
 │   └── tmp/gen_xlsx.py, gen_5d_xlsx.py — 同步修正
 │
-└── (future) ← HERE
+├── harshreview-fixes ← HERE
+│   docs/harshreview.md — 9 個系統性問題的修復
+│   ├── bias-fix ◐
+│   │   ├── !1+!4 selector look-ahead ◐ — selectors 改用 rolling ranking + train_end_date
+│   │   ├── !10 helper unrealized baseline ◐ — _rolling_top_k, _rolling_ranking_to_date 修正
+│   │   ├── !2 export 暖身期過濾 ○ — 排除 2021-2022 事件
+│   │   └── !3 export significance windowing ○ — per-fold 判定取代全期間
+│   ├── backtest-quality ○
+│   │   blocked: bias-fix
+│   │   ├── !8 beta 分離 ○
+│   │   ├── !7 重疊持倉去重 ○
+│   │   └── !5 signal_value 欄位 ○
+│   └── cross-project ○
+│       blocked: bias-fix
+│       ├── !6 Signal Contract v2 metadata ○
+│       └── !9 策略相關性標註 ○
+│
+└── (future)
     ├── cluster-discovery ○
     │   ├── 券商共現分析 ○
     │   │   daily_summary/*.parquet → co_occurrence.parquet

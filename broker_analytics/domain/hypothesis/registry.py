@@ -102,7 +102,7 @@ STRATEGIES: dict[str, HypothesisConfig] = {
         baseline=baseline_unconditional,
         stat_test=stat_test_permutation,
         params={"top_k": 20, "min_brokers": 3, "min_profit_ratio": 0.2},
-        requires=frozenset({"trade_df", "pnl_daily_df", "pnl_df", "prices"}),
+        requires=frozenset({"trade_df", "pnl_daily_df", "prices"}),
     ),
 
     "exodus": HypothesisConfig(
@@ -115,7 +115,7 @@ STRATEGIES: dict[str, HypothesisConfig] = {
         baseline=baseline_unconditional,
         stat_test=stat_test_permutation,
         params={"top_k": 20, "min_brokers": 5, "window_days": 20, "reduction_pct": 0.5, "rally_pct": 0.05},
-        requires=frozenset({"trade_df", "pnl_df", "prices"}),
+        requires=frozenset({"trade_df", "pnl_daily_df", "prices"}),
     ),
 
     "cross_stock": HypothesisConfig(
@@ -128,7 +128,7 @@ STRATEGIES: dict[str, HypothesisConfig] = {
         baseline=baseline_unconditional,
         stat_test=stat_test_permutation,
         params={"top_k": 20, "sigma": 2.0, "min_cluster_stocks": 2},
-        requires=frozenset({"trade_df", "pnl_df", "prices"}),
+        requires=frozenset({"trade_df", "pnl_daily_df", "prices"}),
         # cluster must be set via params_override at runtime (e.g. --params cluster=2330,3711)
     ),
 
@@ -155,7 +155,7 @@ STRATEGIES: dict[str, HypothesisConfig] = {
         baseline=baseline_unconditional,
         stat_test=stat_test_permutation,
         params={"top_k": 20, "drop_pct": -0.02, "cum_drop_pct": -0.05, "min_brokers": 3},
-        requires=frozenset({"trade_df", "pnl_df", "prices"}),
+        requires=frozenset({"trade_df", "pnl_daily_df", "prices"}),
     ),
 
     "concentration": HypothesisConfig(
@@ -181,7 +181,7 @@ STRATEGIES: dict[str, HypothesisConfig] = {
         baseline=baseline_unconditional,
         stat_test=stat_test_permutation,
         params={"top_k": 20, "herding_quantile": 0.05, "min_crowd_brokers": 5, "rolling_days": 5},
-        requires=frozenset({"trade_df", "pnl_df", "prices"}),
+        requires=frozenset({"trade_df", "pnl_daily_df", "prices"}),
     ),
 }
 

@@ -498,3 +498,69 @@ beta exposure 都是統計框架不涵蓋但交易框架必須處理的問題。
 
 8. **!6**：Signal Contract v2 加入 metadata（signal_generation_date_range, look_ahead_free: bool, warmup_excluded: bool）。
 9. **!9**：export 時標注策略之間的相關性，或提供 deduplicated 版本。
+
+---
+
+## !10 — Selector helpers 的 unrealized baseline bug（LAZY）
+
+> 2026-03-16 補充：harshreview 原文漏掉此問題
+
+### 問題
+
+`_rolling_ranking_to_date` 和 `_rolling_top_k`（selectors.py）計算 rolling
+window PNL 時，使用 `unrealized_pnl.last()` 而非
+`unrealized[end] - unrealized[start]`。
+
+同樣的 bug 曾在 `rolling_ranking.py` service 中被修復（commit acd6610），但修復
+沒有被傳播到 hypothesis selectors 的 helper functions。
+
+CLAUDE.md guardrail #5 明確規定：
+`Rolling window PNL = realized.sum() + (unrealized[end] − unrealized[start])`
+
+### 為什麼嚴重
+
+harshreview 建議的 !1 修復路徑是「把 selectors 導向已有的
+`_rolling_ranking_to_date` helper」。但這個 helper 本身有 bug——修了 windowing
+但 ranking 算錯。被長期累計持倉灌水的券商會被選為 top-K。
+
+### 影響範圍
+
+| Helper | 使用者 | 影響 |
+|--------|--------|------|
+| `_rolling_ranking_to_date` | `select_niche_top_brokers`（contrarian_broker） | **是**（baseline 灌水） |
+| `_rolling_top_k` | `select_dual_window_intersection`（dual_window） | **是**（baseline 灌水） |
+
+### LLM 根因
+
+- **修復不傳播**。bug 在 service 層被修了（rolling_ranking.py），但 domain 層
+  的 helper 是獨立程式碼路徑，LLM 修 bug 時沒有搜尋其他使用同樣 pattern 的
+  地方。
+
+---
+
+## 設計備註：Per-fold vs Per-event-day Selector Ranking
+
+### 兩種做法
+
+| 做法 | Selector 排名時間點 | 複雜度 | 正確性 |
+|------|-------------------|--------|--------|
+| **A. Per-fold** | 每 fold 排一次（用 train_end_date） | 低 | 夠用 |
+| **B. Per-event-day** | 每個事件日 T 重新排 | 高 | 最正確 |
+
+### 理想版本（做法 B）
+
+PNL 本身是每日滾動的資料。理想中，每個事件日 T 的 top-K 應該是「當天」的
+3 年 rolling PNL 排名。這意味著 top-K 會每日變動。
+
+### 務實近似（做法 A）
+
+一個 CV fold 內（~6 個月），top-K 排名的變動通常不大。Per-fold 排一次是合理
+的近似。先用 A 修完跑 CV，如果結果不理想再考慮 B。
+
+### 含義
+
+如果做法 A 的 CV 通過：
+- 信號在 per-fold windowed selector 下仍然穩健
+- Export 流程可直接使用同樣的 windowed selector（加日期下限即可解決 !2）
+- !3（export significance）的嚴重度降低，但最乾淨做法仍是只匯出 CV 通過
+  fold 的事件

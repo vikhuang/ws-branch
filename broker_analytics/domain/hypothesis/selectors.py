@@ -20,14 +20,26 @@ from broker_analytics.domain.timing_alpha import compute_timing_alpha
 def select_top_k_by_pnl(
     data: SymbolData, ctx: GlobalContext, params: dict,
 ) -> BrokerList:
-    """Select top-K brokers by per-stock PNL ranking.
+    """Select top-K brokers by per-stock rolling PNL ranking.
 
-    Used by strategies 3, 4, 7.
-    params: top_k (int, default 20)
+    Uses rolling window up to train_end_date (no look-ahead).
+    params: top_k (int, default 20), years (int, default 3),
+            train_end_date (str, optional — defaults to latest date)
     """
     top_k = params.get("top_k", 20)
-    df = data.pnl_df.sort("total_pnl", descending=True).head(top_k)
-    return df["broker"].cast(pl.Utf8).to_list()
+    years = params.get("years", 3)
+    train_end_str = params.get("train_end_date")
+
+    if train_end_str:
+        train_end = date.fromisoformat(train_end_str)
+    else:
+        max_date = data.pnl_daily_df["date"].max() if len(data.pnl_daily_df) > 0 else None
+        if max_date is None:
+            return []
+        train_end = max_date
+
+    ranking = _rolling_ranking_to_date(data.pnl_daily_df, years, train_end)
+    return ranking.head(top_k)["broker"].to_list()
 
 
 def select_niche_top_brokers(
@@ -110,16 +122,23 @@ def select_dual_window_intersection(
 ) -> BrokerList:
     """Strategy 2: Brokers in top-K for BOTH short and long rolling windows.
 
-    Uses pnl_daily rolling aggregation (no look-ahead).
+    Uses pnl_daily rolling aggregation up to train_end_date (no look-ahead).
     params: top_k (int, default 20),
-            short_years (int, default 1), long_years (int, default 3)
+            short_years (int, default 1), long_years (int, default 3),
+            train_end_date (str, optional — defaults to latest date)
     """
     top_k = params.get("top_k", 20)
     short_years = params.get("short_years", 1)
     long_years = params.get("long_years", 3)
+    train_end_str = params.get("train_end_date")
 
-    short_set = _rolling_top_k(data.pnl_daily_df, short_years, top_k)
-    long_set = _rolling_top_k(data.pnl_daily_df, long_years, top_k)
+    if train_end_str:
+        end = date.fromisoformat(train_end_str)
+    else:
+        end = None  # _rolling_top_k defaults to max_date
+
+    short_set = _rolling_top_k(data.pnl_daily_df, short_years, top_k, end)
+    long_set = _rolling_top_k(data.pnl_daily_df, long_years, top_k, end)
     return list(short_set & long_set)
 
 
@@ -130,11 +149,24 @@ def select_top_and_bottom_k(
 
     Returns combined list: first top_k are "top", rest are "bottom".
     The filter step distinguishes groups using this ordering.
-    params: top_k (int, default 20)
+    Uses rolling window up to train_end_date (no look-ahead).
+    params: top_k (int, default 20), years (int, default 3),
+            train_end_date (str, optional — defaults to latest date)
     """
     top_k = params.get("top_k", 20)
-    df = data.pnl_df.sort("total_pnl", descending=True)
-    brokers = df["broker"].cast(pl.Utf8).to_list()
+    years = params.get("years", 3)
+    train_end_str = params.get("train_end_date")
+
+    if train_end_str:
+        train_end = date.fromisoformat(train_end_str)
+    else:
+        max_date = data.pnl_daily_df["date"].max() if len(data.pnl_daily_df) > 0 else None
+        if max_date is None:
+            return []
+        train_end = max_date
+
+    ranking = _rolling_ranking_to_date(data.pnl_daily_df, years, train_end)
+    brokers = ranking["broker"].to_list()
     top = brokers[:top_k]
     bottom = brokers[-top_k:] if len(brokers) >= top_k else brokers
     return top + bottom
@@ -379,16 +411,34 @@ def select_by_large_trade_scar(
 
 def _rolling_top_k(
     pnl_daily: pl.DataFrame, years: float, k: int,
+    end_date: date | None = None,
 ) -> set[str]:
-    """Get top-K brokers by rolling PNL over trailing years (supports fractional)."""
-    max_date = pnl_daily["date"].max()
-    if max_date is None:
+    """Get top-K brokers by rolling PNL over trailing years (supports fractional).
+
+    Uses realized.sum() + (unrealized[end] - unrealized[start]) per guardrail #5.
+    """
+    if end_date is None:
+        end_date = pnl_daily["date"].max()
+    if end_date is None:
         return set()
 
     from datetime import timedelta
-    start = max_date - timedelta(days=int(years * 365))
+    start = end_date - timedelta(days=int(years * 365))
 
-    window = pnl_daily.filter(pl.col("date") >= start)
+    # Baseline: last unrealized before window start
+    baseline = (
+        pnl_daily.filter(pl.col("date") < start)
+        .sort("date")
+        .group_by("broker")
+        .agg(pl.col("unrealized_pnl").last().alias("baseline_unrealized"))
+    )
+
+    window = pnl_daily.filter(
+        (pl.col("date") >= start) & (pl.col("date") <= end_date)
+    )
+    if len(window) == 0:
+        return set()
+
     agg = (
         window.sort("date")
         .group_by("broker")
@@ -396,8 +446,11 @@ def _rolling_top_k(
             pl.col("realized_pnl").sum(),
             pl.col("unrealized_pnl").last(),
         ])
+        .join(baseline, on="broker", how="left")
+        .with_columns(pl.col("baseline_unrealized").fill_null(0.0))
         .with_columns(
-            (pl.col("realized_pnl") + pl.col("unrealized_pnl")).alias("total_pnl")
+            (pl.col("realized_pnl") + pl.col("unrealized_pnl")
+             - pl.col("baseline_unrealized")).alias("total_pnl")
         )
         .sort("total_pnl", descending=True)
         .head(k)
@@ -411,6 +464,7 @@ def _rolling_ranking_to_date(
     """Compute broker ranking from pnl_daily within [end_date - years, end_date].
 
     Returns DataFrame[broker, total_pnl] sorted descending.
+    Uses realized.sum() + (unrealized[end] - unrealized[start]) per guardrail #5.
     """
     if len(pnl_daily) == 0:
         return pl.DataFrame(schema={"broker": pl.Utf8, "total_pnl": pl.Float64})
@@ -420,23 +474,39 @@ def _rolling_ranking_to_date(
     except ValueError:
         start = date(end_date.year - years, end_date.month, end_date.day - 1)
 
+    # Baseline: last unrealized before window start
+    baseline = (
+        pnl_daily.filter(pl.col("date") < start)
+        .sort("date")
+        .group_by("broker")
+        .agg(pl.col("unrealized_pnl").last().alias("baseline_unrealized"))
+    )
+
     window = pnl_daily.filter(
         (pl.col("date") >= start) & (pl.col("date") <= end_date)
     )
     if len(window) == 0:
         return pl.DataFrame(schema={"broker": pl.Utf8, "total_pnl": pl.Float64})
 
-    return (
+    agg = (
         window.sort("date")
         .group_by("broker")
         .agg([
             pl.col("realized_pnl").sum(),
             pl.col("unrealized_pnl").last(),
         ])
+    )
+
+    return (
+        agg
+        .join(baseline, on="broker", how="left")
+        .with_columns(pl.col("baseline_unrealized").fill_null(0.0))
         .with_columns(
             pl.col("broker").cast(pl.Utf8),
-            (pl.col("realized_pnl") + pl.col("unrealized_pnl")).alias("total_pnl"),
+            (pl.col("realized_pnl") + pl.col("unrealized_pnl")
+             - pl.col("baseline_unrealized")).alias("total_pnl"),
         )
+        .select("broker", "total_pnl")
         .sort("total_pnl", descending=True)
     )
 

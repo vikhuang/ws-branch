@@ -7,6 +7,7 @@ then delegates to pure domain functions for each step.
 import sys
 import time
 from dataclasses import replace
+from datetime import date
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
 import numpy as np
@@ -347,6 +348,10 @@ class HypothesisRunner:
             "elapsed": elapsed_all,
         }
 
+    # Warmup period cutoff: FIFO accumulates from 2021-01, performance
+    # measured from 2023-01. Events before this date are unreliable.
+    _WARMUP_CUTOFF = date(2023, 1, 1)
+
     def run_export(
         self,
         strategy_name: str,
@@ -356,6 +361,8 @@ class HypothesisRunner:
 
         Runs the full 5-step pipeline per symbol. Only keeps events from
         symbols where conclusion == "significant" (≥2 horizons pass).
+        Events before 2023-01-01 are excluded (FIFO warmup period, !2).
+        Selector uses rolling ranking up to latest date (no look-ahead, !3).
         Returns DataFrame[symbol: Utf8, date: Date, direction: Int8].
         """
         config = get_strategy(strategy_name)
@@ -371,6 +378,7 @@ class HypothesisRunner:
         print(f"  策略：{config.description}")
         print(f"  股票數：{n_total}")
         print(f"  篩選：只匯出統計顯著的股票（≥2 horizons pass）")
+        print(f"  日期下限：{self._WARMUP_CUTOFF}（排除 FIFO 暖身期）")
         print()
 
         self._price_repo.get_prices_df()
@@ -392,7 +400,13 @@ class HypothesisRunner:
                 self._print_progress(i + 1, n_total, symbol, "skip", n_sig, t0)
                 continue
 
-            params = {**params_template}
+            # Inject date constraints (!2 + !3):
+            # - test_start_date: exclude warmup events from pipeline
+            # - train_end_date: selector uses rolling ranking (no look-ahead)
+            params = {
+                **params_template,
+                "test_start_date": str(self._WARMUP_CUTOFF),
+            }
             result = self._run_pipeline(config, data, ctx, params)
 
             if result is None or result.n_events == 0:
@@ -433,6 +447,9 @@ class HypothesisRunner:
                 params["_cluster_trades"] = cluster_trades
 
             events = config.filter(data, brokers, params)
+            # Exclude warmup period events (!2)
+            if len(events) > 0:
+                events = events.filter(pl.col("date") >= self._WARMUP_CUTOFF)
             if len(events) > 0:
                 events = events.with_columns(pl.lit(symbol).alias("symbol"))
                 all_events.append(events)

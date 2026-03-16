@@ -193,24 +193,18 @@ filter 輸出 `signal_value=1.0`（uniform）+ `signal_count` + `churn_ratio`（
 
 **結論：維持 signal_value = 1.0（uniform）。** CLI: `hypothesis --strength -s conviction`
 
-### 觀察：Top-K 內部分歧與 Return 的關係（初步，待驗證）
+### Signal Strength V2 結論（excess + z-score + partial corr）
 
-churn_ratio = top-K broker 的 gross / net。高 churn = top-K 內部買賣方向分歧。
+v1 的「churn 反向」發現被推翻（raw return artifact）。方法論修正後：
 
-quintile 結果：conviction 事件中，**top-K 內部分歧越大，forward return 越好**（ρ=+0.022）。
-但此觀察有多項方法論瑕疵，尚未確認為可靠結論：
+| 指標 | conviction ρ (10d) | partial ρ | concentration ρ (10d) | partial ρ |
+|------|-------------------|-----------|----------------------|-----------|
+| signal_count | **+0.062** | — | **+0.192** | — |
+| log(churn) | +0.015 | +0.012 | +0.059 | -0.010 |
 
-**已知問題**：
-1. **極端 outlier**：churn range 8-604,000，net≈0 時 churn 爆炸。未 winsorize。
-2. **與 n_conviction 機械性負相關**：高 n_conviction → 低 churn（定義使然）。churn 可能只是 count 的反面，無獨立新資訊。
-3. **只算 top-K 內部**：不是「聰明錢 vs 市場」，是「top-K 內部分歧」。
-4. **ρ=0.022 極弱**：統計顯著但經濟意義接近零。
-
-**待驗證**（下一階段）：
-- winsorize 或 log(churn) 後重跑，確認非 outlier 驅動
-- 控制 n_conviction 後看 churn 殘差效果（partial correlation）
-- 計算「conviction brokers vs 全體 broker」的 churn（真正的 vs-market 版本）
-- 對 quintile analysis 套用 excess return（扣大盤）和 per-stock z-score
+- churn 控制 count 後 partial ρ ≈ 0 → 無獨立資訊
+- count 的 ρ 在 excess+z-score 後穩健（非 beta/stock effect 驅動）
+- **結論：signal_value = 1.0（uniform）** — 所有候選指標太弱或不穩定
 
 ### Cluster Discovery（未實作，方向 D）
 

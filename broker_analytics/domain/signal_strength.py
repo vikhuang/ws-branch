@@ -1,7 +1,13 @@
-"""Signal strength analysis: test whether higher signal_count → better returns.
+"""Signal strength analysis: test whether a metric predicts forward returns.
 
 Pure functions — input/output are polars DataFrames and dataclasses.
 No I/O, no side effects.
+
+Methodology:
+- Returns should be excess (market-subtracted) and z-scored (per-stock normalized)
+  BEFORE passing to analyze_strength. The runner handles this.
+- group_col values are winsorized at 1st/99th percentile to prevent outlier dominance.
+- Partial Spearman correlation available for controlling confounders.
 """
 
 from dataclasses import dataclass
@@ -12,12 +18,13 @@ import polars as pl
 
 @dataclass(frozen=True, slots=True)
 class GroupStats:
-    """Statistics for one signal_count group."""
+    """Statistics for one signal metric group."""
 
     label: str
-    count_range: tuple[int, int]  # (min, max) inclusive
+    range_lo: float
+    range_hi: float
     n_events: int
-    mean_returns: dict[int, float]  # horizon → mean direction-adjusted return (bps)
+    mean_returns: dict[int, float]  # horizon → mean return
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,9 +33,10 @@ class StrengthResult:
 
     groups: tuple[GroupStats, ...]
     horizons: tuple[int, ...]
-    monotonic: dict[int, bool]          # horizon → is mean return monotonically increasing?
-    spearman_corr: dict[int, float]     # horizon → rank correlation (count vs return)
-    top_vs_bottom_diff: dict[int, float]  # horizon → mean(top group) - mean(bottom group)
+    monotonic: dict[int, bool]
+    spearman_corr: dict[int, float]
+    partial_corr: dict[int, float]   # controlling for confound_col
+    top_vs_bottom_diff: dict[int, float]
     n_total: int
 
 
@@ -37,33 +45,35 @@ def analyze_strength(
     n_groups: int = 3,
     horizons: tuple[int, ...] = (1, 5, 10, 20),
     group_col: str = "signal_count",
-    invert: bool = False,
+    confound_col: str | None = None,
+    winsorize_pct: float = 0.01,
 ) -> StrengthResult:
     """Test whether a signal metric predicts forward return magnitude.
 
     Args:
         events_with_returns: DataFrame with columns:
             {group_col}, direction (Int8),
-            ret_1d, ret_5d, ret_10d, ret_20d (Float64, bps).
-            Returns should NOT be direction-adjusted (raw).
+            ret_1d, ret_5d, ... (Float64). Returns should already be
+            excess + z-scored (handled by runner) but NOT direction-adjusted
+            (this function does that).
         n_groups: Number of groups to split into.
         horizons: Forward return horizons to analyze.
-        group_col: Column to group by (e.g. "signal_count" or "churn_ratio").
-        invert: If True, lower values → stronger signal (for churn_ratio).
-            Groups are labeled so G1=weakest, G_last=strongest.
+        group_col: Column to group by.
+        confound_col: Column to control for in partial correlation
+            (e.g. "signal_count" when testing churn_ratio).
+        winsorize_pct: Percentile for winsorizing group_col (0.01 = 1st/99th).
 
     Returns:
-        StrengthResult with per-group means, monotonicity test,
-        and rank correlation.
+        StrengthResult with per-group means, Spearman + partial correlation,
+        and monotonicity test. Higher group_col → higher return = positive ρ.
     """
     if len(events_with_returns) == 0 or group_col not in events_with_returns.columns:
-        empty_groups = tuple(
-            GroupStats(f"G{i+1}", (0, 0), 0, {}) for i in range(n_groups)
-        )
+        empty = tuple(GroupStats(f"G{i+1}", 0, 0, 0, {}) for i in range(n_groups))
         return StrengthResult(
-            groups=empty_groups, horizons=horizons,
+            groups=empty, horizons=horizons,
             monotonic={h: False for h in horizons},
             spearman_corr={h: 0.0 for h in horizons},
+            partial_corr={h: 0.0 for h in horizons},
             top_vs_bottom_diff={h: 0.0 for h in horizons},
             n_total=0,
         )
@@ -78,93 +88,81 @@ def analyze_strength(
                 (pl.col(col) * pl.col("direction")).alias(col)
             )
 
-    # Compute group boundaries using quantiles
-    counts = df[group_col].to_numpy().astype(float)
-    boundaries = np.quantile(counts, np.linspace(0, 1, n_groups + 1))
-    # Ensure unique boundaries (if many ties at min value)
-    boundaries = np.unique(boundaries)
+    # Winsorize group_col
+    raw_vals = df[group_col].to_numpy().astype(float)
+    lo_pct, hi_pct = np.percentile(raw_vals, [winsorize_pct * 100, (1 - winsorize_pct) * 100])
+    clipped = np.clip(raw_vals, lo_pct, hi_pct)
+    df = df.with_columns(pl.Series("_metric", clipped))
+
+    # Compute group boundaries using quantiles on winsorized values
+    boundaries = np.unique(np.quantile(clipped, np.linspace(0, 1, n_groups + 1)))
     actual_groups = len(boundaries) - 1
 
     if actual_groups < 2:
-        # Not enough variation — fall back to min vs above-min
-        min_count = int(counts.min())
-        boundaries = np.array([min_count, min_count + 0.5, counts.max() + 1])
+        min_val = float(clipped.min())
+        boundaries = np.array([min_val, min_val + (clipped.max() - min_val) / 2, clipped.max() + 0.001])
         actual_groups = 2
 
-    # Assign groups
-    group_labels = np.digitize(counts, boundaries[1:], right=True)
-
+    group_labels = np.digitize(clipped, boundaries[1:], right=True)
     df = df.with_columns(pl.Series("_group", group_labels))
 
-    # Compute per-group statistics
+    # Per-group statistics
     groups = []
     for g in range(actual_groups):
         g_df = df.filter(pl.col("_group") == g)
-        lo = int(boundaries[g]) if g < len(boundaries) - 1 else int(boundaries[-2])
-        hi = int(boundaries[g + 1]) if g + 1 < len(boundaries) else int(boundaries[-1])
-        n = len(g_df)
-
+        lo = float(boundaries[g])
+        hi = float(boundaries[min(g + 1, len(boundaries) - 1)])
         means = {}
         for h in horizons:
             col = f"ret_{h}d"
             if col in g_df.columns:
                 valid = g_df[col].drop_nulls()
                 means[h] = float(valid.mean()) if len(valid) > 0 else 0.0
+        groups.append(GroupStats(f"G{g+1}", lo, hi, len(g_df), means))
 
-        groups.append(GroupStats(
-            label=f"G{g+1}",
-            count_range=(lo, hi),
-            n_events=n,
-            mean_returns=means,
-        ))
-
-    # Monotonicity test per horizon
+    # Monotonicity: higher metric → higher return
     monotonic = {}
     for h in horizons:
-        group_means = [g.mean_returns.get(h, 0.0) for g in groups]
-        monotonic[h] = all(
-            group_means[i] <= group_means[i + 1]
-            for i in range(len(group_means) - 1)
-        )
+        gm = [g.mean_returns.get(h, 0.0) for g in groups]
+        monotonic[h] = all(gm[i] <= gm[i + 1] for i in range(len(gm) - 1))
 
-    # If inverted (lower = stronger), reverse group order for reporting
-    if invert:
-        groups = list(reversed(groups))
-        for i, g in enumerate(groups):
-            groups[i] = GroupStats(f"G{i+1}", g.count_range, g.n_events, g.mean_returns)
-
-    # Spearman rank correlation: metric vs direction-adjusted return
-    # For inverted metrics, negate so positive ρ = "stronger signal → better return"
+    # Spearman: metric vs return
     spearman_corr = {}
+    partial_corr = {}
     for h in horizons:
         col = f"ret_{h}d"
-        if col in df.columns:
-            valid = df.filter(pl.col(col).is_not_null())
-            if len(valid) > 2:
-                metric = valid[group_col].to_numpy().astype(float)
-                if invert:
-                    metric = -metric
-                spearman_corr[h] = _spearman(
-                    metric,
-                    valid[col].to_numpy(),
-                )
-            else:
-                spearman_corr[h] = 0.0
-        else:
+        if col not in df.columns:
             spearman_corr[h] = 0.0
+            partial_corr[h] = 0.0
+            continue
+        valid = df.filter(pl.col(col).is_not_null())
+        if len(valid) < 10:
+            spearman_corr[h] = 0.0
+            partial_corr[h] = 0.0
+            continue
 
-    # Top vs bottom group diff
+        metric = valid["_metric"].to_numpy()
+        returns = valid[col].to_numpy()
+        spearman_corr[h] = _spearman(metric, returns)
+
+        # Partial correlation controlling for confound
+        if confound_col and confound_col in valid.columns:
+            confound = valid[confound_col].to_numpy().astype(float)
+            partial_corr[h] = _partial_spearman(metric, returns, confound)
+        else:
+            partial_corr[h] = spearman_corr[h]
+
+    # Top vs bottom
     top_vs_bottom = {}
     for h in horizons:
-        top = groups[-1].mean_returns.get(h, 0.0)
-        bottom = groups[0].mean_returns.get(h, 0.0)
-        top_vs_bottom[h] = top - bottom
+        top_vs_bottom[h] = groups[-1].mean_returns.get(h, 0.0) - groups[0].mean_returns.get(h, 0.0)
 
     return StrengthResult(
         groups=tuple(groups),
         horizons=horizons,
         monotonic=monotonic,
         spearman_corr=spearman_corr,
+        partial_corr=partial_corr,
         top_vs_bottom_diff=top_vs_bottom,
         n_total=len(df),
     )
@@ -181,12 +179,22 @@ def _spearman(x: np.ndarray, y: np.ndarray) -> float:
     return float(1.0 - 6.0 * np.sum(d ** 2) / (n * (n ** 2 - 1)))
 
 
+def _partial_spearman(x: np.ndarray, y: np.ndarray, z: np.ndarray) -> float:
+    """Partial Spearman: correlation of x and y controlling for z."""
+    rho_xy = _spearman(x, y)
+    rho_xz = _spearman(x, z)
+    rho_yz = _spearman(y, z)
+    den_sq = (1 - rho_xz ** 2) * (1 - rho_yz ** 2)
+    if den_sq <= 0:
+        return 0.0
+    return float((rho_xy - rho_xz * rho_yz) / (den_sq ** 0.5))
+
+
 def _rank(arr: np.ndarray) -> np.ndarray:
     """Compute ranks (average method for ties)."""
     order = arr.argsort()
     ranks = np.empty_like(order, dtype=float)
     ranks[order] = np.arange(1, len(arr) + 1, dtype=float)
-    # Handle ties: average rank
     sorted_arr = arr[order]
     i = 0
     while i < len(sorted_arr):

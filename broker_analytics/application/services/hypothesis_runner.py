@@ -494,16 +494,23 @@ class HypothesisRunner:
 
         return result
 
+    # Market index symbol for excess return computation
+    _MARKET_SYMBOL = "IX0001"
+
     def run_strength_analysis(
         self,
         strategy_name: str,
         n_groups: int = 3,
         horizons: tuple[int, ...] = (1, 5, 10, 20),
     ):
-        """Analyze whether signal_count predicts forward return magnitude.
+        """Analyze whether signal_count/churn predicts forward return magnitude.
 
-        For each symbol: run selector + filter (with signal_count) + forward returns.
-        Aggregate across symbols, then run quintile analysis.
+        Methodology (post-review fixes):
+        1. Forward returns are excess (subtract market index return)
+        2. Per-stock z-score normalization (divide by stock vol × √horizon)
+        3. churn_ratio uses log scale (natural for ratios)
+        4. Winsorize at 1st/99th percentile
+        5. Partial correlation: churn controlling for n_conviction
         """
         from broker_analytics.domain.signal_strength import analyze_strength
         from broker_analytics.domain.forward_returns import compute_forward_returns
@@ -513,14 +520,18 @@ class HypothesisRunner:
         all_symbols = self._paths.list_symbols()
         n_total = len(all_symbols)
 
-        print(f"【信號強度分析】{config.name}（{config.display_name}）")
+        print(f"【信號強度分析 v2】{config.name}（{config.display_name}）")
         print(f"  股票數：{n_total}，分組數：{n_groups}")
+        print(f"  修正：excess return + per-stock z-score + winsorize + partial corr")
         print()
 
-        self._price_repo.get_prices_df()
+        prices_df = self._price_repo.get_prices_df()
         ctx = self._get_global_context()
         params_template = {**config.params, "horizons": horizons}
         self._inject_global_params(config, params_template)
+
+        # Pre-compute market forward returns for all dates
+        market_closes = self._load_market_closes(prices_df)
 
         all_events = []
         t0 = time.time()
@@ -531,8 +542,6 @@ class HypothesisRunner:
                 continue
 
             params = {**params_template}
-
-            # Inject concentration data if needed
             if config.name == "concentration":
                 cache = params.get("_concentration_cache")
                 if cache is not None:
@@ -549,29 +558,65 @@ class HypothesisRunner:
             if len(events) == 0 or "signal_count" not in events.columns:
                 continue
 
-            # Filter to post-warmup
             events = events.filter(pl.col("date") >= self._WARMUP_CUTOFF)
             if len(events) == 0:
                 continue
 
-            # Add signal_value column if missing
             if "signal_value" not in events.columns:
                 events = events.with_columns(pl.lit(1.0).alias("signal_value"))
 
-            # Compute forward returns
+            # Compute stock forward returns
             ret_df = compute_forward_returns(events, data.prices, symbol, horizons)
             if len(ret_df) == 0:
                 continue
 
-            # Join signal metadata back to ret_df
+            # Compute market forward returns for same dates and subtract (excess)
+            mkt_df = compute_forward_returns(events, prices_df, self._MARKET_SYMBOL, horizons)
+            if len(mkt_df) > 0:
+                mkt_cols = {f"ret_{h}d": f"mkt_{h}d" for h in horizons}
+                mkt_df = mkt_df.select("date", *[f"ret_{h}d" for h in horizons]).rename(mkt_cols)
+                ret_df = ret_df.join(mkt_df, on="date", how="left")
+                for h in horizons:
+                    rcol, mcol = f"ret_{h}d", f"mkt_{h}d"
+                    if mcol in ret_df.columns:
+                        ret_df = ret_df.with_columns(
+                            (pl.col(rcol) - pl.col(mcol).fill_null(0.0)).alias(rcol)
+                        )
+                ret_df = ret_df.select(
+                    [c for c in ret_df.columns if not c.startswith("mkt_")]
+                )
+
+            # Per-stock z-score: divide by stock vol × √horizon
+            sym_prices = (
+                data.prices.filter(pl.col("symbol_id") == symbol)
+                .sort("date").select("close_price")
+            )
+            if len(sym_prices) > 30:
+                closes = sym_prices["close_price"].to_numpy()
+                daily_rets = (closes[1:] - closes[:-1]) / closes[:-1]
+                daily_std = float(daily_rets.std(ddof=1)) if len(daily_rets) > 1 else 0.0
+                if daily_std > 0:
+                    for h in horizons:
+                        col = f"ret_{h}d"
+                        if col in ret_df.columns:
+                            horizon_std_bps = daily_std * (h ** 0.5) * 10000
+                            ret_df = ret_df.with_columns(
+                                (pl.col(col) / horizon_std_bps).alias(col)
+                            )
+
+            # Join signal metadata
             meta_cols = ["date", "signal_count"]
             if "churn_ratio" in events.columns:
                 meta_cols.append("churn_ratio")
-            ret_df = ret_df.join(
-                events.select(meta_cols),
-                on="date",
-                how="inner",
-            )
+            ret_df = ret_df.join(events.select(meta_cols), on="date", how="inner")
+
+            # Log-transform churn_ratio (natural for ratios spanning orders of magnitude)
+            if "churn_ratio" in ret_df.columns:
+                import math
+                ret_df = ret_df.with_columns(
+                    pl.col("churn_ratio").log().alias("log_churn")
+                )
+
             all_events.append(ret_df)
 
             if (i + 1) % 500 == 0 or i + 1 == n_total:
@@ -586,6 +631,7 @@ class HypothesisRunner:
 
         combined = pl.concat(all_events)
         print(f"  完成：{elapsed:.0f}s，{len(combined)} events from {len(all_events)} symbols")
+        print(f"  Returns: excess (扣 {self._MARKET_SYMBOL}) + per-stock z-scored")
 
         results = {}
 
@@ -596,51 +642,63 @@ class HypothesisRunner:
         self._print_strength_result(r_count, horizons)
         results["signal_count"] = r_count
 
-        # Analyze churn_ratio (if available)
-        if "churn_ratio" in combined.columns:
-            valid_churn = combined.filter(pl.col("churn_ratio").is_not_null())
-            if len(valid_churn) > 100:
-                print(f"\n  ── churn_ratio（方向一致性，低=強）──")
-                r_churn = analyze_strength(valid_churn, n_groups=n_groups, horizons=horizons,
-                                           group_col="churn_ratio", invert=True)
-                self._print_strength_result(r_churn, horizons)
-                results["churn_ratio"] = r_churn
+        # Analyze log(churn_ratio) with partial correlation
+        if "log_churn" in combined.columns:
+            valid = combined.filter(
+                pl.col("log_churn").is_not_null() & pl.col("log_churn").is_finite()
+            )
+            if len(valid) > 100:
+                print(f"\n  ── log(churn_ratio)（高=分歧）+ partial corr 控制 count ──")
+                r_churn = analyze_strength(
+                    valid, n_groups=n_groups, horizons=horizons,
+                    group_col="log_churn", confound_col="signal_count",
+                )
+                self._print_strength_result(r_churn, horizons, show_partial=True)
+                results["log_churn"] = r_churn
 
-                # Compare
                 print(f"\n  ── 比較 ──")
                 for h in horizons:
                     rc = r_count.spearman_corr.get(h, 0.0)
                     rch = r_churn.spearman_corr.get(h, 0.0)
-                    better = "churn" if abs(rch) > abs(rc) else "count"
-                    print(f"  {h}d: count ρ={rc:+.3f} vs churn ρ={rch:+.3f} → {better} wins")
+                    rch_p = r_churn.partial_corr.get(h, 0.0)
+                    print(f"  {h}d: count ρ={rc:+.3f}  churn ρ={rch:+.3f}  churn partial={rch_p:+.3f}")
 
         return results
 
+    def _load_market_closes(self, prices_df: pl.DataFrame) -> dict:
+        """Load market index prices for excess return computation."""
+        mkt = prices_df.filter(pl.col("symbol_id") == self._MARKET_SYMBOL)
+        return dict(zip(mkt["date"].to_list(), mkt["close_price"].to_list()))
+
     @staticmethod
-    def _print_strength_result(result: "StrengthResult", horizons):
-        print(f"    {'Group':<8} {'Range':>12} {'N':>6}", end="")
+    def _print_strength_result(result, horizons, show_partial=False):
+        print(f"    {'Group':<8} {'Range':>14} {'N':>6}", end="")
         for h in horizons:
-            print(f"  {h}d avg", end="")
+            print(f"  {h:>3}d", end="")
         print()
 
         for g in result.groups:
-            lo, hi = g.count_range
-            print(f"    {g.label:<8} {lo:>5.1f}-{hi:<5.1f} {g.n_events:>6}", end="")
+            print(f"    {g.label:<8} {g.range_lo:>6.2f}-{g.range_hi:<6.2f} {g.n_events:>6}", end="")
             for h in horizons:
                 v = g.mean_returns.get(h, 0.0)
-                print(f"  {v:>6.0f}b", end="")
+                print(f"  {v:>4.2f}", end="")
             print()
 
-        print(f"    Spearman ρ:", end="")
+        print(f"    ρ:       ", end="")
         for h in horizons:
-            r = result.spearman_corr.get(h, 0.0)
-            print(f"  {h}d={r:+.3f}", end="")
+            print(f"  {result.spearman_corr.get(h, 0.0):>+5.3f}", end="")
         print()
 
-        print(f"    Monotonic: ", end="")
+        if show_partial:
+            print(f"    partial: ", end="")
+            for h in horizons:
+                print(f"  {result.partial_corr.get(h, 0.0):>+5.3f}", end="")
+            print()
+
+        print(f"    mono:    ", end="")
         for h in horizons:
             m = result.monotonic.get(h, False)
-            print(f"  {h}d={'✅' if m else '❌'}", end="")
+            print(f"  {'  ✅' if m else '  ❌'}", end="")
         print()
 
     def run_all_strategies(

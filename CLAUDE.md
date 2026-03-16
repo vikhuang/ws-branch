@@ -114,6 +114,8 @@ These mistakes have been made before. Do NOT repeat them:
 3. **Timing alpha MUST normalize by `std(net_buy)`** — without normalization, high-volume brokers are automatically overrated
 4. **`symbol --detail N` 是淨買超明細，不是 N-day rolling PNL** — 資料來源和意義完全不同
 5. **Rolling window PNL = realized.sum() + (unrealized[end] − unrealized[start])** — `unrealized_pnl` 是存量快照，不是流量；少減 baseline 會把累計持倉損益灌入窗口排名
+6. **Selector 必須用 rolling PNL ranking（pnl_daily_df + train_end_date）** — 不得用全期間 pnl_df 選 broker，否則引入 look-ahead bias（harshreview !1+!4）
+7. **Bug 修復必須傳播到所有同 pattern 的程式碼路徑** — rolling_ranking.py 修了 unrealized baseline 但 selectors 的 helpers 沒修（harshreview !10）
 
 ## Data Conventions
 
@@ -143,20 +145,21 @@ Validated via 5-fold rolling CV (≥3/5 folds pass: sig>5%, FDR≥10, dir>60%).
 
 | # | Strategy | Selector | Filter | CV | Core Logic |
 |---|----------|----------|--------|----|------------|
-| 3 | **conviction** | top_k | 浮盈>20% 且加碼 | **5/5** | 對抗 disposition effect（最強，sig=14-21%） |
-| 7 | **contrarian_smart** | top_k | 恐慌日逆勢買 | **5/5** | 恐慌承接 = 高成本決策（最廣覆蓋 2000+ 股） |
-| 9 | **herding** | top_k | 滾動群聯分歧百分位 | **5/5** | 持續散戶群聚 + 聰明錢缺席（v3: rolling mean） |
-| 8 | **concentration** | HHI>8% | 集中券商加倉日 | **5/5** | 高信心（dir 97%，覆蓋少但品質極高） |
+| 3 | **conviction** | rolling top_k | 浮盈>20% 且加碼 | **4/5** | 對抗 disposition effect（最強，sig=13-20%） |
+| 7 | **contrarian_smart** | rolling top_k | 恐慌日逆勢買 | **5/5** | 恐慌承接 = 高成本決策（最廣覆蓋 2000+ 股） |
+| 8 | **concentration** | HHI>8% | 集中券商加倉日 | **4/5** | 高信心（dir 89-100%，覆蓋少但品質極高） |
 | 1 | **contrarian_broker** | contrast score | conviction signals | **5/5** | 局部強+全局弱 = stock-specific 資訊優勢 |
-| 2 | **dual_window** | 1yr ∩ 3yr top-K | conviction signals | **5/5** | 持續贏家加碼浮盈 |
-| 4 | **exodus** | top_k | price-context 撤退 | **3/5** | 漲後撤退→空，跌後撤退→多（v3: 方向分類） |
+| 2 | **dual_window** | 1yr ∩ 3yr rolling top-K | conviction signals | **4/5** | 持續贏家加碼浮盈 |
+| 4 | **exodus** | rolling top_k | price-context 撤退 | **3/5** | 漲後撤退→空，跌後撤退→多（v3: 方向分類） |
+| 9 | ~~herding~~ | ~~rolling top+bottom~~ | ~~滾動群聯分歧百分位~~ | ❌ **1/5** | selector bias 修正後崩掉（dir% ~56-60%） |
 | 0 | ~~large_trade_scar~~ | training SCAR top-K | test window 2σ | ❌ | 假說不成立（regression to mean，d≈0） |
 | 6 | ~~ta_regime~~ | TA z-score | large_trades | ❌ | 事件太稀疏 + 計算太慢（107min/CV） |
 | 5 | cross_stock | top_k | cluster 內≥2股同時大單 | ⏭ | 需 cluster 定義（blocked） |
 
 **注意**：contrarian_broker、dual_window 與 conviction 共用 conviction filter，信號高度相關。
-獨立信號源：conviction、contrarian_smart、herding、concentration（4 個獨立）。
-詳見 `docs/hypothesis_exploration_guide.md` 和 `data/reports/round2_report.md`。
+獨立信號源：conviction、contrarian_smart、concentration（3 個獨立）+ exodus（邊緣）。
+herding 於 v0.34.0 bias 修正後失效（1/5），selector 用全期間 PNL 是唯一支撐。
+詳見 `docs/harshreview.md` 和 `data/reports/round2_report.md`。
 
 ### Cluster Discovery（未實作，方向 D）
 

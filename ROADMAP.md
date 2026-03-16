@@ -20,18 +20,18 @@ ws-branch
 │   └── interfaces/cli.py — 10 subcommands
 │
 ├── hypothesis-exploration ✓
-│   3 rounds, 7/10 CV passed (4-5 independent signals)
-│   ├── ✓ conviction — CV 5/5, sig=14-21%, dir=75-90%（最強，行為金融基礎）
-│   ├── ✓ contrarian_smart — CV 5/5, sig=5.7-9.6%, dir=64-87%（最廣覆蓋）
-│   ├── ✓ herding — CV 5/5, sig=5.8-10.2%, dir=60-68%（v3 rolling+percentile）
-│   ├── ✓ concentration — CV 5/5, sig=6-46%, dir=61-100%（覆蓋少品質極高）
-│   ├── ✓ contrarian_broker — CV 5/5, sig=10-16%, dir=71-86%（*共用 conviction filter）
-│   ├── ✓ dual_window — CV 5/5, sig=11-26%, dir=64-87%（*共用 conviction filter）
-│   ├── ✓ exodus — CV 3/5, sig=20-34%, dir=53-80%（v3 price-context direction）
+│   3 rounds → bias fix → 6/10 CV passed (3 independent + exodus 邊緣)
+│   ├── ✓ conviction — CV 4/5, sig=13-20%, dir=63-81%（最強）
+│   ├── ✓ contrarian_smart — CV 5/5, sig=5.6-9.6%, dir=60-88%（最穩健、最廣覆蓋）
+│   ├── ✓ concentration — CV 4/5, sig=7-51%, dir=50-100%（覆蓋少品質極高）
+│   ├── ✓ contrarian_broker — CV 5/5, sig=10-15%, dir=70-89%（*共用 conviction filter）
+│   ├── ✓ dual_window — CV 4/5, sig=15-23%, dir=51-86%（*共用 conviction filter）
+│   ├── ✓ exodus — CV 3/5, sig=20-33%, dir=54-75%（v3 price-context direction）
+│   ├── ✗ herding — CV 1/5（bias 修正後崩掉，dir% ~56-60%）
 │   ├── ✗ large_trade_scar — 假說不成立（regression to mean）
 │   ├── ✗ ta_regime — 事件太稀疏 + 計算太慢
 │   └── ⏭ cross_stock — 需 cluster 定義
-│   詳見 docs/hypothesis_exploration_guide.md
+│   詳見 docs/harshreview.md
 │
 ├── hypothesis-scan ✓
 │   ├── HypothesisConfig.requires — 策略宣告資料依賴，懶載入
@@ -57,8 +57,9 @@ ws-branch
 ├── harshreview-fixes ← HERE
 │   docs/harshreview.md — 9 個系統性問題的修復
 │   ├── bias-fix ◐
-│   │   ├── !1+!4 selector look-ahead ◐ — selectors 改用 rolling ranking + train_end_date
-│   │   ├── !10 helper unrealized baseline ◐ — _rolling_top_k, _rolling_ranking_to_date 修正
+│   │   ├── !1+!4 selector look-ahead ✓ — selectors 改用 rolling ranking + train_end_date
+│   │   ├── !10 helper unrealized baseline ✓ — _rolling_top_k, _rolling_ranking_to_date 修正
+│   │   ├── CV rerun ✓ — 6/7 存活，herding 1/5 失效
 │   │   ├── !2 export 暖身期過濾 ○ — 排除 2021-2022 事件
 │   │   └── !3 export significance windowing ○ — per-fold 判定取代全期間
 │   ├── backtest-quality ○

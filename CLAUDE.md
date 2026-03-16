@@ -193,18 +193,24 @@ filter 輸出 `signal_value=1.0`（uniform）+ `signal_count` + `churn_ratio`（
 
 **結論：維持 signal_value = 1.0（uniform）。** CLI: `hypothesis --strength -s conviction`
 
-### 重要發現：Alpha 來自資訊不對稱，非市場共識
+### 觀察：Top-K 內部分歧與 Return 的關係（初步，待驗證）
 
-churn_ratio quintile analysis 揭示了 conviction/concentration 策略的 alpha 來源：
+churn_ratio = top-K broker 的 gross / net。高 churn = top-K 內部買賣方向分歧。
 
-> **高 churn（top-K 與市場方向分歧）的 conviction 事件 return 更好。**
-> **低 churn（全場同方向）的 conviction 事件 return 更差。**
+quintile 結果：conviction 事件中，**top-K 內部分歧越大，forward return 越好**（ρ=+0.022）。
+但此觀察有多項方法論瑕疵，尚未確認為可靠結論：
 
-解讀：conviction filter 篩出「浮盈加碼」的 broker。在這個條件下：
-- **高 churn = 其他 broker 在賣，conviction broker 逆勢加碼** → 私有資訊驅動，尚未反映在價格中 → alpha 高
-- **低 churn = 全場都在買，conviction broker 只是隨波逐流** → 已是市場共識，alpha 已反映在價格中 → alpha 低
+**已知問題**：
+1. **極端 outlier**：churn range 8-604,000，net≈0 時 churn 爆炸。未 winsorize。
+2. **與 n_conviction 機械性負相關**：高 n_conviction → 低 churn（定義使然）。churn 可能只是 count 的反面，無獨立新資訊。
+3. **只算 top-K 內部**：不是「聰明錢 vs 市場」，是「top-K 內部分歧」。
+4. **ρ=0.022 極弱**：統計顯著但經濟意義接近零。
 
-這驗證了 conviction 策略的行為金融基礎：**alpha 不是來自「聰明錢在買」，而是來自「聰明錢在別人都不買的時候買」。** 這也解釋了為什麼 contrarian_broker（局部強 + 全局弱）有最高的 excess Sharpe（3.36）— 它的 selector 本身就篩選了資訊不對稱的 broker。
+**待驗證**（下一階段）：
+- winsorize 或 log(churn) 後重跑，確認非 outlier 驅動
+- 控制 n_conviction 後看 churn 殘差效果（partial correlation）
+- 計算「conviction brokers vs 全體 broker」的 churn（真正的 vs-market 版本）
+- 對 quintile analysis 套用 excess return（扣大盤）和 per-stock z-score
 
 ### Cluster Discovery（未實作，方向 D）
 

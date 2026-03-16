@@ -87,9 +87,17 @@ ws-branch
 │   │   concentration: count ρ=+0.176 vs churn ρ=-0.052 → count wins
 │   │   結論：signal_value = 1.0（uniform），不加權
 │   │
-│   └── 方法論修正（deferred）
-│       ├── per-stock z-score 正規化（控制 stock effect）
-│       └── 用 excess return 取代 raw return
+│   └── 方法論修正 ○ — 下一階段必做
+│       ├── quintile 基礎修正 ○
+│       │   ├── winsorize churn_ratio（或 log 轉換，排除 outlier）
+│       │   ├── per-stock z-score 正規化（控制 stock volatility effect）
+│       │   └── 用 excess return（扣大盤）取代 raw return
+│       ├── churn 獨立性驗證 ○
+│       │   ├── partial correlation：控制 n_conviction 後 churn 殘差
+│       │   └── conviction broker vs 全體 broker 的 churn（真正 vs-market）
+│       └── signal_strength.py 修正 ○
+│           ├── analyze_strength 加 winsorize 參數
+│           └── invert 顯示邏輯改清楚（目前 group label 易誤讀）
 │
 └── (future)
     ├── cluster-discovery ○

@@ -64,7 +64,7 @@ ws-branch
 │   │   └── !3 export significance windowing ✓ — inject test_start_date 排除暖身期
 │   ├── backtest-quality ◐
 │   │   ├── !8 beta 分離 ✓ — domain/beta_analysis.py + analyze CLI
-│   │   ├── !7 重疊持倉去重 ○
+│   │   ├── !7 重疊持倉去重 ✓ — domain/event_dedup.py + --hold-days flag
 │   │   └── !5 signal_value 欄位 ○
 │   └── cross-project ○
 │       blocked: bias-fix

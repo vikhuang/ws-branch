@@ -62,9 +62,8 @@ ws-branch
 │   │   ├── CV rerun ✓ — 6/7 存活，herding 1/5 失效
 │   │   ├── !2 export 暖身期過濾 ✓ — _WARMUP_CUTOFF = 2023-01-01
 │   │   └── !3 export significance windowing ✓ — inject test_start_date 排除暖身期
-│   ├── backtest-quality ○
-│   │   blocked: bias-fix
-│   │   ├── !8 beta 分離 ○
+│   ├── backtest-quality ◐
+│   │   ├── !8 beta 分離 ✓ — domain/beta_analysis.py + analyze CLI
 │   │   ├── !7 重疊持倉去重 ○
 │   │   └── !5 signal_value 欄位 ○
 │   └── cross-project ○

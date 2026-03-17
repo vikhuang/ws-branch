@@ -116,6 +116,7 @@ These mistakes have been made before. Do NOT repeat them:
 5. **Rolling window PNL = realized.sum() + (unrealized[end] − unrealized[start])** — `unrealized_pnl` 是存量快照，不是流量；少減 baseline 會把累計持倉損益灌入窗口排名
 6. **Selector 必須用 rolling PNL ranking（pnl_daily_df + train_end_date）** — 不得用全期間 pnl_df 選 broker，否則引入 look-ahead bias（harshreview !1+!4）
 7. **Bug 修復必須傳播到所有同 pattern 的程式碼路徑** — rolling_ranking.py 修了 unrealized baseline 但 selectors 的 helpers 沒修（harshreview !10）
+8. **FIFO 的 net_shares < 0 不等於主動做空** — 台股分點資料中 broker 帳面空頭多為出貨效果。short conviction 2023+ return = -55 bps@10d（反向），已驗證失敗
 
 ## Data Conventions
 

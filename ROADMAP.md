@@ -93,11 +93,11 @@ ws-branch
 │       ├── partial Spearman（churn 控制 count）✓ → churn partial ≈ 0
 │       └── 結論：signal_value = 1.0，churn 無獨立資訊
 │
-├── short-conviction ◐ ← HERE
-│   filter_conviction_signals 對稱化：long + short conviction
-│   ├── filter 改動 ✓ — profit_ratio 用 abs(net_shares)，加 short mirror
-│   │   bias audit: selector ✅ CV windowing ✅ outcome ✅ export ✅
-│   └── CV 驗證 ○ — 重跑 conviction 5-fold CV
+├── short-conviction ✗ — 假說不成立
+│   FIFO 的 net_shares < 0 多為出貨帳面效果，非主動做空
+│   2023+ short events: direction-adjusted return = -55 bps@10d（反向）
+│   long: +197 bps@10d, win=53.9% vs short: -55 bps@10d, win=50.9%
+│   已 revert 回 long-only。需要真實做空資料才能重新嘗試
 │
 └── (future)
     ├── cluster-discovery ○

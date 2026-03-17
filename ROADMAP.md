@@ -93,6 +93,12 @@ ws-branch
 │       ├── partial Spearman（churn 控制 count）✓ → churn partial ≈ 0
 │       └── 結論：signal_value = 1.0，churn 無獨立資訊
 │
+├── short-conviction ◐ ← HERE
+│   filter_conviction_signals 對稱化：long + short conviction
+│   ├── filter 改動 ✓ — profit_ratio 用 abs(net_shares)，加 short mirror
+│   │   bias audit: selector ✅ CV windowing ✅ outcome ✅ export ✅
+│   └── CV 驗證 ○ — 重跑 conviction 5-fold CV
+│
 └── (future)
     ├── cluster-discovery ○
     │   ├── 券商共現分析 ○

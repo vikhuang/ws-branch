@@ -68,8 +68,12 @@ def filter_conviction_signals(
 ) -> pl.DataFrame:
     """Strategy 3: Adding to winning position with significant floating profit.
 
-    Conviction = broker has net_shares > 0, floating profit > min_profit_ratio,
-    AND is still buying (net_buy > 0). Requires >= min_brokers on same day.
+    Symmetric long/short:
+    - Long conviction: net_shares > 0, floating profit > 20%, still buying → direction +1
+    - Short conviction: net_shares < 0, floating profit > 20%, still selling → direction -1
+
+    profit_ratio uses abs(net_shares) so formula works for both sides.
+    Requires >= min_brokers on same day PER DIRECTION.
     params: min_brokers (int, default 3), min_profit_ratio (float, default 0.2)
     """
     min_brokers = params.get("min_brokers", 3)
@@ -93,32 +97,59 @@ def filter_conviction_signals(
         .select("broker", "date", "net_buy")
     )
 
-    conv = (
-        positions
-        .join(daily_net, on=["broker", "date"], how="inner")
+    joined = positions.join(daily_net, on=["broker", "date"], how="inner")
+
+    # Profit ratio: unrealized_pnl / (|net_shares| * avg_cost)
+    # Works for both long (net_shares>0) and short (net_shares<0)
+    joined = joined.with_columns(
+        (pl.col("unrealized_pnl")
+         / (pl.col("net_shares").abs() * pl.col("avg_cost")))
+        .alias("profit_ratio")
+    )
+
+    # Long conviction: holding long, profitable, adding more
+    long_conv = (
+        joined
         .filter(
             (pl.col("net_shares") > 0)
             & (pl.col("avg_cost") > 0)
-            & (
-                pl.col("unrealized_pnl")
-                / (pl.col("net_shares") * pl.col("avg_cost"))
-                > min_profit_ratio
-            )
+            & (pl.col("profit_ratio") > min_profit_ratio)
             & (pl.col("net_buy") > 0)
         )
         .group_by("date")
         .agg(pl.len().alias("n_conviction"))
         .filter(pl.col("n_conviction") >= min_brokers)
+        .with_columns(pl.lit(1, dtype=pl.Int8).alias("direction"))
+    )
+
+    # Short conviction: holding short, profitable, adding more shorts
+    short_conv = (
+        joined
+        .filter(
+            (pl.col("net_shares") < 0)
+            & (pl.col("avg_cost") > 0)
+            & (pl.col("profit_ratio") > min_profit_ratio)
+            & (pl.col("net_buy") < 0)
+        )
+        .group_by("date")
+        .agg(pl.len().alias("n_conviction"))
+        .filter(pl.col("n_conviction") >= min_brokers)
+        .with_columns(pl.lit(-1, dtype=pl.Int8).alias("direction"))
+    )
+
+    # Combine long + short events
+    parts = [df for df in [long_conv, short_conv] if len(df) > 0]
+    if not parts:
+        return _EMPTY_EVENTS.clone()
+
+    conv = (
+        pl.concat(parts)
         .with_columns(
-            pl.lit(1, dtype=pl.Int8).alias("direction"),
             pl.lit(1.0).alias("signal_value"),
             pl.col("n_conviction").cast(pl.Int32).alias("signal_count"),
         )
         .sort("date")
     )
-
-    if len(conv) == 0:
-        return _EMPTY_EVENTS.clone()
 
     # Attach churn ratio for event dates
     churn = compute_daily_churn(data.trade_df, brokers)

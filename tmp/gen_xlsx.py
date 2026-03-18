@@ -147,19 +147,24 @@ def process_stock(symbol: str, stock_name: str, broker_names: dict[str, str]):
         out_dir.mkdir(parents=True, exist_ok=True)
 
         count = 0
+        skipped = 0
         for snap_date in snapshot_dates:
+            out_path = out_dir / f"{symbol}_rolling_{snap_date.isoformat()}.xlsx"
+            if out_path.exists():
+                skipped += 1
+                continue
+
             ranking = compute_rolling_ranking(df, all_dates, snap_date, window_days, broker_names)
             if len(ranking) == 0:
                 continue
 
-            out_path = out_dir / f"{symbol}_rolling_{snap_date.isoformat()}.xlsx"
             ranking.write_excel(
                 out_path,
                 worksheet=f"{stock_name}{symbol}",
             )
             count += 1
 
-        print(f"  {symbol} ({stock_name}) {window_name}: {count} files → {out_dir}")
+        print(f"  {symbol} ({stock_name}) {window_name}: {count} new, {skipped} skipped → {out_dir}")
 
 
 def main():

@@ -52,7 +52,8 @@ ws-branch
 ├── rolling-window-fix ✓
 │   unrealized_pnl 是快照非流量，窗口 PNL 須減 baseline
 │   ├── rolling_ranking.py — realized.sum() + (unrealized[end] − unrealized[start])
-│   └── tmp/gen_xlsx.py, gen_5d_xlsx.py — 同步修正
+│   ├── tmp/gen_xlsx.py, gen_5d_xlsx.py — 同步修正
+│   └── tmp/gen_xlsx.py — 增量模式（跳過已存在 xlsx）
 │
 ├── harshreview-fixes ← HERE
 │   docs/harshreview.md — 9 個系統性問題的修復

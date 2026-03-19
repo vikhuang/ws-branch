@@ -170,20 +170,15 @@ Validated via 5-fold rolling CV (≥3/5 folds pass: sig>5%, FDR≥10, dir>60%).
 
 10d Excess Sharpe（扣大盤 + 去重疊持倉）是判斷真 alpha 的最終指標。
 
-| Strategy | 10d Total | 10d Excess (base) | 10d Excess (dedup) | Alpha? |
-|----------|----------|-------------------|-------------------|--------|
-| momentum_conviction | 6.36 | — | **5.12** | ✅ 最強（⚠ 樣本 260） |
-| conviction | 4.90 | 3.70 | **3.31** | ✅ 真 alpha |
-| concentration | 5.45 | 3.94 | **3.22** | ✅ 真 alpha |
-| contrarian_broker | 5.54 | 4.37 | **3.36** | ✅（*共用 conviction filter） |
-| dual_window | 4.68 | 3.11 | **2.51** | ✅（*共用 conviction filter） |
-| contrarian_smart | 2.43 | 0.64 | **-0.20** | ❌ 去重後 alpha 消失 |
-| exodus | -1.03 | -0.53 | **-0.15** | ❌ 本來就沒有 |
+| Strategy | 10d Excess (stocks-only, dedup) | Trades | Alpha? |
+|----------|-------------------------------|--------|--------|
+| momentum_conviction | **6.22** | 195 | ✅ 最強（⚠ 樣本小） |
+| conviction | **3.99** | 1,658 | ✅ 真 alpha |
+| concentration | **3.08** | 414 | ✅ 真 alpha |
 
-- 1d-5d **全部策略 excess Sharpe 為負** — 短期交易成本吃掉 alpha
+- Stocks-only（排除 564 ETF/warrant/REIT）後 Sharpe 反而更高 — ETF 事件是噪音
 - **真正有 alpha 的獨立信號**：momentum_conviction + conviction + concentration（3 個獨立）
 - momentum_conviction 的 broker 與 conviction 幾乎不重疊（Jaccard 0.03），但 74% events 重疊
-- contrarian_smart 的 CV 5/5 通過但 alpha 為零 — 統計顯著 ≠ 可交易
 - `analyze` CLI：`uv run python -m broker_analytics analyze [-s strategy] [--tag deduped]`
 
 ### Signal Strength Validation（完成，4 個候選全部否決）

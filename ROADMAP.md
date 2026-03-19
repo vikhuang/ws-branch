@@ -96,7 +96,7 @@ ws-branch
 │   │
 │   ├── persistence ✓ — 無獨立資訊（高頻率=低 alpha，rarity=value）
 │   │
-│   └── conviction_amount ◐ — 買入金額加權，驗證中
+│   └── conviction_amount ✓ — 倒 U 型（中等金額最好），非單調，partial ρ=0.027
 │
 ├── short-conviction ✗ — 假說不成立
 │   FIFO 的 net_shares < 0 多為出貨帳面效果，非主動做空

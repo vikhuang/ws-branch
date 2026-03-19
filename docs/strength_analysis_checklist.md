@@ -95,5 +95,7 @@
 | signal_count | +0.062 | — | 正確但弱 | ❌ 不足以 sizing |
 | log(churn) | +0.011 | +0.008 | ≈ 零 | ❌ 無獨立資訊 |
 | persistence | +0.027 | -0.003 | 反向（頻繁=差）| ❌ 無獨立資訊 |
+| log(amount) | +0.047 | +0.027 | 倒 U 型（中等最好）| ❌ 非單調 |
 
 **核心發現**：conviction alpha 是 binary。rarity = information value。
+金額呈倒 U 型：太小=噪音、中等=genuine、太大=crowding。

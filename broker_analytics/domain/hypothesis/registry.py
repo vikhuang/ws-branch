@@ -7,6 +7,7 @@ of selector + filter + outcome + baseline + stat_test.
 from broker_analytics.domain.hypothesis.types import HypothesisConfig
 from broker_analytics.domain.hypothesis.selectors import (
     select_by_large_trade_scar,
+    select_by_ranking_momentum,
     select_niche_top_brokers,
     select_dual_window_intersection,
     select_top_k_by_pnl,
@@ -181,6 +182,20 @@ STRATEGIES: dict[str, HypothesisConfig] = {
         baseline=baseline_unconditional,
         stat_test=stat_test_permutation,
         params={"top_k": 20, "herding_quantile": 0.05, "min_crowd_brokers": 5, "rolling_days": 5},
+        requires=frozenset({"trade_df", "pnl_daily_df", "prices"}),
+    ),
+
+    # --- Strategy 10: Ranking Momentum + Conviction ---
+    "momentum_conviction": HypothesisConfig(
+        name="momentum_conviction",
+        display_name="排名動量加碼",
+        description="Brokers who recently improved their PNL ranking AND show conviction behavior",
+        selector=select_by_ranking_momentum,
+        filter=filter_conviction_signals,
+        outcome=outcome_forward_returns,
+        baseline=baseline_unconditional,
+        stat_test=stat_test_permutation,
+        params={"top_k": 20, "min_brokers": 3, "min_profit_ratio": 0.2, "momentum_months": 6},
         requires=frozenset({"trade_df", "pnl_daily_df", "prices"}),
     ),
 }

@@ -42,6 +42,81 @@ def select_top_k_by_pnl(
     return ranking.head(top_k)["broker"].to_list()
 
 
+def select_by_ranking_momentum(
+    data: SymbolData, ctx: GlobalContext, params: dict,
+) -> BrokerList:
+    """Select brokers whose PNL ranking improved most over a lookback period.
+
+    Computes rolling PNL ranking at two points:
+    - now: train_end_date
+    - before: train_end_date - momentum_months
+    Selects brokers with largest rank improvement (rank_before - rank_now).
+
+    A broker jumping from rank 50 to rank 5 has recently acquired information
+    about this stock — a different signal from "always been top-K".
+
+    params: top_k (int, default 20), years (int, default 3),
+            momentum_months (int, default 6),
+            train_end_date (str, optional)
+    """
+    top_k = params.get("top_k", 20)
+    years = params.get("years", 3)
+    momentum_months = params.get("momentum_months", 6)
+    train_end_str = params.get("train_end_date")
+
+    if train_end_str:
+        train_end = date.fromisoformat(train_end_str)
+    else:
+        max_date = data.pnl_daily_df["date"].max() if len(data.pnl_daily_df) > 0 else None
+        if max_date is None:
+            return []
+        train_end = max_date
+
+    # Compute lookback date
+    lookback_month = train_end.month - momentum_months
+    lookback_year = train_end.year
+    while lookback_month <= 0:
+        lookback_month += 12
+        lookback_year -= 1
+    try:
+        train_before = date(lookback_year, lookback_month, train_end.day)
+    except ValueError:
+        train_before = date(lookback_year, lookback_month, 28)
+
+    # Rankings at two points
+    ranking_now = _rolling_ranking_to_date(data.pnl_daily_df, years, train_end)
+    ranking_before = _rolling_ranking_to_date(data.pnl_daily_df, years, train_before)
+
+    if len(ranking_now) == 0:
+        return []
+
+    # Assign ranks (1 = best)
+    ranking_now = ranking_now.with_row_index("rank_now", offset=1)
+    if len(ranking_before) > 0:
+        ranking_before = ranking_before.with_row_index("rank_before", offset=1)
+    else:
+        ranking_before = pl.DataFrame(schema={"broker": pl.Utf8, "rank_before": pl.UInt32})
+
+    # Join and compute improvement
+    merged = ranking_now.join(ranking_before.select("broker", "rank_before"), on="broker", how="left")
+
+    # New entrants (not in earlier ranking): assign rank_before = max + 1
+    max_rank_before = len(ranking_before) + 1
+    merged = merged.with_columns(
+        pl.col("rank_before").fill_null(max_rank_before).alias("rank_before")
+    )
+
+    # rank_change = rank_before - rank_now (positive = improved)
+    merged = merged.with_columns(
+        (pl.col("rank_before").cast(pl.Int64) - pl.col("rank_now").cast(pl.Int64))
+        .alias("rank_change")
+    )
+
+    # Select top-K by rank_change (largest improvement)
+    top = merged.sort("rank_change", descending=True).head(top_k)
+    return top["broker"].to_list()
+
+
 def select_niche_top_brokers(
     data: SymbolData, ctx: GlobalContext, params: dict,
 ) -> BrokerList:

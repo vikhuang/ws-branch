@@ -416,14 +416,14 @@ class TestStatTests:
 class TestRegistry:
     """Tests for strategy registry."""
 
-    def test_ten_strategies(self):
-        assert len(STRATEGIES) == 10
+    def test_strategy_count(self):
+        assert len(STRATEGIES) == 11
 
     def test_list_strategies(self):
         names = list_strategies()
-        assert len(names) == 10
+        assert len(names) == 11
         assert "contrarian_broker" in names
-        assert "herding" in names
+        assert "momentum_conviction" in names
 
     def test_get_strategy(self):
         cfg = get_strategy("contrarian_broker")

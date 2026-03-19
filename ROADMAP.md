@@ -98,6 +98,11 @@ ws-branch
 │   │
 │   └── conviction_amount ✓ — 倒 U 型（中等金額最好），非單調，partial ρ=0.027
 │
+├── momentum-conviction ✓ — CV 4/5, excess Sharpe 5.12@10d (dedup)
+│   select_by_ranking_momentum: 6 個月排名躍升 broker × conviction filter
+│   Broker Jaccard 0.03 vs conviction（獨立 selector）
+│   ⚠ 樣本小（260 trades deduped）、74% event overlap with conviction
+│
 ├── short-conviction ✗ — 假說不成立
 │   FIFO 的 net_shares < 0 多為出貨帳面效果，非主動做空
 │   2023+ short events: direction-adjusted return = -55 bps@10d（反向）

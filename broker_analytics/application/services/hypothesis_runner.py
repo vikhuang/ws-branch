@@ -8,6 +8,7 @@ import sys
 import time
 from dataclasses import replace
 from datetime import date
+from pathlib import Path
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
 import numpy as np
@@ -42,11 +43,31 @@ class HypothesisRunner:
         >>> print(result.conclusion)
     """
 
+    # Path to tickers file for stock-only filtering
+    _TICKERS_PATH = Path.home() / "r20/data/tickers/tw.parquet"
+
     def __init__(self, paths: DataPaths = DEFAULT_PATHS):
         self._paths = paths
         self._trade_repo = TradeRepository(paths)
         self._price_repo = PriceRepository(paths)
         self._global_ctx: GlobalContext | None = None
+        self._valid_stocks: set[str] | None = None
+
+    def _list_stock_symbols(self) -> list[str]:
+        """List symbols filtered to listed stocks only (no ETF/warrant/REIT).
+
+        Uses tickers_tw from ws-admin to filter. Falls back to all symbols
+        if tickers file not available.
+        """
+        all_symbols = self._paths.list_symbols()
+        if self._valid_stocks is None:
+            if self._TICKERS_PATH.exists():
+                import polars as pl
+                tw = pl.read_parquet(self._TICKERS_PATH, columns=["ticker_local"])
+                self._valid_stocks = set(tw["ticker_local"].to_list())
+            else:
+                return all_symbols
+        return [s for s in all_symbols if s in self._valid_stocks]
 
     def run_single(
         self,
@@ -135,7 +156,7 @@ class HypothesisRunner:
             merged_params = {**config.params, **params_override}
             config = replace(config, params=merged_params)
         requires = config.requires
-        all_symbols = self._paths.list_symbols()
+        all_symbols = self._list_stock_symbols()
         n_total = len(all_symbols)
 
         print(f"【全市場掃描】{config.name}（{config.display_name}）")
@@ -243,7 +264,7 @@ class HypothesisRunner:
         print(f"{'='*60}")
 
         requires = config.requires
-        all_symbols = self._paths.list_symbols()
+        all_symbols = self._list_stock_symbols()
         n_total = len(all_symbols)
 
         # Pre-warm caches
@@ -373,7 +394,7 @@ class HypothesisRunner:
             config = replace(config, params=merged_params)
 
         requires = config.requires
-        all_symbols = self._paths.list_symbols()
+        all_symbols = self._list_stock_symbols()
         n_total = len(all_symbols)
 
         print(f"【信號匯出】{config.name}（{config.display_name}）")
@@ -518,7 +539,7 @@ class HypothesisRunner:
 
         config = get_strategy(strategy_name)
         requires = config.requires
-        all_symbols = self._paths.list_symbols()
+        all_symbols = self._list_stock_symbols()
         n_total = len(all_symbols)
 
         print(f"【信號強度分析 v2】{config.name}（{config.display_name}）")

@@ -514,6 +514,7 @@ class HypothesisRunner:
         """
         from broker_analytics.domain.signal_strength import analyze_strength
         from broker_analytics.domain.forward_returns import compute_forward_returns
+        from broker_analytics.domain.event_persistence import compute_event_persistence
 
         config = get_strategy(strategy_name)
         requires = config.requires
@@ -604,15 +605,22 @@ class HypothesisRunner:
                                 (pl.col(col) / horizon_std_bps).alias(col)
                             )
 
-            # Join signal metadata
-            meta_cols = ["date", "signal_count"]
-            if "churn_ratio" in events.columns:
-                meta_cols.append("churn_ratio")
-            ret_df = ret_df.join(events.select(meta_cols), on="date", how="inner")
+            # Compute event persistence (trailing event count per symbol)
+            events_with_persist = compute_event_persistence(events)
 
-            # Log-transform churn_ratio (natural for ratios spanning orders of magnitude)
+            # Join signal metadata
+            meta_cols = ["date", "signal_count", "persistence"]
+            if "churn_ratio" in events_with_persist.columns:
+                meta_cols.append("churn_ratio")
+            ret_df = ret_df.join(
+                events_with_persist.select(
+                    [c for c in meta_cols if c in events_with_persist.columns]
+                ),
+                on="date", how="inner",
+            )
+
+            # Log-transform churn_ratio
             if "churn_ratio" in ret_df.columns:
-                import math
                 ret_df = ret_df.with_columns(
                     pl.col("churn_ratio").log().alias("log_churn")
                 )
@@ -656,12 +664,31 @@ class HypothesisRunner:
                 self._print_strength_result(r_churn, horizons, show_partial=True)
                 results["log_churn"] = r_churn
 
-                print(f"\n  ── 比較 ──")
+                print(f"\n  ── 比較 (count vs churn) ──")
                 for h in horizons:
                     rc = r_count.spearman_corr.get(h, 0.0)
                     rch = r_churn.spearman_corr.get(h, 0.0)
                     rch_p = r_churn.partial_corr.get(h, 0.0)
                     print(f"  {h}d: count ρ={rc:+.3f}  churn ρ={rch:+.3f}  churn partial={rch_p:+.3f}")
+
+        # Analyze persistence (trailing event count)
+        if "persistence" in combined.columns:
+            valid_persist = combined.filter(pl.col("persistence").is_not_null())
+            if len(valid_persist) > 100:
+                print(f"\n  ── persistence（過去 5 交易日事件次數）+ partial corr 控制 count ──")
+                r_persist = analyze_strength(
+                    valid_persist, n_groups=n_groups, horizons=horizons,
+                    group_col="persistence", confound_col="signal_count",
+                )
+                self._print_strength_result(r_persist, horizons, show_partial=True)
+                results["persistence"] = r_persist
+
+                print(f"\n  ── 比較 (count vs persistence) ──")
+                for h in horizons:
+                    rc = r_count.spearman_corr.get(h, 0.0)
+                    rp = r_persist.spearman_corr.get(h, 0.0)
+                    rp_p = r_persist.partial_corr.get(h, 0.0)
+                    print(f"  {h}d: count ρ={rc:+.3f}  persist ρ={rp:+.3f}  persist partial={rp_p:+.3f}")
 
         return results
 

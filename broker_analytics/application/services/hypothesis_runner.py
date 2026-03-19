@@ -610,8 +610,9 @@ class HypothesisRunner:
 
             # Join signal metadata
             meta_cols = ["date", "signal_count", "persistence"]
-            if "churn_ratio" in events_with_persist.columns:
-                meta_cols.append("churn_ratio")
+            for opt_col in ["churn_ratio", "conviction_amount"]:
+                if opt_col in events_with_persist.columns:
+                    meta_cols.append(opt_col)
             ret_df = ret_df.join(
                 events_with_persist.select(
                     [c for c in meta_cols if c in events_with_persist.columns]
@@ -619,10 +620,14 @@ class HypothesisRunner:
                 on="date", how="inner",
             )
 
-            # Log-transform churn_ratio
+            # Log-transform ratio/amount columns
             if "churn_ratio" in ret_df.columns:
                 ret_df = ret_df.with_columns(
                     pl.col("churn_ratio").log().alias("log_churn")
+                )
+            if "conviction_amount" in ret_df.columns:
+                ret_df = ret_df.with_columns(
+                    (pl.col("conviction_amount") + 1).log().alias("log_amount")
                 )
 
             all_events.append(ret_df)
@@ -689,6 +694,27 @@ class HypothesisRunner:
                     rp = r_persist.spearman_corr.get(h, 0.0)
                     rp_p = r_persist.partial_corr.get(h, 0.0)
                     print(f"  {h}d: count ρ={rc:+.3f}  persist ρ={rp:+.3f}  persist partial={rp_p:+.3f}")
+
+        # Analyze conviction_amount (log-transformed)
+        if "log_amount" in combined.columns:
+            valid_amt = combined.filter(
+                pl.col("log_amount").is_not_null() & pl.col("log_amount").is_finite()
+            )
+            if len(valid_amt) > 100:
+                print(f"\n  ── log(conviction_amount)（買入總金額）+ partial corr 控制 count ──")
+                r_amt = analyze_strength(
+                    valid_amt, n_groups=n_groups, horizons=horizons,
+                    group_col="log_amount", confound_col="signal_count",
+                )
+                self._print_strength_result(r_amt, horizons, show_partial=True)
+                results["log_amount"] = r_amt
+
+                print(f"\n  ── 比較 (count vs amount) ──")
+                for h in horizons:
+                    rc = r_count.spearman_corr.get(h, 0.0)
+                    ra = r_amt.spearman_corr.get(h, 0.0)
+                    ra_p = r_amt.partial_corr.get(h, 0.0)
+                    print(f"  {h}d: count ρ={rc:+.3f}  amount ρ={ra:+.3f}  amount partial={ra_p:+.3f}")
 
         return results
 

@@ -88,11 +88,15 @@ ws-branch
 │   │   concentration: count ρ=+0.176 vs churn ρ=-0.052 → count wins
 │   │   結論：signal_value = 1.0（uniform），不加權
 │   │
-│   └── 方法論修正 ✓ — v2 推翻 v1「churn 反向」artifact
-│       ├── excess return + per-stock z-score ✓
-│       ├── log(churn) + winsorize 1%/99% ✓
-│       ├── partial Spearman（churn 控制 count）✓ → churn partial ≈ 0
-│       └── 結論：signal_value = 1.0，churn 無獨立資訊
+│   ├── 方法論修正 ✓ — v2 推翻 v1「churn 反向」artifact
+│   │   ├── excess return + per-stock z-score ✓
+│   │   ├── log(churn) + winsorize 1%/99% ✓
+│   │   ├── partial Spearman（churn 控制 count）✓ → churn partial ≈ 0
+│   │   └── 結論：signal_value = 1.0，churn 無獨立資訊
+│   │
+│   ├── persistence ✓ — 無獨立資訊（高頻率=低 alpha，rarity=value）
+│   │
+│   └── conviction_amount ◐ — 買入金額加權，驗證中
 │
 ├── short-conviction ✗ — 假說不成立
 │   FIFO 的 net_shares < 0 多為出貨帳面效果，非主動做空

@@ -19,7 +19,7 @@ from broker_analytics.domain.hypothesis.position import derive_positions
 _EMPTY_EVENTS = pl.DataFrame(schema={
     "date": pl.Date, "direction": pl.Int8,
     "signal_value": pl.Float64, "signal_count": pl.Int32,
-    "churn_ratio": pl.Float64,
+    "churn_ratio": pl.Float64, "conviction_amount": pl.Float64,
 })
 
 
@@ -85,14 +85,14 @@ def filter_conviction_signals(
     if len(positions) == 0:
         return _EMPTY_EVENTS.clone()
 
-    # Join with daily trades to get net_buy
+    # Join with daily trades to get net_buy + buy_amount
     daily_net = (
         data.trade_df
         .with_columns(
             pl.col("broker").cast(pl.Utf8),
             (pl.col("buy_shares") - pl.col("sell_shares")).alias("net_buy"),
         )
-        .select("broker", "date", "net_buy")
+        .select("broker", "date", "net_buy", "buy_amount")
     )
 
     conv = (
@@ -109,7 +109,10 @@ def filter_conviction_signals(
             & (pl.col("net_buy") > 0)
         )
         .group_by("date")
-        .agg(pl.len().alias("n_conviction"))
+        .agg(
+            pl.len().alias("n_conviction"),
+            pl.col("buy_amount").sum().alias("conviction_amount"),
+        )
         .filter(pl.col("n_conviction") >= min_brokers)
         .with_columns(
             pl.lit(1, dtype=pl.Int8).alias("direction"),
@@ -125,7 +128,7 @@ def filter_conviction_signals(
         churn.select("date", "churn_ratio"), on="date", how="left",
     ).with_columns(pl.col("churn_ratio").fill_null(1.0))
 
-    return conv.select("date", "direction", "signal_value", "signal_count", "churn_ratio")
+    return conv.select("date", "direction", "signal_value", "signal_count", "churn_ratio", "conviction_amount")
 
 
 def filter_collective_exodus(

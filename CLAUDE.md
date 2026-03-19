@@ -117,6 +117,8 @@ These mistakes have been made before. Do NOT repeat them:
 6. **Selector 必須用 rolling PNL ranking（pnl_daily_df + train_end_date）** — 不得用全期間 pnl_df 選 broker，否則引入 look-ahead bias（harshreview !1+!4）
 7. **Bug 修復必須傳播到所有同 pattern 的程式碼路徑** — rolling_ranking.py 修了 unrealized baseline 但 selectors 的 helpers 沒修（harshreview !10）
 8. **FIFO 的 net_shares < 0 不等於主動做空** — 台股分點資料中 broker 帳面空頭多為出貨效果。short conviction 2023+ return = -55 bps@10d（反向），已驗證失敗
+9. **Selector + Filter 是不可分割的 Alpha Hypothesis** — 共用 filter code ≠ 信號不獨立。「誰做了什麼」是完整假說，不能拆成 Universe × Factor
+10. **10d hold period 是統計驗證的最優值** — 不是「預設值」。從 {1,5,10,20} 中選出，10d excess Sharpe 最高且 beta 佔比最低。動態出場（技術指標）是未驗證的新假說
 
 ## Data Conventions
 

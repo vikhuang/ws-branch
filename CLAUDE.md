@@ -141,8 +141,9 @@ Types: `feat`, `fix`, `refactor`, `docs`, `test`, `perf`, `chore`
 
 ## Hypothesis Strategy Design
 
-10 strategies follow a 5-step pipeline: Selector → Filter → Outcome → Baseline → StatTest.
+11 strategies follow a 5-step pipeline: Selector → Filter → Outcome → Baseline → StatTest.
 Validated via 5-fold rolling CV (≥3/5 folds pass: sig>5%, FDR≥10, dir>60%).
+**Stocks-only**: ETF/warrant/REIT excluded via tickers_tw（2,305 上市櫃股票，排除 564 非股票）。
 
 | # | Strategy | Selector | Filter | CV | Core Logic |
 |---|----------|----------|--------|----|------------|

@@ -313,23 +313,23 @@ Selector → Filter → Outcome → Baseline → StatTest
 
 每步是純函數，策略只是「五個函數的組合 + 參數」，新增策略零改框架。
 
-**11 策略**（經 5-fold CV + bias 修正 + beta 分離 + 去重疊持倉驗證）：
+**11 策略**（5-fold CV + bias fix + beta 分離 + dedup + stocks-only）：
 
-| # | 策略 | CV | 10d Excess Sharpe | 說明 |
-|---|------|----|-------------------|------|
-| 10 | `momentum_conviction` | **4/5** | **5.12** ✅ | 排名躍升 broker × conviction（⚠ 樣本小） |
-| 3 | `conviction` | **4/5** | **3.31** ✅ | 績優券商浮盈 >20% 仍加碼 |
-| 8 | `concentration` | **4/5** | **3.22** ✅ | 持倉高度集中的券商加碼 |
-| 1 | `contrarian_broker` | **5/5** | **3.36** ✅ | 全市場差但個股強的反差券商（*共用 conviction filter） |
-| 2 | `dual_window` | **4/5** | **2.51** ✅ | 1yr ∩ 3yr PNL 交集持續贏家（*共用 conviction filter） |
-| 7 | ~~`contrarian_smart`~~ | 5/5 | -0.20 ❌ | CV 通過但去重後 alpha 消失 |
-| 4 | ~~`exodus`~~ | 3/5 | -0.15 ❌ | 波動率信號，非方向性 |
-| 9 | ~~`herding`~~ | ❌ 1/5 | — | selector bias 修正後崩掉 |
-| 0 | ~~`large_trade_scar`~~ | ❌ | — | 假說不成立 |
-| 6 | ~~`ta_regime`~~ | ❌ | — | 事件太稀疏 |
-| 5 | `cross_stock` | ⏭ | — | 需 cluster 定義 |
+| # | 策略 | CV | 10d Excess Sharpe | Trades | 說明 |
+|---|------|----|-------------------|--------|------|
+| 10 | `momentum_conviction` | **4/5** | **6.22** ✅ | 195 | 排名躍升 broker × conviction（⚠ 樣本小） |
+| 3 | `conviction` | **4/5** | **3.99** ✅ | 1,658 | 績優券商浮盈 >20% 仍加碼 |
+| 8 | `concentration` | **4/5** | **3.08** ✅ | 414 | 持倉高度集中的券商加碼 |
+| 1 | `contrarian_broker` | **5/5** | — | — | 全市場差但個股強（*共用 conviction filter） |
+| 2 | `dual_window` | **4/5** | — | — | 1yr ∩ 3yr PNL 交集（*共用 conviction filter） |
+| 7 | ~~`contrarian_smart`~~ | 5/5 | -0.20 ❌ | — | CV 通過但去重後 alpha 消失 |
+| 4 | ~~`exodus`~~ | 3/5 | -0.15 ❌ | — | 波動率信號，非方向性 |
+| 9 | ~~`herding`~~ | ❌ 1/5 | — | — | selector bias 修正後崩掉 |
+| 0 | ~~`large_trade_scar`~~ | ❌ | — | — | 假說不成立 |
+| 6 | ~~`ta_regime`~~ | ❌ | — | — | 事件太稀疏 |
+| 5 | `cross_stock` | ⏭ | — | — | 需 cluster 定義 |
 
-Excess Sharpe = 扣大盤 + 去重疊持倉後的 Sharpe ratio（10d hold）。
+Excess Sharpe = stocks-only（排除 ETF/warrant/REIT）+ 扣大盤 + dedup 10d。
 獨立 alpha 來源：momentum_conviction + conviction + concentration（3 個獨立）。
 詳見 `docs/harshreview.md` 和 `CLAUDE.md`。
 

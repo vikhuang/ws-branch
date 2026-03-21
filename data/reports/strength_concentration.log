@@ -1,0 +1,14 @@
+
+【信號強度分析】concentration（持倉集中度）
+  股票數：2869，分組數：3
+
+  完成：39s，34677 events from 119 symbols
+
+  Group         Count      N  1d avg  5d avg  10d avg  20d avg
+  ──────── ────────── ──────  ───────  ───────  ───────  ───────
+  G1          1-2      29866      20b     103b     219b     425b
+  G2          2-85      4811      25b     129b     247b     488b
+
+  Spearman ρ:  1d=+0.158  5d=+0.169  10d=+0.176  20d=+0.178
+  Monotonic:   1d=✅  5d=✅  10d=✅  20d=✅
+  Top-Bottom:  1d=+5b  5d=+26b  10d=+28b  20d=+63b

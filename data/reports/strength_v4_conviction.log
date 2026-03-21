@@ -1,0 +1,59 @@
+  [1000/2869]  34.9%  2867                 有結果=416  25.6/s  ETA 73s  [1500/2869]  52.3%  4533                 有結果=670  24.4/s  ETA 56s  [2000/2869]  69.7%  6425                 有結果=915  24.4/s  ETA 36s
+【信號強度分析 v2】conviction（加碼信號）
+  股票數：2869，分組數：3
+  修正：excess return + per-stock z-score + winsorize + partial corr
+
+  完成：106s，41466 events from 1191 symbols
+  Returns: excess (扣 IX0001) + per-stock z-scored
+
+  ── signal_count（broker 數量）──
+    Group             Range      N    1d    5d   10d   20d
+    G1         3.00-5.00    32561  0.07  0.16  0.40  -0.02
+    G2         5.00-11.00    8905  0.16  0.27  0.49  0.08
+    ρ:         +0.056  +0.066  +0.061  +0.070
+    mono:        ✅    ✅    ✅    ✅
+
+  ── log(churn_ratio)（高=分歧）+ partial corr 控制 count ──
+    Group             Range      N    1d    5d   10d   20d
+    G1         0.05-1.20    13822  0.12  0.09  0.52  -0.14
+    G2         1.20-2.11    13822  0.03  0.07  0.28  0.05
+    G3         2.11-5.72    13822  0.12  0.40  0.45  0.09
+    ρ:         -0.004  +0.001  +0.012  +0.018
+    partial:   -0.007  -0.003  +0.009  +0.014
+    mono:        ❌    ❌    ❌    ✅
+
+  ── 比較 (count vs churn) ──
+  1d: count ρ=+0.056  churn ρ=-0.004  churn partial=-0.007
+  5d: count ρ=+0.066  churn ρ=+0.001  churn partial=-0.003
+  10d: count ρ=+0.061  churn ρ=+0.012  churn partial=+0.009
+  20d: count ρ=+0.070  churn ρ=+0.018  churn partial=+0.014
+
+  ── persistence（過去 5 交易日事件次數）+ partial corr 控制 count ──
+    Group             Range      N    1d    5d   10d   20d
+    G1         1.00-3.00    19556  0.17  0.20  0.56  -0.05
+    G2         3.00-5.00    14087  0.00  0.23  0.42  0.05
+    G3         5.00-6.00     7823  0.05  0.07  0.06  0.06
+    ρ:         +0.038  +0.033  +0.026  +0.038
+    partial:   +0.013  +0.002  -0.003  +0.005
+    mono:        ❌    ❌    ❌    ✅
+
+  ── 比較 (count vs persistence) ──
+  1d: count ρ=+0.056  persist ρ=+0.038  persist partial=+0.013
+  5d: count ρ=+0.066  persist ρ=+0.033  persist partial=+0.002
+  10d: count ρ=+0.061  persist ρ=+0.026  persist partial=-0.003
+  20d: count ρ=+0.070  persist ρ=+0.038  persist partial=+0.005
+
+  ── log(conviction_amount)（買入總金額）+ partial corr 控制 count ──
+    Group             Range      N    1d    5d   10d   20d
+    G1        10.04-14.34   13822  -0.02  0.01  0.01  -0.02
+    G2        14.34-16.50   13822  0.22  0.43  1.11  -0.13
+    G3        16.50-21.08   13822  0.07  0.12  0.14  0.16
+    ρ:         +0.024  +0.035  +0.047  +0.060
+    partial:   +0.004  +0.012  +0.027  +0.038
+    mono:        ❌    ❌    ❌    ❌
+
+  ── 比較 (count vs amount) ──
+  1d: count ρ=+0.056  amount ρ=+0.024  amount partial=+0.004
+  5d: count ρ=+0.066  amount ρ=+0.035  amount partial=+0.012
+  10d: count ρ=+0.061  amount ρ=+0.047  amount partial=+0.027
+  20d: count ρ=+0.070  amount ρ=+0.060  amount partial=+0.038

@@ -1,0 +1,44 @@
+  [1000/2869]  34.9%  2867                 有結果=416  22.3/s  ETA 84s  [1500/2869]  52.3%  4533                 有結果=671  21.9/s  ETA 62s  [2000/2869]  69.7%  6425                 有結果=914  22.2/s  ETA 39s
+【信號強度分析 v2】conviction（加碼信號）
+  股票數：2869，分組數：3
+  修正：excess return + per-stock z-score + winsorize + partial corr
+
+  完成：115s，41630 events from 1187 symbols
+  Returns: excess (扣 IX0001) + per-stock z-scored
+
+  ── signal_count（broker 數量）──
+    Group             Range      N    1d    5d   10d   20d
+    G1         3.00-5.00    32774  0.07  0.16  0.39  -0.01
+    G2         5.00-11.00    8856  0.17  0.27  0.50  0.08
+    ρ:         +0.056  +0.066  +0.062  +0.071
+    mono:        ✅    ✅    ✅    ✅
+
+  ── log(churn_ratio)（高=分歧）+ partial corr 控制 count ──
+    Group             Range      N    1d    5d   10d   20d
+    G1         0.05-1.20    13877  0.11  0.09  0.52  -0.14
+    G2         1.20-2.11    13876  0.04  0.07  0.28  0.05
+    G3         2.11-5.71    13877  0.11  0.40  0.45  0.10
+    ρ:         -0.004  +0.003  +0.011  +0.021
+    partial:   -0.008  -0.001  +0.008  +0.017
+    mono:        ❌    ❌    ❌    ✅
+
+  ── 比較 (count vs churn) ──
+  1d: count ρ=+0.056  churn ρ=-0.004  churn partial=-0.008
+  5d: count ρ=+0.066  churn ρ=+0.003  churn partial=-0.001
+  10d: count ρ=+0.062  churn ρ=+0.011  churn partial=+0.008
+  20d: count ρ=+0.071  churn ρ=+0.021  churn partial=+0.017
+
+  ── persistence（過去 5 交易日事件次數）+ partial corr 控制 count ──
+    Group             Range      N    1d    5d   10d   20d
+    G1         1.00-3.00    19632  0.17  0.20  0.55  -0.05
+    G2         3.00-5.00    14159  0.00  0.23  0.42  0.05
+    G3         5.00-6.00     7839  0.05  0.07  0.06  0.06
+    ρ:         +0.038  +0.034  +0.027  +0.039
+    partial:   +0.013  +0.003  -0.003  +0.005
+    mono:        ❌    ❌    ❌    ✅
+
+  ── 比較 (count vs persistence) ──
+  1d: count ρ=+0.056  persist ρ=+0.038  persist partial=+0.013
+  5d: count ρ=+0.066  persist ρ=+0.034  persist partial=+0.003
+  10d: count ρ=+0.062  persist ρ=+0.027  persist partial=-0.003
+  20d: count ρ=+0.071  persist ρ=+0.039  persist partial=+0.005

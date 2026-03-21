@@ -1,0 +1,26 @@
+  [1000/2869]  34.9%  2867                 有結果=410  26.6/s  ETA 70s  [1500/2869]  52.3%  4533                 有結果=659  25.4/s  ETA 54s  [2000/2869]  69.7%  6425                 有結果=896  25.1/s  ETA 35s
+【信號強度分析】conviction（加碼信號）
+  股票數：2869，分組數：3
+
+  完成：103s，40734 events from 1163 symbols
+
+  ── signal_count（broker 數量）──
+    Group           Range      N  1d avg  5d avg  10d avg  20d avg
+    G1         3.0-5.0    32153      17b      94b     191b     342b
+    G2         5.0-19.0    8581      22b     103b     208b     383b
+    Spearman ρ:  1d=+0.049  5d=+0.055  10d=+0.056  20d=+0.068
+    Monotonic:   1d=✅  5d=✅  10d=✅  20d=✅
+
+  ── churn_ratio（方向一致性，低=強）──
+    Group           Range      N  1d avg  5d avg  10d avg  20d avg
+    G1         8.0-604000.0  13578      21b     107b     231b     426b
+    G2         3.0-8.0    13578      16b      93b     197b     369b
+    G3         0.0-3.0    13578      17b      88b     156b     258b
+    Spearman ρ:  1d=+0.003  5d=-0.004  10d=-0.022  20d=-0.035
+    Monotonic:   1d=❌  5d=✅  10d=✅  20d=✅
+
+  ── 比較 ──
+  1d: count ρ=+0.049 vs churn ρ=+0.003 → count wins
+  5d: count ρ=+0.055 vs churn ρ=-0.004 → count wins
+  10d: count ρ=+0.056 vs churn ρ=-0.022 → count wins
+  20d: count ρ=+0.068 vs churn ρ=-0.035 → count wins

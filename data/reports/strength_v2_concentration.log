@@ -1,0 +1,29 @@
+
+【信號強度分析 v2】concentration（持倉集中度）
+  股票數：2869，分組數：3
+  修正：excess return + per-stock z-score + winsorize + partial corr
+
+  完成：44s，34677 events from 119 symbols
+  Returns: excess (扣 IX0001) + per-stock z-scored
+
+  ── signal_count（broker 數量）──
+    Group             Range      N    1d    5d   10d   20d
+    G1         1.00-2.00    29866  0.19  1.10  2.27  1.08
+    G2         2.00-52.00    4811  0.04  0.11  0.15  0.20
+    ρ:         +0.161  +0.179  +0.192  +0.203
+    mono:        ❌    ❌    ❌    ❌
+
+  ── log(churn_ratio)（高=分歧）+ partial corr 控制 count ──
+    Group             Range      N    1d    5d   10d   20d
+    G1        -0.10-0.25    11559  0.36  1.80  3.26  1.32
+    G2         0.25-1.27    11559  0.05  0.19  0.78  1.35
+    G3         1.27-5.91    11559  0.10  0.89  1.89  0.19
+    ρ:         +0.008  +0.037  +0.059  +0.081
+    partial:   -0.053  -0.030  -0.010  +0.009
+    mono:        ❌    ❌    ❌    ❌
+
+  ── 比較 ──
+  1d: count ρ=+0.161  churn ρ=+0.008  churn partial=-0.053
+  5d: count ρ=+0.179  churn ρ=+0.037  churn partial=-0.030
+  10d: count ρ=+0.192  churn ρ=+0.059  churn partial=-0.010
+  20d: count ρ=+0.203  churn ρ=+0.081  churn partial=+0.009

@@ -1,0 +1,26 @@
+
+【信號強度分析】concentration（持倉集中度）
+  股票數：2869，分組數：3
+
+  完成：39s，34677 events from 119 symbols
+
+  ── signal_count（broker 數量）──
+    Group           Range      N  1d avg  5d avg  10d avg  20d avg
+    G1         1.0-2.0    29866      20b     103b     219b     425b
+    G2         2.0-85.0    4811      25b     129b     247b     488b
+    Spearman ρ:  1d=+0.158  5d=+0.169  10d=+0.176  20d=+0.178
+    Monotonic:   1d=✅  5d=✅  10d=✅  20d=✅
+
+  ── churn_ratio（方向一致性，低=強）──
+    Group           Range      N  1d avg  5d avg  10d avg  20d avg
+    G1         3.0-498000.0  11559      27b     133b     285b     535b
+    G2         1.0-3.0    11559      21b     113b     234b     453b
+    G3         0.0-1.0    11559      14b      73b     150b     315b
+    Spearman ρ:  1d=-0.005  5d=-0.030  10d=-0.052  20d=-0.065
+    Monotonic:   1d=✅  5d=✅  10d=✅  20d=✅
+
+  ── 比較 ──
+  1d: count ρ=+0.158 vs churn ρ=-0.005 → count wins
+  5d: count ρ=+0.169 vs churn ρ=-0.030 → count wins
+  10d: count ρ=+0.176 vs churn ρ=-0.052 → count wins
+  20d: count ρ=+0.178 vs churn ρ=-0.065 → count wins

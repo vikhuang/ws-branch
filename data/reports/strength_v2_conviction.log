@@ -1,0 +1,29 @@
+  [1000/2869]  34.9%  2867                 有結果=410  21.8/s  ETA 86s  [1500/2869]  52.3%  4533                 有結果=659  21.5/s  ETA 64s  [2000/2869]  69.7%  6425                 有結果=896  21.6/s  ETA 40s
+【信號強度分析 v2】conviction（加碼信號）
+  股票數：2869，分組數：3
+  修正：excess return + per-stock z-score + winsorize + partial corr
+
+  完成：123s，40734 events from 1163 symbols
+  Returns: excess (扣 IX0001) + per-stock z-scored
+
+  ── signal_count（broker 數量）──
+    Group             Range      N    1d    5d   10d   20d
+    G1         3.00-5.00    32153  0.07  0.25  0.25  -0.01
+    G2         5.00-11.00    8581  0.04  0.08  0.09  0.08
+    ρ:         +0.058  +0.066  +0.062  +0.071
+    mono:        ❌    ❌    ❌    ✅
+
+  ── log(churn_ratio)（高=分歧）+ partial corr 控制 count ──
+    Group             Range      N    1d    5d   10d   20d
+    G1         0.05-1.19    13578  0.07  0.03  0.13  -0.14
+    G2         1.19-2.11    13578  -0.07  0.22  0.06  0.06
+    G3         2.11-5.69    13578  0.19  0.40  0.46  0.10
+    ρ:         -0.002  +0.003  +0.015  +0.026
+    partial:   -0.005  -0.001  +0.012  +0.022
+    mono:        ❌    ✅    ❌    ✅
+
+  ── 比較 ──
+  1d: count ρ=+0.058  churn ρ=-0.002  churn partial=-0.005
+  5d: count ρ=+0.066  churn ρ=+0.003  churn partial=-0.001
+  10d: count ρ=+0.062  churn ρ=+0.015  churn partial=+0.012
+  20d: count ρ=+0.071  churn ρ=+0.026  churn partial=+0.022

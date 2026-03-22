@@ -1,1418 +1,1040 @@
 ---
-title: "2489 瑞軒 處置期間研究報告"
+title: "2489 瑞軒 處置期間戰場全解析"
 subtitle: "2026/2/23 ~ 3/20 連續漲停、處置交易、與崩盤全紀錄"
-date: "2026-03-21"
+date: "2026-03-22"
 format:
   html:
     self-contained: true
     toc: true
     toc-depth: 3
-    code-fold: true
-    code-summary: "顯示程式碼"
     theme: cosmo
-    fig-width: 10
-    fig-height: 6
-execute:
-  warning: false
-  echo: true
 ---
 
-```{python}
-#| label: setup
-#| code-fold: true
 
-import polars as pl
-import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
-import matplotlib.ticker as mticker
-from matplotlib.patches import Rectangle
-from datetime import date, timedelta
-import numpy as np
-
-plt.rcParams["font.family"] = ["Arial Unicode MS", "Heiti TC", "sans-serif"]
-plt.rcParams["axes.unicode_minus"] = False
-plt.rcParams["figure.dpi"] = 120
-
-DATA_DIR = "2489_disposition_data"
-
-def lots(shares: int) -> float:
-    """股 → 張"""
-    return shares / 1000
-
-def fmt_lots(v: float) -> str:
-    """格式化張數"""
-    if abs(v) >= 1000:
-        return f"{v:,.0f}"
-    return f"{v:,.1f}"
-```
-
-# 摘要
-
-2489 瑞軒於 2026 年 2 月 23 日至 2 月 26 日連續四根漲停（29.8 → 39.6，漲幅 +32.9%），觸發交易所處置機制。處置期間自 3 月 2 日至 3 月 18 日共 13 個交易日，期間採**每 20 分鐘集合競價一次**的第二級處置措施，每日僅有約 15 筆實際成交。
-
-處置期間最關鍵的發現：
-
-- **聰明錢（3 年滾動 PNL Top-20）在處置期間大量出貨**，累計淨賣超 12,016 張
-- **散戶與績差券商（Bottom-20）則大舉接貨**，分別淨買超 5,230 張與 5,780 張
-- 3/19 處置解除首日即漲停（42.9），但**隔日 3/20 發生劇烈崩盤**：開盤 47.15，11 分鐘內暴跌至 38.65（-18.0%），成交量爆增至 23.8% 週轉率
-- 處置期間的最大累積買方 8880（+7,761 張）與 9217（+5,237 張），多數在 3/20 崩盤日反手出貨
-
-本報告以 Tick 微結構、券商分點、PNL 分層三個維度完整記錄此事件。
+> 2026-03-21 | 分析期間：2026/2/23 ~ 3/20
+> 資料來源：Fugle 分點交易、TEJ 日頻行情/融資融券/借券、ws-branch FIFO PNL、Fugle tick 逐筆成交
 
 ---
 
-# 第一章：市場背景與時間軸 {#sec-ch1}
+## 前言：這份報告要回答什麼
 
-```{python}
-#| label: ch1-data
-#| code-fold: true
+客戶持有 2489 瑞軒，成本約 20 元。公司今年營運爆發性成長，預估全年 EPS 3 元以上，
+以本益比 20 倍計算，合理目標價 60 元以上。
 
-ctx = pl.read_parquet(f"{DATA_DIR}/ch1_market_context.parquet")
-tick_summary = pl.read_parquet(f"{DATA_DIR}/ch2_tick_daily_summary.parquet")
-```
+2/23 起連續四天漲停（29.8 → 39.6），觸發注意股後進入處置（3/2~3/18），
+處置解除後 3/19 再漲停、3/20 開高走低從 47.15 崩至 38.65。
 
-## 1.1 事件時間軸
+**客戶的問題**：
+1. 這段時間場上有哪些對手？各自在做什麼？
+2. 賣壓還有多少？可不可以加碼？
 
-| 日期 | 事件 | 收盤價 | 漲跌幅 |
-|------|------|--------|--------|
-| 2/23 (一) | 第 1 根漲停 | 29.80 | +9.96% |
-| 2/24 (二) | 第 2 根漲停 | 32.75 | +9.90% |
-| 2/25 (三) | 第 3 根漲停 | 36.00 | +9.92% |
-| 2/26 (四) | 第 4 根漲停 | 39.60 | +10.00% |
-| 3/2 ~ 3/18 | **處置期間（13 個交易日）** | 38.95~43.55 | — |
-| 3/19 (四) | 處置解除，漲停 | 42.90 | +10.14% |
-| 3/20 (五) | **崩盤** | 38.65 | -9.91% |
+**方法論說明**：
 
-: 2489 瑞軒關鍵事件時間軸 {#tbl-timeline}
-
-## 1.2 價量走勢圖
-
-```{python}
-#| label: fig-ch1-price-volume
-#| fig-cap: "2489 瑞軒 2/23~3/20 價量走勢（處置期間以橘色背景標示）"
-
-fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 7), height_ratios=[2.5, 1],
-                                sharex=True, gridspec_kw={"hspace": 0.05})
-
-dates = ctx["mdate"].to_list()
-opens = ctx["open_d"].to_list()
-highs = ctx["high_d"].to_list()
-lows = ctx["low_d"].to_list()
-closes = ctx["close_d"].to_list()
-vols = ctx["vol"].to_list()
-disp = ctx["disp_fg"].to_list()
-
-# Disposition period shading
-disp_dates = [d for d, f in zip(dates, disp) if f]
-if disp_dates:
-    d_start = disp_dates[0] - timedelta(days=0.5)
-    d_end = disp_dates[-1] + timedelta(days=0.5)
-    ax1.axvspan(d_start, d_end, alpha=0.15, color="orange", label="處置期間")
-    ax2.axvspan(d_start, d_end, alpha=0.15, color="orange")
-
-# Candlestick-like bars
-for i, d in enumerate(dates):
-    color = "red" if closes[i] >= opens[i] else "green"
-    ax1.plot([d, d], [lows[i], highs[i]], color=color, linewidth=0.8)
-    body_bottom = min(opens[i], closes[i])
-    body_height = abs(closes[i] - opens[i])
-    if body_height < 0.05:
-        body_height = 0.05
-    rect = Rectangle((d - timedelta(hours=8), body_bottom), timedelta(hours=16),
-                      body_height, facecolor=color, edgecolor=color, alpha=0.8)
-    ax1.add_patch(rect)
-
-ax1.set_ylabel("收盤價 (元)", fontsize=12)
-ax1.legend(loc="upper left", fontsize=10)
-ax1.grid(True, alpha=0.3)
-
-# Annotate key prices
-ax1.annotate("29.8\n(漲停起點)", xy=(dates[0], 29.8), fontsize=8,
-             ha="center", va="top", xytext=(dates[0], 27.5),
-             arrowprops=dict(arrowstyle="->", color="gray"))
-ax1.annotate("39.6\n(第4根漲停)", xy=(dates[3], 39.6), fontsize=8,
-             ha="center", va="bottom", xytext=(dates[3], 41.5),
-             arrowprops=dict(arrowstyle="->", color="gray"))
-
-# Find 3/19 and 3/20
-for i, d in enumerate(dates):
-    if d == date(2026, 3, 19):
-        ax1.annotate("42.9\n(解除漲停)", xy=(d, closes[i]), fontsize=8,
-                     ha="right", va="bottom", xytext=(d - timedelta(days=2), 45),
-                     arrowprops=dict(arrowstyle="->", color="red"))
-    if d == date(2026, 3, 20):
-        ax1.annotate("38.65\n(崩盤)", xy=(d, closes[i]), fontsize=8,
-                     ha="left", va="top", xytext=(d + timedelta(days=0.5), 36),
-                     arrowprops=dict(arrowstyle="->", color="green"))
-
-# Volume bars
-vol_lots = [v / 1000 for v in vols]
-colors = ["red" if closes[i] >= opens[i] else "green" for i in range(len(dates))]
-ax2.bar(dates, vol_lots, color=colors, alpha=0.7, width=0.6)
-ax2.set_ylabel("成交量 (張)", fontsize=12)
-ax2.set_xlabel("日期", fontsize=12)
-ax2.grid(True, alpha=0.3)
-
-ax1.xaxis.set_major_formatter(mdates.DateFormatter("%m/%d"))
-ax2.xaxis.set_major_formatter(mdates.DateFormatter("%m/%d"))
-plt.xticks(rotation=45)
-
-fig.suptitle("2489 瑞軒 — 價量走勢", fontsize=14, fontweight="bold", y=0.98)
-plt.tight_layout()
-plt.show()
-```
-
-## 1.3 每日摘要
-
-```{python}
-#| label: tbl-ch1-daily
-#| tbl-cap: "每日價量與處置狀態"
-
-display_ctx = ctx.select([
-    pl.col("mdate").alias("日期"),
-    pl.col("open_d").alias("開盤"),
-    pl.col("high_d").alias("最高"),
-    pl.col("low_d").alias("最低"),
-    pl.col("close_d").alias("收盤"),
-    (pl.col("vol") / 1000).round(0).cast(pl.Int64).alias("成交量(張)"),
-    (pl.col("turnover") * 100).round(2).alias("週轉率(%)"),
-    pl.col("disp_fg").alias("處置"),
-    pl.col("mch_prd").alias("撮合秒數"),
-])
-display_ctx
-```
+- 本報告不使用 3 年 PNL 排名判斷「聰明錢」。2489 過去三年乏人問津，3 年績效排名無意義。
+  改用 **短窗口 PNL**（2/1~3/20，涵蓋漲停 + 處置 + 出處置全程）識別贏家和輸家。
+- **處置期間禁止當沖**（ssadt_fg=true 表示暫停當沖）。分點資料中同日有買有賣，
+  代表**同一營業據點的不同客戶**分別在買和賣，不是同一人當沖。
+  因此本報告不分析「當沖量」，只看淨部位變化。
 
 ---
 
-# 第二章：Tick 微結構分析 {#sec-ch2}
+## 一、戰場總覽
 
-處置期間的撮合機制與正常交易截然不同。本章解析每日 Tick 結構的差異。
+處置期間（3/2~3/18，13 個交易日）共 805 家分點參與交易。
+處置為**第二次以上**——每 20 分鐘集合競價撮合一次，每日僅 15 筆實際成交。
+處置期間禁止當沖、禁止融資融券新增。
 
-## 2.1 每日 Tick 統計
-
-```{python}
-#| label: tbl-ch2-tick-summary
-#| tbl-cap: "每日 Tick 統計（試撮 vs 實際成交）"
-
-ts = tick_summary.with_columns([
-    (pl.col("total_volume") / 1000).round(0).cast(pl.Int64).alias("成交量(張)"),
-]).select([
-    pl.col("date").alias("日期"),
-    pl.col("is_disp").alias("處置中"),
-    pl.col("total_ticks").alias("Tick總數"),
-    pl.col("n_trial").alias("試撮次數"),
-    pl.col("n_actual").alias("實際成交"),
-    pl.col("n_matches").alias("撮合次數"),
-    pl.col("open").alias("開盤"),
-    pl.col("close").alias("收盤"),
-    pl.col("high").alias("最高"),
-    pl.col("low").alias("最低"),
-    pl.col("成交量(張)"),
-])
-ts
-```
-
-::: {.callout-important}
-## 處置期間撮合機制
-
-處置期間每 20 分鐘集合競價一次（第二級處置），每日僅有約 **15 筆實際成交**，但試撮次數高達 **~2,940 次**。相較之下，3/19 解除後首日即有 **3,233 筆**實際成交。
-
-這意味著處置期間的「價格發現」極度稀薄，每一筆成交都對價格有巨大影響力。
-:::
-
-## 2.2 處置日試撮演化
-
-```{python}
-#| label: fig-ch2-disposition-matches
-#| fig-cap: "處置期間各日集合競價成交價格演化（每點為一次 20 分鐘撮合結果）"
-
-import os
-
-disp_dates_list = tick_summary.filter(pl.col("is_disp")).sort("date")["date"].to_list()
-
-# Select representative days
-show_dates = disp_dates_list[:4] + [disp_dates_list[-1]]  # first 4 + last
-
-fig, axes = plt.subplots(len(show_dates), 1, figsize=(12, 3 * len(show_dates)), sharex=False)
-
-for idx, d in enumerate(show_dates):
-    ax = axes[idx]
-    fname = f"{DATA_DIR}/ch2_matches_{d.strftime('%Y%m%d')}.parquet"
-    if not os.path.exists(fname):
-        continue
-    df = pl.read_parquet(fname)
-
-    times = df["match_time"].to_list()
-    prices = df["price"].to_list()
-    sizes = [s / 1000 for s in df["size"].to_list()]
-    trial_highs = df["trial_high"].to_list()
-    trial_lows = df["trial_low"].to_list()
-
-    x = range(len(times))
-
-    # Trial range as error bars (clamp to 0 for missing data)
-    yerr_low = [max(0, p - tl) if tl > 0 else 0 for p, tl in zip(prices, trial_lows)]
-    yerr_high = [max(0, th - p) if th > 0 else 0 for p, th in zip(prices, trial_highs)]
-
-    ax.errorbar(x, prices, yerr=[yerr_low, yerr_high],
-                fmt="o-", color="steelblue", markersize=6, capsize=3,
-                ecolor="lightcoral", elinewidth=1.5, label="成交價 (試撮高低)")
-
-    # Size as bubble annotation
-    for i, (xi, pi, si) in enumerate(zip(x, prices, sizes)):
-        ax.annotate(f"{si:.0f}張", xy=(xi, pi), fontsize=7,
-                    ha="center", va="bottom", xytext=(0, 8),
-                    textcoords="offset points", color="gray")
-
-    ax.set_title(f"{d.strftime('%m/%d')} — 收盤 {prices[-1]:.2f}", fontsize=11)
-    ax.set_xticks(list(x))
-    ax.set_xticklabels(times, rotation=45, fontsize=8)
-    ax.set_ylabel("價格 (元)")
-    ax.grid(True, alpha=0.3)
-    ax.legend(fontsize=8, loc="upper left")
-
-fig.suptitle("處置期間 20 分鐘集合競價 — 成交價與試撮區間", fontsize=14, fontweight="bold")
-plt.tight_layout()
-plt.show()
-```
-
-## 2.3 處置 vs 正常日微結構對比
-
-```{python}
-#| label: fig-ch2-microstructure-compare
-#| fig-cap: "正常交易日 vs 處置日逐分鐘成交量分布"
-
-# Normal day (2/23 - limit up)
-min_223 = pl.read_parquet(f"{DATA_DIR}/ch2_minute_20260223.parquet")
-# Post-disp day (3/19)
-min_319 = pl.read_parquet(f"{DATA_DIR}/ch2_minute_20260319.parquet")
-# Crash day (3/20)
-min_320 = pl.read_parquet(f"{DATA_DIR}/ch2_minute_20260320.parquet")
-
-fig, axes = plt.subplots(1, 3, figsize=(14, 4), sharey=False)
-
-for ax, df, title in zip(axes,
-    [min_223, min_319, min_320],
-    ["2/23 漲停（正常撮合）", "3/19 處置解除首日", "3/20 崩盤日"]):
-
-    times = df["time_str"].to_list()
-    vols = [v / 1000 for v in df["volume"].to_list()]
-    # Show only every 30 min tick
-    ax.bar(range(len(times)), vols, color="steelblue", alpha=0.7, width=1)
-    step = 30
-    ax.set_xticks(list(range(0, len(times), step)))
-    ax.set_xticklabels([times[i] for i in range(0, len(times), step)], rotation=45, fontsize=8)
-    ax.set_title(title, fontsize=11)
-    ax.set_ylabel("成交量 (張)")
-    ax.grid(True, alpha=0.3)
-
-fig.suptitle("逐分鐘成交量分布", fontsize=13, fontweight="bold")
-plt.tight_layout()
-plt.show()
-```
+| 陣營 | 家數 | 合計淨部位 | 特徵 |
+|------|------|-----------|------|
+| **吸籌方** | 28 | **+46,038 張** | 處置期淨買超 >200 張 |
+| **出貨方** | 11 | **-31,994 張** | 處置期淨賣超 >200 張 |
+| 散場觀眾 | ~750 | 微量 | 每日零星交易 |
 
 ---
 
-# 第三章：券商分點分析 {#sec-ch3}
+## 二、吸籌方逐一解析
 
-## 3.1 處置期間券商累積部位
+### 1. 國泰（8880）
 
-```{python}
-#| label: ch3-data
-#| code-fold: true
+**身份**：全市場 PNL **#6**（+864 億）；1 個月 PNL **#9**（近期贏家）
 
-broker_cum = pl.read_parquet(f"{DATA_DIR}/ch3_broker_cumulative.parquet")
-broker_daily = pl.read_parquet(f"{DATA_DIR}/ch3_broker_daily_net.parquet")
-reversal = pl.read_parquet(f"{DATA_DIR}/ch3_reversal.parquet")
-```
+**處置期淨買超 +7,761 張**（買 10,424 / 賣 2,663），13 天活躍（買 9 / 賣 4）
 
-```{python}
-#| label: tbl-ch3-top-bottom
-#| tbl-cap: "處置期間淨買超/賣超前 10 名券商"
+| 漲停期(2/23~26) | 處置 D1-2 | D3-5 | D6-8 | D9-11 | D12-13 | 出處置 3/19 | 崩盤 3/20 |
+|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| **+353** | **+2,377** | **+205** | **+3,743** | **+1,045** | **+391** | **-441** | **+495** |
 
-top10 = broker_cum.sort("total_net_shares", descending=True).head(10)
-bot10 = broker_cum.sort("total_net_shares").head(10)
+- 處置首兩日大舉進場，尾段仍在加碼 — 全程看多
+- 3/19 出處置即賣出 -441 張 — 利用漲停出貨
+- 3/20 崩盤中加碼 +495 張 — 逢低承接
 
-combined = pl.concat([
-    top10.with_columns(pl.lit("累積買超").alias("分類")),
-    bot10.with_columns(pl.lit("累積賣超").alias("分類")),
-])
+### 2. 凱基-松山（9217）
 
-display_df = combined.select([
-    pl.col("分類"),
-    pl.col("broker").alias("券商代號"),
-    (pl.col("total_net_shares") / 1000).round(0).cast(pl.Int64).alias("淨買超(張)"),
-    (pl.col("total_buy_shares") / 1000).round(0).cast(pl.Int64).alias("買進(張)"),
-    (pl.col("total_sell_shares") / 1000).round(0).cast(pl.Int64).alias("賣出(張)"),
-    pl.col("active_days").alias("活躍天數"),
-    pl.col("behavior_type").alias("行為類型"),
-])
-display_df
-```
+**身份**：全市場 #207；1 個月 PNL #952（**近期大輸家**）
 
-```{python}
-#| label: fig-ch3-accumulation
-#| fig-cap: "處置期間前 20 大淨買超/賣超券商"
+**處置期淨買超 +5,237 張**（買 5,334 / 賣 96），13 天活躍（買 11 / 賣 2）
 
-top20 = broker_cum.sort("total_net_shares", descending=True).head(20)
-bot20 = broker_cum.sort("total_net_shares").head(20)
+| 漲停期(2/23~26) | 處置 D1-2 | D3-5 | D6-8 | D9-11 | D12-13 | 出處置 3/19 | 崩盤 3/20 |
+|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| **+20,790** | **+4,824** | **+365** | +18 | -9 | +39 | +33 | **+150** |
 
-fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
+- 漲停期已大量買入 +20,790 張，處置期繼續加碼 — 堅定看多
+- 處置首兩日大舉進場，尾段仍在加碼 — 全程看多
 
-# Top buyers
-brokers_buy = top20["broker"].to_list()
-nets_buy = [n / 1000 for n in top20["total_net_shares"].to_list()]
-colors_buy = ["#d62728" if n > 0 else "#2ca02c" for n in nets_buy]
-ax1.barh(range(len(brokers_buy)), nets_buy, color=colors_buy, alpha=0.8)
-ax1.set_yticks(range(len(brokers_buy)))
-ax1.set_yticklabels(brokers_buy, fontsize=9)
-ax1.set_xlabel("淨買超 (張)")
-ax1.set_title("淨買超前 20 名", fontsize=12, fontweight="bold")
-ax1.invert_yaxis()
-ax1.grid(True, alpha=0.3, axis="x")
+### 3. 港商麥格理（1360）
 
-# Top sellers
-brokers_sell = bot20["broker"].to_list()
-nets_sell = [n / 1000 for n in bot20["total_net_shares"].to_list()]
-colors_sell = ["#2ca02c" for _ in nets_sell]
-ax2.barh(range(len(brokers_sell)), nets_sell, color=colors_sell, alpha=0.8)
-ax2.set_yticks(range(len(brokers_sell)))
-ax2.set_yticklabels(brokers_sell, fontsize=9)
-ax2.set_xlabel("淨賣超 (張)")
-ax2.set_title("淨賣超前 20 名", fontsize=12, fontweight="bold")
-ax2.invert_yaxis()
-ax2.grid(True, alpha=0.3, axis="x")
+**身份**：全市場 #956；1 個月 PNL #24
 
-plt.tight_layout()
-plt.show()
-```
+**處置期淨買超 +4,040 張**（買 5,540 / 賣 1,500），4 天活躍（買 3 / 賣 1）
 
-## 3.2 每日券商熱力圖
+| 漲停期(2/23~26) | 處置 D1-2 | D3-5 | D6-8 | D9-11 | D12-13 | 出處置 3/19 | 崩盤 3/20 |
+|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| — | **+4,165** | **+1,375** | **-1,500** | — | — | — | — |
 
-```{python}
-#| label: fig-ch3-heatmap
-#| fig-cap: "前 30 大活躍券商 × 處置 13 日淨買超熱力圖（單位：張）"
 
-# Get top 30 by absolute net
-top30_brokers = (
-    broker_cum
-    .with_columns(pl.col("total_net_shares").abs().alias("abs_net"))
-    .sort("abs_net", descending=True)
-    .head(30)["broker"].to_list()
-)
+### 4. 統一（5850）
 
-disp_daily = broker_daily.filter(
-    pl.col("broker").is_in(top30_brokers)
-).with_columns(
-    (pl.col("net_shares") / 1000).alias("net_lots")
-)
+**身份**：全市場 #936；1 個月 PNL **#14**（近期贏家）
 
-# Pivot to matrix
-pivot = disp_daily.pivot(
-    on="date",
-    index="broker",
-    values="net_lots",
-).fill_null(0)
+**處置期淨買超 +3,568 張**（買 11,729 / 賣 8,161），13 天活躍（買 6 / 賣 7）
 
-# Sort by total
-date_cols = [c for c in pivot.columns if c != "broker"]
-pivot = pivot.with_columns(
-    pl.sum_horizontal([pl.col(c) for c in date_cols]).alias("_total")
-).sort("_total", descending=True).drop("_total")
+| 漲停期(2/23~26) | 處置 D1-2 | D3-5 | D6-8 | D9-11 | D12-13 | 出處置 3/19 | 崩盤 3/20 |
+|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| **+4,339** | **+1,487** | **+1,506** | **-1,511** | +87 | **+1,999** | **-485** | **-568** |
 
-brokers_list = pivot["broker"].to_list()
-date_labels = sorted(date_cols)
-matrix = pivot.select(date_labels).to_numpy()
+- 漲停期已大量買入 +4,339 張，處置期繼續加碼 — 堅定看多
+- 處置首兩日大舉進場，尾段仍在加碼 — 全程看多
+- 3/19 出處置即賣出 -485 張 — 利用漲停出貨
+- 3/20 崩盤中出逃 -568 張 — 停損或出貨
 
-fig, ax = plt.subplots(figsize=(14, 10))
-vmax = max(abs(matrix.min()), abs(matrix.max()))
-im = ax.imshow(matrix, cmap="RdYlGn_r", aspect="auto", vmin=-vmax, vmax=vmax)
+### 5. 永豐金（9A00）
 
-ax.set_xticks(range(len(date_labels)))
-ax.set_xticklabels([str(d)[5:] for d in date_labels], rotation=45, fontsize=9)
-ax.set_yticks(range(len(brokers_list)))
-ax.set_yticklabels(brokers_list, fontsize=9)
-ax.set_xlabel("日期")
-ax.set_ylabel("券商")
+**身份**：全市場 PNL **#2**（+2,178 億）；1 個月 PNL **#5**（近期贏家）
 
-# Add text annotations for large values
-for i in range(len(brokers_list)):
-    for j in range(len(date_labels)):
-        v = matrix[i, j]
-        if abs(v) > 200:
-            ax.text(j, i, f"{v:.0f}", ha="center", va="center", fontsize=7,
-                    color="white" if abs(v) > vmax * 0.6 else "black")
+**處置期淨買超 +3,431 張**（買 5,024 / 賣 1,592），13 天活躍（買 8 / 賣 5）
 
-cbar = plt.colorbar(im, ax=ax, shrink=0.8)
-cbar.set_label("淨買超 (張)", fontsize=11)
+| 漲停期(2/23~26) | 處置 D1-2 | D3-5 | D6-8 | D9-11 | D12-13 | 出處置 3/19 | 崩盤 3/20 |
+|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| **+304** | **+1,678** | **+161** | **+228** | **-390** | **+1,755** | **-432** | **-1,609** |
 
-ax.set_title("前 30 大券商 × 處置 13 日 — 每日淨買超", fontsize=13, fontweight="bold")
-plt.tight_layout()
-plt.show()
-```
+- 處置首兩日大舉進場，尾段仍在加碼 — 全程看多
+- 3/19 出處置即賣出 -432 張 — 利用漲停出貨
+- 3/20 崩盤中出逃 -1,609 張 — 停損或出貨
 
-## 3.3 前後半段反轉分析
+### 6. 台新-建北（8151）
 
-```{python}
-#| label: tbl-ch3-reversal
-#| tbl-cap: "處置期間前/後半段方向反轉統計"
+**身份**：全市場 #332；1 個月 PNL #542
 
-rev_summary = (
-    reversal
-    .group_by("reversal_type")
-    .agg([
-        pl.len().alias("券商數"),
-        (pl.col("first_half_net") / 1000).sum().round(0).alias("前半淨買(張)"),
-        (pl.col("second_half_net") / 1000).sum().round(0).alias("後半淨買(張)"),
-    ])
-    .sort("券商數", descending=True)
-)
-rev_summary
-```
+**處置期淨買超 +3,034 張**（買 3,613 / 賣 579），13 天活躍（買 9 / 賣 3）
 
-```{python}
-#| label: fig-ch3-reversal
-#| fig-cap: "典型反轉券商：前半段賣超 → 後半段買超 vs 一致性券商"
+| 漲停期(2/23~26) | 處置 D1-2 | D3-5 | D6-8 | D9-11 | D12-13 | 出處置 3/19 | 崩盤 3/20 |
+|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| +30 | **+2,796** | **+101** | **-101** | **+352** | **-114** | +64 | +27 |
 
-rev_flip = reversal.filter(
-    pl.col("reversal_type").is_in(["先賣後買", "先買後賣"])
-).sort(
-    (pl.col("second_half_net") - pl.col("first_half_net")).abs(), descending=True
-).head(15)
+- 處置首兩日進場，尾段減碼 — 有退場跡象
 
-fig, ax = plt.subplots(figsize=(12, 5))
-brokers = rev_flip["broker"].to_list()
-first = [n / 1000 for n in rev_flip["first_half_net"].to_list()]
-second = [n / 1000 for n in rev_flip["second_half_net"].to_list()]
+### 7. 凱基-永和（9207）
 
-x = range(len(brokers))
-width = 0.35
-ax.bar([i - width/2 for i in x], first, width, label="前半段", color="steelblue", alpha=0.8)
-ax.bar([i + width/2 for i in x], second, width, label="後半段", color="coral", alpha=0.8)
-ax.set_xticks(list(x))
-ax.set_xticklabels(brokers, rotation=45, fontsize=9)
-ax.set_ylabel("淨買超 (張)")
-ax.set_title("反轉幅度最大的 15 家券商", fontsize=12, fontweight="bold")
-ax.legend()
-ax.grid(True, alpha=0.3, axis="y")
-ax.axhline(0, color="black", linewidth=0.5)
-plt.tight_layout()
-plt.show()
-```
+**身份**：全市場 #342；1 個月 PNL #707
+
+**處置期淨買超 +2,698 張**（買 2,703 / 賣 5），8 天活躍（買 7 / 賣 1）
+
+| 漲停期(2/23~26) | 處置 D1-2 | D3-5 | D6-8 | D9-11 | D12-13 | 出處置 3/19 | 崩盤 3/20 |
+|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| -2 | +3 | **+1,494** | **+200** | **+1,000** | +1 | +2 | +12 |
+
+
+### 8. 統一-士林（585M）
+
+**身份**：全市場 #240；1 個月 PNL #62
+
+**處置期淨買超 +2,084 張**（買 2,936 / 賣 852），13 天活躍（買 12 / 賣 1）
+
+| 漲停期(2/23~26) | 處置 D1-2 | D3-5 | D6-8 | D9-11 | D12-13 | 出處置 3/19 | 崩盤 3/20 |
+|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| **-207** | **+809** | **+186** | **+141** | **+763** | **+186** | -10 | **-154** |
+
+- 漲停期先賣 -207 張，處置期買回 +2,084 張 — 先獲利了結再重建部位
+- 處置首兩日大舉進場，尾段仍在加碼 — 全程看多
+
+### 9. 台新（8150）
+
+**身份**：全市場 #952；1 個月 PNL #63
+
+**處置期淨買超 +1,947 張**（買 3,264 / 賣 1,318），13 天活躍（買 9 / 賣 4）
+
+| 漲停期(2/23~26) | 處置 D1-2 | D3-5 | D6-8 | D9-11 | D12-13 | 出處置 3/19 | 崩盤 3/20 |
+|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| **+124** | **+220** | **+529** | **+420** | **+208** | **+569** | -21 | **+818** |
+
+- 3/20 崩盤中加碼 +818 張 — 逢低承接
+
+### 10. 富邦（9600）
+
+**身份**：全市場 #955；1 個月 PNL **#8**（近期贏家）
+
+**處置期淨買超 +1,754 張**（買 8,290 / 賣 6,536），13 天活躍（買 6 / 賣 7）
+
+| 漲停期(2/23~26) | 處置 D1-2 | D3-5 | D6-8 | D9-11 | D12-13 | 出處置 3/19 | 崩盤 3/20 |
+|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| **+3,638** | **+534** | **+551** | **+1,676** | **-342** | **-665** | **+500** | **-830** |
+
+- 漲停期已大量買入 +3,638 張，處置期繼續加碼 — 堅定看多
+- 處置首兩日進場，尾段減碼 — 有退場跡象
+- 3/20 崩盤中出逃 -830 張 — 停損或出貨
+
+### 11. 永豐金-敦南（9A8F）
+
+**身份**：全市場 #341；1 個月 PNL #937（**近期大輸家**）
+
+**處置期淨買超 +1,636 張**（買 4,701 / 賣 3,065），13 天活躍（買 9 / 賣 4）
+
+| 漲停期(2/23~26) | 處置 D1-2 | D3-5 | D6-8 | D9-11 | D12-13 | 出處置 3/19 | 崩盤 3/20 |
+|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| +42 | **+2,152** | **+1,447** | **-2,037** | +97 | -22 | -27 | **+168** |
+
+
+### 12. 凱基-市政（9239）
+
+**身份**：全市場 #85（+32 億）；1 個月 PNL #841
+
+**處置期淨買超 +1,257 張**（買 2,216 / 賣 959），13 天活躍（買 9 / 賣 4）
+
+| 漲停期(2/23~26) | 處置 D1-2 | D3-5 | D6-8 | D9-11 | D12-13 | 出處置 3/19 | 崩盤 3/20 |
+|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| +96 | **-144** | -5 | **+608** | +2 | **+796** | -6 | **-1,271** |
+
+- 3/20 崩盤中出逃 -1,271 張 — 停損或出貨
+
+### 13. 元大-士林（981j）
+
+**身份**：全市場 #840；1 個月 PNL #939（**近期大輸家**）
+
+**處置期淨買超 +1,051 張**（買 1,512 / 賣 462），13 天活躍（買 7 / 賣 6）
+
+| 漲停期(2/23~26) | 處置 D1-2 | D3-5 | D6-8 | D9-11 | D12-13 | 出處置 3/19 | 崩盤 3/20 |
+|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| **-157** | **+368** | **+408** | **+560** | -16 | **-269** | +7 | **-875** |
+
+- 漲停期先賣 -157 張，處置期買回 +1,051 張 — 先獲利了結再重建部位
+- 3/20 崩盤中出逃 -875 張 — 停損或出貨
+
+### 14. 中國信託（6160）
+
+**身份**：全市場 PNL **#10**（+535 億）；1 個月 PNL **#16**（近期贏家）
+
+**處置期淨買超 +967 張**（買 3,060 / 賣 2,092），13 天活躍（買 9 / 賣 4）
+
+| 漲停期(2/23~26) | 處置 D1-2 | D3-5 | D6-8 | D9-11 | D12-13 | 出處置 3/19 | 崩盤 3/20 |
+|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| +67 | **+921** | **-175** | **+330** | **-475** | **+367** | -31 | **-690** |
+
+- 處置首兩日大舉進場，尾段仍在加碼 — 全程看多
+- 3/20 崩盤中出逃 -690 張 — 停損或出貨
+
+### 15. 華南永昌-南京（9326）
+
+**身份**：全市場 #868；1 個月 PNL #711
+
+**處置期淨買超 +771 張**（買 1,048 / 賣 277），12 天活躍（買 7 / 賣 5）
+
+| 漲停期(2/23~26) | 處置 D1-2 | D3-5 | D6-8 | D9-11 | D12-13 | 出處置 3/19 | 崩盤 3/20 |
+|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| **-253** | **+221** | **+351** | **+150** | +1 | +48 | **-514** | +53 |
+
+- 漲停期先賣 -253 張，處置期買回 +771 張 — 先獲利了結再重建部位
+- 3/19 出處置即賣出 -514 張 — 利用漲停出貨
+
+### 16. 聯邦-興中（8587）
+
+**身份**：全市場 #264；1 個月 PNL #526
+
+**處置期淨買超 +597 張**（買 2,002 / 賣 1,406），13 天活躍（買 8 / 賣 5）
+
+| 漲停期(2/23~26) | 處置 D1-2 | D3-5 | D6-8 | D9-11 | D12-13 | 出處置 3/19 | 崩盤 3/20 |
+|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| -8 | **+441** | **+695** | **-281** | **+240** | **-498** | -0 | **-538** |
+
+- 3/20 崩盤中出逃 -538 張 — 停損或出貨
+
+### 17. 國票-安和（779Z）
+
+**身份**：全市場 #27（+133 億）；1 個月 PNL #33
+
+**處置期淨買超 +565 張**（買 2,103 / 賣 1,538），13 天活躍（買 8 / 賣 5）
+
+| 漲停期(2/23~26) | 處置 D1-2 | D3-5 | D6-8 | D9-11 | D12-13 | 出處置 3/19 | 崩盤 3/20 |
+|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| **+833** | +39 | **+744** | **-879** | **+143** | **+517** | **+129** | **-139** |
+
+- 漲停期已大量買入 +833 張，處置期繼續加碼 — 堅定看多
+
+### 18. 元大-南屯（9853）
+
+**身份**：全市場 #128；1 個月 PNL #718
+
+**處置期淨買超 +559 張**（買 881 / 賣 322），13 天活躍（買 9 / 賣 4）
+
+| 漲停期(2/23~26) | 處置 D1-2 | D3-5 | D6-8 | D9-11 | D12-13 | 出處置 3/19 | 崩盤 3/20 |
+|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| -37 | **+423** | **+197** | **-118** | +41 | +16 | -14 | **-464** |
+
+- 3/20 崩盤中出逃 -464 張 — 停損或出貨
+
+### 19. 富邦-南京（961C）
+
+**身份**：全市場 #875；1 個月 PNL #244
+
+**處置期淨買超 +440 張**（買 849 / 賣 409），12 天活躍（買 9 / 賣 3）
+
+| 漲停期(2/23~26) | 處置 D1-2 | D3-5 | D6-8 | D9-11 | D12-13 | 出處置 3/19 | 崩盤 3/20 |
+|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| -93 | **+316** | +77 | +15 | +23 | +8 | -22 | +6 |
+
+
+### 20. 凱基-站前（920F）
+
+**身份**：全市場 #44（+65 億）；1 個月 PNL #97
+
+**處置期淨買超 +391 張**（買 1,769 / 賣 1,378），13 天活躍（買 8 / 賣 5）
+
+| 漲停期(2/23~26) | 處置 D1-2 | D3-5 | D6-8 | D9-11 | D12-13 | 出處置 3/19 | 崩盤 3/20 |
+|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| **-249** | **+459** | **-260** | +26 | +67 | **+100** | +89 | **-622** |
+
+- 漲停期先賣 -249 張，處置期買回 +391 張 — 先獲利了結再重建部位
+- 3/20 崩盤中出逃 -622 張 — 停損或出貨
+
+### 21. 富邦-嘉義（9692）
+
+**身份**：全市場 #390；1 個月 PNL #705
+
+**處置期淨買超 +361 張**（買 1,432 / 賣 1,071），13 天活躍（買 4 / 賣 9）
+
+| 漲停期(2/23~26) | 處置 D1-2 | D3-5 | D6-8 | D9-11 | D12-13 | 出處置 3/19 | 崩盤 3/20 |
+|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| -86 | -15 | **+249** | **-225** | +28 | **+324** | **+312** | **+384** |
+
+- 3/20 崩盤中加碼 +384 張 — 逢低承接
+
+### 22. 富邦-南屯（9666）
+
+**身份**：全市場 #102；1 個月 PNL #508
+
+**處置期淨買超 +330 張**（買 919 / 賣 589），13 天活躍（買 8 / 賣 5）
+
+| 漲停期(2/23~26) | 處置 D1-2 | D3-5 | D6-8 | D9-11 | D12-13 | 出處置 3/19 | 崩盤 3/20 |
+|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| -39 | **+374** | **+222** | **-274** | +5 | +3 | -7 | **-102** |
+
+
+### 23. 統一-三重（585J）
+
+**身份**：全市場 #392；1 個月 PNL #570
+
+**處置期淨買超 +307 張**（買 757 / 賣 450），13 天活躍（買 6 / 賣 7）
+
+| 漲停期(2/23~26) | 處置 D1-2 | D3-5 | D6-8 | D9-11 | D12-13 | 出處置 3/19 | 崩盤 3/20 |
+|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| **-124** | **+324** | +91 | +20 | -15 | **-112** | **-172** | +5 |
+
+- 漲停期先賣 -124 張，處置期買回 +307 張 — 先獲利了結再重建部位
+- 3/19 出處置即賣出 -172 張 — 利用漲停出貨
+
+### 24. 元大-台北（980h）
+
+**身份**：全市場 #23（+161 億）；1 個月 PNL #765
+
+**處置期淨買超 +287 張**（買 983 / 賣 696），13 天活躍（買 6 / 賣 7）
+
+| 漲停期(2/23~26) | 處置 D1-2 | D3-5 | D6-8 | D9-11 | D12-13 | 出處置 3/19 | 崩盤 3/20 |
+|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| **+151** | **+502** | +42 | **-112** | -64 | -81 | -1 | **-364** |
+
+- 3/20 崩盤中出逃 -364 張 — 停損或出貨
+
+### 25. 永豐金-信義（9A9R）
+
+**身份**：全市場 #30（+123 億）；1 個月 PNL #476
+
+**處置期淨買超 +270 張**（買 824 / 賣 554），13 天活躍（買 7 / 賣 6）
+
+| 漲停期(2/23~26) | 處置 D1-2 | D3-5 | D6-8 | D9-11 | D12-13 | 出處置 3/19 | 崩盤 3/20 |
+|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| -22 | **+335** | **+191** | **-207** | -26 | -23 | +14 | **+198** |
+
+
+### 26. 台新-高雄（815A）
+
+**身份**：全市場 #137；1 個月 PNL #368
+
+**處置期淨買超 +254 張**（買 1,259 / 賣 1,005），13 天活躍（買 7 / 賣 6）
+
+| 漲停期(2/23~26) | 處置 D1-2 | D3-5 | D6-8 | D9-11 | D12-13 | 出處置 3/19 | 崩盤 3/20 |
+|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| **-211** | -29 | +19 | **+438** | **-321** | **+147** | **-223** | **+153** |
+
+- 漲停期先賣 -211 張，處置期買回 +254 張 — 先獲利了結再重建部位
+- 3/19 出處置即賣出 -223 張 — 利用漲停出貨
+
+### 27. 中國信託-忠孝（6162）
+
+**身份**：全市場 #842；1 個月 PNL #72
+
+**處置期淨買超 +240 張**（買 762 / 賣 522），13 天活躍（買 10 / 賣 2）
+
+| 漲停期(2/23~26) | 處置 D1-2 | D3-5 | D6-8 | D9-11 | D12-13 | 出處置 3/19 | 崩盤 3/20 |
+|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| **-271** | +81 | **-314** | +71 | **+157** | **+245** | -27 | **+441** |
+
+- 漲停期先賣 -271 張，處置期買回 +240 張 — 先獲利了結再重建部位
+- 3/20 崩盤中加碼 +441 張 — 逢低承接
+
+### 28. 凱基-基隆（920H）
+
+**身份**：全市場 #653；1 個月 PNL #686
+
+**處置期淨買超 +201 張**（買 1,255 / 賣 1,054），13 天活躍（買 6 / 賣 7）
+
+| 漲停期(2/23~26) | 處置 D1-2 | D3-5 | D6-8 | D9-11 | D12-13 | 出處置 3/19 | 崩盤 3/20 |
+|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| -25 | **+128** | **-132** | +5 | -1 | **+202** | -2 | +18 |
+
 
 ---
 
-# 第四章：聰明錢 vs 散戶 {#sec-ch4}
+## 三、出貨方逐一解析
 
-本章使用 3 年滾動 PNL 排名將券商分為三層：
+### 1. 康和（8450）
 
-- **聰明錢（Top-20）**：滾動 PNL 前 20 名
-- **績差（Bottom-20）**：滾動 PNL 後 20 名
-- **其他**：中間的 ~770 家券商
+**身份**：全市場 #68；1 個月 PNL #50
 
-## 4.1 分層累積部位
+**處置期淨賣超 -454 張**（買 487 / 賣 941），10 天活躍（買 4 / 賣 6）
 
-```{python}
-#| label: ch4-data
-#| code-fold: true
+| 漲停期(2/23~26) | 處置 D1-2 | D3-5 | D6-8 | D9-11 | D12-13 | 出處置 3/19 | 崩盤 3/20 |
+|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| **-120** | **-475** | **+298** | **-120** | **-171** | +14 | — | +75 |
 
-pnl_ranking = pl.read_parquet(f"{DATA_DIR}/ch4_pnl_ranking.parquet")
-tier_daily = pl.read_parquet(f"{DATA_DIR}/ch4_tier_daily.parquet")
-tier_cum = pl.read_parquet(f"{DATA_DIR}/ch4_tier_cumulative.parquet")
-daily_tier = pl.read_parquet(f"{DATA_DIR}/ch4_daily_net_with_tier.parquet")
-```
 
-```{python}
-#| label: tbl-ch4-tier-cumulative
-#| tbl-cap: "處置期間三層券商累積淨買超"
+### 2. 富邦-仁愛（9676）
 
-tier_display = tier_cum.select([
-    pl.col("pnl_tier").alias("分層"),
-    pl.col("n_brokers").alias("券商數"),
-    (pl.col("total_net_shares") / 1000).round(0).cast(pl.Int64).alias("累積淨買超(張)"),
-    (pl.col("total_net_amount") / 1e8).round(2).alias("累積淨金額(億)"),
-])
-tier_display
-```
+**身份**：全市場 #77；1 個月 PNL #912
 
-::: {.callout-warning}
-## 核心發現：聰明錢與散戶完全對做
+**處置期淨賣超 -604 張**（買 2,085 / 賣 2,689），13 天活躍（買 9 / 賣 4）
 
-處置期間，聰明錢（Top-20）累計賣超 **12,016 張**（約 5.02 億元），績差券商（Bottom-20）累計買超 **5,780 張**（約 2.64 億元），中間層買超 **5,230 張**。
+| 漲停期(2/23~26) | 處置 D1-2 | D3-5 | D6-8 | D9-11 | D12-13 | 出處置 3/19 | 崩盤 3/20 |
+|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| **-490** | **+1,392** | **-329** | **-1,590** | +7 | -84 | -18 | **+221** |
 
-**聰明錢利用處置期間的流動性限制，有紀律地出貨。** 每 20 分鐘一次的集合競價，反而讓大戶可以在不引起恐慌的情況下，分 13 天緩步減碼。
-:::
+- 3/20 反手買入 +221 張 — 高出低進
 
-## 4.2 每日分層淨買超
+### 3. 摩根大通（8440）
 
-```{python}
-#| label: fig-ch4-tier-daily
-#| fig-cap: "每日各層券商淨買超堆疊圖（聰明錢 vs 散戶 vs 其他）"
+**身份**：全市場 #961；1 個月 PNL #954
 
-fig, ax = plt.subplots(figsize=(12, 6))
+**處置期淨賣超 -1,231 張**（買 1,688 / 賣 2,919），13 天活躍（買 6 / 賣 7）
 
-tier_order = ["聰明錢(Top-20)", "其他", "績差(Bottom-20)"]
-colors = {"聰明錢(Top-20)": "#d62728", "其他": "#7f7f7f", "績差(Bottom-20)": "#2ca02c"}
+| 漲停期(2/23~26) | 處置 D1-2 | D3-5 | D6-8 | D9-11 | D12-13 | 出處置 3/19 | 崩盤 3/20 |
+|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| **+144** | **-324** | **-866** | **+160** | **-325** | **+124** | **-283** | **-1,332** |
 
-dates_all = sorted(tier_daily["date"].unique().to_list())
+- 3/20 繼續大賣 -1,332 張 — 出貨尚未結束
 
-bottom_pos = np.zeros(len(dates_all))
-bottom_neg = np.zeros(len(dates_all))
+### 4. 群益金鼎-大安（918e）
 
-for tier in tier_order:
-    tier_data = tier_daily.filter(pl.col("pnl_tier") == tier).sort("date")
-    vals = []
-    for d in dates_all:
-        row = tier_data.filter(pl.col("date") == d)
-        if row.height > 0:
-            vals.append(row["tier_net_shares"][0] / 1000)
-        else:
-            vals.append(0)
-    vals = np.array(vals)
+**身份**：全市場 #21（+196 億）；1 個月 PNL #46
 
-    pos_vals = np.where(vals > 0, vals, 0)
-    neg_vals = np.where(vals < 0, vals, 0)
+**處置期淨賣超 -1,346 張**（買 34 / 賣 1,380），9 天活躍（買 2 / 賣 7）
 
-    ax.bar(dates_all, pos_vals, bottom=bottom_pos, label=tier,
-           color=colors[tier], alpha=0.8, width=0.6)
-    ax.bar(dates_all, neg_vals, bottom=bottom_neg,
-           color=colors[tier], alpha=0.8, width=0.6)
+| 漲停期(2/23~26) | 處置 D1-2 | D3-5 | D6-8 | D9-11 | D12-13 | 出處置 3/19 | 崩盤 3/20 |
+|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| **+325** | -6 | -75 | **-1,227** | -38 | — | **+429** | **+486** |
 
-    bottom_pos += pos_vals
-    bottom_neg += neg_vals
+- 3/20 反手買入 +486 張 — 高出低進
 
-ax.axhline(0, color="black", linewidth=0.5)
-ax.set_ylabel("淨買超 (張)", fontsize=12)
-ax.set_xlabel("日期", fontsize=12)
-ax.set_title("處置期間每日分層淨買超", fontsize=13, fontweight="bold")
-ax.legend(fontsize=10)
-ax.grid(True, alpha=0.3, axis="y")
-ax.xaxis.set_major_formatter(mdates.DateFormatter("%m/%d"))
-plt.xticks(rotation=45)
-plt.tight_layout()
-plt.show()
-```
+### 5. 港商野村（1560）
 
-## 4.3 累積淨買超走勢
+**身份**：全市場 PNL **#5**（+885 億）— 頂級自營；1 個月 PNL **#10** — **漲停段大贏家，正在獲利了結**
 
-```{python}
-#| label: fig-ch4-cumulative
-#| fig-cap: "處置期間各層累積淨買超走勢"
+**處置期淨賣超 -1,617 張**（買 0 / 賣 1,617），4 天活躍（買 0 / 賣 4）
 
-fig, ax = plt.subplots(figsize=(12, 5))
+| 漲停期(2/23~26) | 處置 D1-2 | D3-5 | D6-8 | D9-11 | D12-13 | 出處置 3/19 | 崩盤 3/20 |
+|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| **+190** | **-522** | — | **-960** | **-135** | — | -29 | **-776** |
 
-for tier in tier_order:
-    tier_data = tier_daily.filter(pl.col("pnl_tier") == tier).sort("date")
-    cum_vals = []
-    running = 0
-    for d in dates_all:
-        row = tier_data.filter(pl.col("date") == d)
-        if row.height > 0:
-            running += row["tier_net_shares"][0] / 1000
-        cum_vals.append(running)
 
-    ax.plot(dates_all, cum_vals, "o-", label=tier, color=colors[tier],
-            linewidth=2, markersize=5)
+### 6. 美商高盛（1480）
 
-ax.axhline(0, color="black", linewidth=0.5, linestyle="--")
-ax.set_ylabel("累積淨買超 (張)", fontsize=12)
-ax.set_xlabel("日期", fontsize=12)
-ax.set_title("處置期間累積淨買超走勢", fontsize=13, fontweight="bold")
-ax.legend(fontsize=10)
-ax.grid(True, alpha=0.3)
-ax.xaxis.set_major_formatter(mdates.DateFormatter("%m/%d"))
-plt.xticks(rotation=45)
-plt.tight_layout()
-plt.show()
-```
+**身份**：全市場 #950；1 個月 PNL **#7** — **漲停段大贏家，正在獲利了結**
 
-## 4.4 PNL 排名前 20 名券商
+**處置期淨賣超 -1,717 張**（買 3,259 / 賣 4,976），13 天活躍（買 3 / 賣 10）
 
-```{python}
-#| label: tbl-ch4-top-pnl
-#| tbl-cap: "3 年滾動 PNL 前 20 名券商（聰明錢定義依據）"
+| 漲停期(2/23~26) | 處置 D1-2 | D3-5 | D6-8 | D9-11 | D12-13 | 出處置 3/19 | 崩盤 3/20 |
+|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| -1 | **-296** | -1 | **-250** | **-420** | **-750** | **-692** | **-1,614** |
 
-top_pnl = pnl_ranking.head(20).select([
-    pl.col("rank").alias("排名"),
-    pl.col("broker").alias("券商"),
-    (pl.col("total_pnl") / 1e8).round(2).alias("總PNL(億)"),
-    (pl.col("realized_pnl") / 1e8).round(2).alias("已實現(億)"),
-    (pl.col("unrealized_pnl") / 1e8).round(2).alias("未實現(億)"),
-])
-top_pnl
-```
+- 處置最後兩天加速賣出 -750 張 — 趕在出處置前清倉
+- 3/20 繼續大賣 -1,614 張 — 出貨尚未結束
+- 13 天中 10 天淨賣 — 持續且有紀律的出場
 
----
+### 7. 凱基-信義（9216）
 
-# 第五章：價格策略分析 {#sec-ch5}
+**身份**：全市場 #13（+434 億）；1 個月 PNL #13（近期贏家）
 
-## 5.1 券商 VWAP 比較
+**處置期淨賣超 -2,897 張**（買 438 / 賣 3,335），13 天活躍（買 5 / 賣 8）
 
-```{python}
-#| label: ch5-data
-#| code-fold: true
+| 漲停期(2/23~26) | 處置 D1-2 | D3-5 | D6-8 | D9-11 | D12-13 | 出處置 3/19 | 崩盤 3/20 |
+|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| **+1,191** | **-832** | -51 | -10 | **-1,903** | **-101** | **-127** | -58 |
 
-vwap = pl.read_parquet(f"{DATA_DIR}/ch5_broker_vwap.parquet")
-key_tx = pl.read_parquet(f"{DATA_DIR}/ch5_key_broker_tx.parquet")
-```
 
-```{python}
-#| label: tbl-ch5-vwap
-#| tbl-cap: "關鍵券商買賣 VWAP 比較（處置期間）"
+### 8. 台灣摩根士丹利（1470）
 
-# Focus on top accumulators and distributors
-key_brokers = ["8880", "9217", "1360", "5850", "9268", "9200", "9800", "1470"]
-vwap_display = (
-    vwap
-    .filter(pl.col("broker").is_in(key_brokers))
-    .with_columns([
-        (pl.col("buy_shares") / 1000).round(0).cast(pl.Int64).alias("買進(張)"),
-        (pl.col("sell_shares") / 1000).round(0).cast(pl.Int64).alias("賣出(張)"),
-        pl.col("buy_vwap").round(2).alias("買進VWAP"),
-        pl.col("sell_vwap").round(2).alias("賣出VWAP"),
-        (pl.col("sell_vwap") - pl.col("buy_vwap")).round(2).alias("VWAP差(賣-買)"),
-    ])
-    .select(["broker", "買進VWAP", "買進(張)", "賣出VWAP", "賣出(張)", "VWAP差(賣-買)"])
-    .sort("VWAP差(賣-買)", descending=True)
-)
-vwap_display
-```
+**身份**：全市場 #951；1 個月 PNL **#6** — **漲停段大贏家，正在獲利了結**
 
-::: {.callout-note}
-## VWAP 解讀
+**處置期淨賣超 -3,874 張**（買 6,554 / 賣 10,428），13 天活躍（買 3 / 賣 10）
 
-- **8880**（最大累積買方）：買進 VWAP 約 39.51，賣出 VWAP 約 41.84，**低買高賣**，具有明確的價格策略
-- **9268**（最大賣超方）：買進 VWAP 42.07，賣出 VWAP 41.20，**高買低賣**，出貨意圖明確但執行不佳
-:::
+| 漲停期(2/23~26) | 處置 D1-2 | D3-5 | D6-8 | D9-11 | D12-13 | 出處置 3/19 | 崩盤 3/20 |
+|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| **-119** | **-558** | +26 | **-901** | **-1,323** | **-1,118** | **-1,865** | **-4,096** |
 
-## 5.2 關鍵券商每日價格分布
+- 處置最後兩天加速賣出 -1,118 張 — 趕在出處置前清倉
+- 3/20 繼續大賣 -4,096 張 — 出貨尚未結束
+- 13 天中 10 天淨賣 — 持續且有紀律的出場
 
-```{python}
-#| label: fig-ch5-price-dist
-#| fig-cap: "關鍵券商成交價分布（處置期間）"
+### 9. 元大（9800）
 
-fig, axes = plt.subplots(2, 4, figsize=(16, 8))
+**身份**：全市場 PNL **#3**（+1,326 億）— 頂級自營；1 個月 PNL #18（近期贏家）
 
-for idx, broker_id in enumerate(key_brokers):
-    ax = axes[idx // 4][idx % 4]
-    bdata = key_tx.filter(pl.col("broker") == broker_id)
+**處置期淨賣超 -4,292 張**（買 1,938 / 賣 6,230），13 天活躍（買 6 / 賣 7）
 
-    if bdata.height == 0:
-        ax.set_title(f"{broker_id} (無資料)")
-        continue
+| 漲停期(2/23~26) | 處置 D1-2 | D3-5 | D6-8 | D9-11 | D12-13 | 出處置 3/19 | 崩盤 3/20 |
+|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| **+6,520** | **-463** | **-2,432** | **-1,258** | **+380** | **-519** | **+2,998** | **-5,303** |
 
-    buy_prices = bdata.filter(pl.col("buy") > 0)
-    sell_prices = bdata.filter(pl.col("sell") > 0)
+- 處置最後兩天加速賣出 -519 張 — 趕在出處置前清倉
+- 3/20 繼續大賣 -5,303 張 — 出貨尚未結束
 
-    if buy_prices.height > 0:
-        bp = buy_prices["price_f"].to_list()
-        bw = [b / 1000 for b in buy_prices["buy"].to_list()]
-        ax.hist(bp, bins=15, weights=bw, alpha=0.6, color="red", label="買", density=False)
+### 10. 凱基（9200）
 
-    if sell_prices.height > 0:
-        sp = sell_prices["price_f"].to_list()
-        sw = [s / 1000 for s in sell_prices["sell"].to_list()]
-        ax.hist(sp, bins=15, weights=sw, alpha=0.6, color="green", label="賣", density=False)
+**身份**：全市場 PNL **#9**（+626 億）— 頂級自營；1 個月 PNL **#2** — **漲停段大贏家，正在獲利了結**
 
-    # Calc net
-    net_shares = broker_cum.filter(pl.col("broker") == broker_id)
-    net_str = ""
-    if net_shares.height > 0:
-        net_val = net_shares["total_net_shares"][0] / 1000
-        net_str = f" (淨{net_val:+,.0f}張)"
+**處置期淨賣超 -4,956 張**（買 5,226 / 賣 10,182），12 天活躍（買 7 / 賣 5）
 
-    ax.set_title(f"{broker_id}{net_str}", fontsize=10)
-    ax.set_xlabel("成交價")
-    ax.set_ylabel("張數")
-    ax.legend(fontsize=8)
-    ax.grid(True, alpha=0.3)
+| 漲停期(2/23~26) | 處置 D1-2 | D3-5 | D6-8 | D9-11 | D12-13 | 出處置 3/19 | 崩盤 3/20 |
+|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| **+706** | **-4,111** | **+1,348** | **+1,049** | **+178** | **-3,420** | +94 | **-8,031** |
 
-fig.suptitle("關鍵券商成交價格分布（處置期間）", fontsize=13, fontweight="bold")
-plt.tight_layout()
-plt.show()
-```
+- 漲停段最大贏家之一（1 個月 PNL #2），處置期間獲利了結
+- 處置最後兩天加速賣出 -3,420 張 — 趕在出處置前清倉
+- 3/20 繼續大賣 -8,031 張 — 出貨尚未結束
 
-## 5.3 VWAP 散佈圖
+### 11. 凱基-台北（9268）
 
-```{python}
-#| label: fig-ch5-vwap-scatter
-#| fig-cap: "全券商 VWAP 散佈圖：買進 VWAP vs 賣出 VWAP（氣泡大小 = 交易量）"
+**身份**：全市場 PNL **#1**（+3,125 億）— 頂級自營；1 個月 PNL **#4** — **漲停段大贏家，正在獲利了結**
 
-# Filter to brokers with both buy and sell
-vwap_both = vwap.filter(
-    (pl.col("buy_shares") > 50000) & (pl.col("sell_shares") > 50000)
-)
+**處置期淨賣超 -9,005 張**（買 3,036 / 賣 12,041），13 天活躍（買 5 / 賣 8）
 
-fig, ax = plt.subplots(figsize=(10, 8))
+| 漲停期(2/23~26) | 處置 D1-2 | D3-5 | D6-8 | D9-11 | D12-13 | 出處置 3/19 | 崩盤 3/20 |
+|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| **+430** | **-6,309** | **+958** | **-237** | **-725** | **-2,692** | +50 | **-4,624** |
 
-buy_v = vwap_both["buy_vwap"].to_list()
-sell_v = vwap_both["sell_vwap"].to_list()
-total = [(b + s) / 1000 for b, s in zip(vwap_both["buy_shares"].to_list(),
-                                          vwap_both["sell_shares"].to_list())]
-brokers_v = vwap_both["broker"].to_list()
-
-sizes = [max(t / 20, 10) for t in total]
-
-ax.scatter(buy_v, sell_v, s=sizes, alpha=0.5, color="steelblue", edgecolors="black", linewidth=0.5)
-
-# Diagonal line (break-even)
-lims = [min(min(buy_v), min(sell_v)) - 0.5, max(max(buy_v), max(sell_v)) + 0.5]
-ax.plot(lims, lims, "--", color="gray", alpha=0.5, label="打平線 (買=賣)")
-
-# Annotate key brokers
-for b_id in key_brokers:
-    idx_list = [i for i, b in enumerate(brokers_v) if b == b_id]
-    for i in idx_list:
-        ax.annotate(b_id, (buy_v[i], sell_v[i]), fontsize=8, fontweight="bold",
-                    color="red" if sell_v[i] > buy_v[i] else "green")
-
-ax.set_xlabel("買進 VWAP (元)", fontsize=12)
-ax.set_ylabel("賣出 VWAP (元)", fontsize=12)
-ax.set_title("買進 vs 賣出 VWAP（對角線上方 = 賺錢）", fontsize=13, fontweight="bold")
-ax.legend(fontsize=10)
-ax.grid(True, alpha=0.3)
-plt.tight_layout()
-plt.show()
-```
+- 漲停段最大贏家之一（1 個月 PNL #4），處置期間獲利了結
+- 處置最後兩天加速賣出 -2,692 張 — 趕在出處置前清倉
+- 3/20 繼續大賣 -4,624 張 — 出貨尚未結束
 
 ---
 
-# 第六章：處置解除後的崩盤 {#sec-ch6}
+## 四、處置策略現象驗證
 
-## 6.1 後處置期間每日統計
+假設：**有人在進處置前放空，處置內回補，並慢慢加碼**。
 
-```{python}
-#| label: ch6-data
-#| code-fold: true
+### 分點資料驗證
 
-post_disp = pl.read_parquet(f"{DATA_DIR}/ch6_post_disposition_daily.parquet")
-min_320 = pl.read_parquet(f"{DATA_DIR}/ch6_320_minute_ohlc.parquet")
-```
+篩選：漲停期（2/23~2/26）淨賣超 >100 張，且處置期買回量超過漲停期賣出量的 50%。
 
-```{python}
-#| label: tbl-ch6-post-disp
-#| tbl-cap: "3/19~3/20 前 15 大淨買超/賣超券商"
+符合條件：**8 家**
 
-for target_date, label in [(date(2026, 3, 19), "3/19 處置解除日"), (date(2026, 3, 20), "3/20 崩盤日")]:
-    day_data = post_disp.filter(pl.col("date") == target_date)
-    top5 = day_data.sort("net_shares", descending=True).head(5)
-    bot5 = day_data.sort("net_shares").head(5)
+| 分點 | 漲停期淨賣 | 處置期淨買 | 淨增持 | 3/20 |
+|------|-----------|-----------|--------|------|
+| 統一-士林（585M）| -207 | +2,084 | **+1,878** | -154 |
+| 元大-士林（981j）| -157 | +1,051 | **+894** | -875 |
+| 華南永昌-南京（9326）| -253 | +771 | **+518** | +53 |
+| 凱基-站前（920F）| -249 | +391 | **+141** | -622 |
+| 統一-三重（585J）| -124 | +307 | **+183** | +5 |
+| 台新-高雄（815A）| -211 | +254 | **+43** | +153 |
+| 中國信託-忠孝（6162）| -271 | +240 | **+-32** | +441 |
+| 凱基-高雄（9206）| -295 | +185 | **+-110** | +1,037 |
 
-    show = pl.concat([
-        top5.with_columns(pl.lit(f"{label} 買超").alias("分類")),
-        bot5.with_columns(pl.lit(f"{label} 賣超").alias("分類")),
-    ]).select([
-        pl.col("分類"),
-        pl.col("broker").alias("券商"),
-        (pl.col("net_shares") / 1000).round(0).cast(pl.Int64).alias("淨買超(張)"),
-        (pl.col("buy_shares") / 1000).round(0).cast(pl.Int64).alias("買(張)"),
-        (pl.col("sell_shares") / 1000).round(0).cast(pl.Int64).alias("賣(張)"),
-    ])
-    print(f"\n{'='*60}")
-    print(f"  {label}")
-    print(f"{'='*60}")
-    print(show)
-```
+### 結論
 
-## 6.2 3/20 崩盤分鐘圖
+**處置策略在分點層面存在，但規模有限**。8 家分點合計漲停期賣約 1,800 張，
+處置期買回約 5,300 張。這些都是地方型營業據點，非外資法人。
 
-```{python}
-#| label: fig-ch6-crash
-#| fig-cap: "3/20 崩盤日逐分鐘走勢 — 11 分鐘內從 47.15 暴跌至 38.65"
+但要注意：**分點資料看不到借券**。真正大規模的「先空後多」可能出現在借券通道。
+處置期間借券餘額增加 +2,676 張（+44.8%），這些空頭的身份無法從分點資料辨識。
 
-fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 7), height_ratios=[2, 1],
-                                sharex=True, gridspec_kw={"hspace": 0.05})
-
-times_str = min_320["time_str"].to_list()
-closes_320 = min_320["close"].to_list()
-vols_320 = [v / 1000 for v in min_320["volume"].to_list()]
-highs_320 = min_320["high"].to_list()
-lows_320 = min_320["low"].to_list()
-
-x = range(len(times_str))
-
-# Price
-ax1.plot(list(x), closes_320, "-", color="steelblue", linewidth=1.5)
-ax1.fill_between(list(x), lows_320, highs_320, alpha=0.2, color="steelblue")
-
-# Highlight crash zone (09:12 ~ 09:23)
-crash_start = times_str.index("09:12") if "09:12" in times_str else None
-crash_end = times_str.index("09:23") if "09:23" in times_str else None
-if crash_start and crash_end:
-    ax1.axvspan(crash_start, crash_end, alpha=0.2, color="red", label="崩盤區間 (09:12~09:23)")
-
-ax1.axhline(47.15, color="red", linestyle="--", alpha=0.5, linewidth=0.8)
-ax1.text(5, 47.3, "開盤 47.15", fontsize=9, color="red")
-ax1.axhline(38.65, color="green", linestyle="--", alpha=0.5, linewidth=0.8)
-ax1.text(5, 38.2, "收盤 38.65 (-18.0%)", fontsize=9, color="green")
-
-ax1.set_ylabel("價格 (元)", fontsize=12)
-ax1.set_title("3/20 崩盤日逐分鐘走勢", fontsize=13, fontweight="bold")
-ax1.legend(fontsize=10)
-ax1.grid(True, alpha=0.3)
-
-# Volume
-ax2.bar(list(x), vols_320, color="steelblue", alpha=0.7, width=1)
-if crash_start and crash_end:
-    ax2.axvspan(crash_start, crash_end, alpha=0.2, color="red")
-ax2.set_ylabel("成交量 (張)", fontsize=12)
-ax2.set_xlabel("時間", fontsize=12)
-ax2.grid(True, alpha=0.3)
-
-# X-axis labels
-step = 15
-ax2.set_xticks(list(range(0, len(times_str), step)))
-ax2.set_xticklabels([times_str[i] for i in range(0, len(times_str), step)], rotation=45, fontsize=9)
-
-plt.tight_layout()
-plt.show()
-```
-
-## 6.3 處置期間累積者在 3/20 的行為
-
-```{python}
-#| label: tbl-ch6-accumulator-behavior
-#| tbl-cap: "處置期間前 20 大累積買方在 3/20 崩盤日的動作"
-
-top_accumulators = broker_cum.sort("total_net_shares", descending=True).head(20)
-
-crash_day = post_disp.filter(pl.col("date") == date(2026, 3, 20))
-
-acc_crash = (
-    top_accumulators
-    .select(["broker", "total_net_shares"])
-    .join(crash_day.select(["broker", "net_shares", "buy_shares", "sell_shares"]),
-          on="broker", how="left")
-    .with_columns([
-        (pl.col("total_net_shares") / 1000).round(0).cast(pl.Int64).alias("處置期淨買(張)"),
-        (pl.col("net_shares").fill_null(0) / 1000).round(0).cast(pl.Int64).alias("3/20淨買(張)"),
-        (pl.col("buy_shares").fill_null(0) / 1000).round(0).cast(pl.Int64).alias("3/20買(張)"),
-        (pl.col("sell_shares").fill_null(0) / 1000).round(0).cast(pl.Int64).alias("3/20賣(張)"),
-    ])
-    .with_columns(
-        pl.when(pl.col("3/20淨買(張)") > 100).then(pl.lit("續買"))
-        .when(pl.col("3/20淨買(張)") < -100).then(pl.lit("反手賣"))
-        .otherwise(pl.lit("持平/未交易"))
-        .alias("3/20行為")
-    )
-    .select(["broker", "處置期淨買(張)", "3/20淨買(張)", "3/20買(張)", "3/20賣(張)", "3/20行為"])
-)
-acc_crash
-```
-
-::: {.callout-important}
-## 崩盤日總結
-
-3/20 的崩盤具有以下特徵：
-
-1. **開盤跳空漲停**（47.15），但隨即在 09:12 開始暴跌，至 09:23 已跌至 38.65，**11 分鐘跌幅 18%**
-2. 當日週轉率高達 **23.8%**，為整個觀察期最高
-3. 處置期間的主要累積者中，多數在崩盤日**反手出貨**
-4. 聰明錢在處置期間已提前出場，崩盤日的賣壓主要來自「後知後覺」的短線客
-:::
+這 8 家的行為更像「漲停時先獲利了結，處置期間趁低重建部位」，而非刻意的放空策略。
+證據：漲停期賣出量小（100~300 張）、處置期買入遠超賣出、多數在 3/20 後仍持有。
 
 ---
 
-# 結語
-
-2489 瑞軒的案例完整展現了台股處置機制下的市場微結構動態：
-
-~~1. **連續漲停觸發處置**：4 根漲停將一檔低流動性個股推入 20 分鐘集合競價~~
-~~2. **聰明錢的退場時間窗口**：PNL Top-20 券商利用 13 天處置期出貨 12,016 張~~
-
-::: {.callout-warning}
-## 第一版結論的修正
-
-上述結論在交叉驗證後被推翻或大幅修正。以下「深度洞察」章節呈現經過多資料源交叉驗證的分析。
-:::
-
-# 深度洞察：交叉驗證後的真實圖景
-
-## 修正 1：「聰明錢 vs 散戶」的錯誤分類
-
-第一版分析用**單一股票的 PNL ranking** 將出貨方標記為「聰明錢」。但交叉比對**全市場 broker_ranking** 後，真實圖景完全不同：
-
-```{python}
-#| label: deep-broker-identity
-#| code-fold: true
-
-import polars as pl
-from datetime import date
-
-# 載入各資料源
-cumul = pl.read_parquet(f"{DATA_DIR}/ch3_broker_cumulative.parquet")
-local_rank = pl.read_parquet(f"{DATA_DIR}/ch4_pnl_ranking.parquet").select(
-    pl.col("broker"), pl.col("rank").alias("local_rank")
-)
-global_rank = pl.read_parquet("../data/derived/broker_ranking.parquet")
-global_rank = global_rank.with_columns(pl.col("broker").cast(pl.Utf8))
-global_rank = global_rank.with_row_index("global_rank", offset=1).select(
-    "broker", "global_rank", pl.col("total_pnl").alias("global_pnl")
-)
-
-# 名稱
-all_names = []
-for d in ["20260302", "20260310", "20260318", "20260320"]:
-    tx = pl.read_parquet(f"/Users/vikhuang/r20/data/fugle/broker_tx/broker_tx_{d}.parquet")
-    n = tx.filter(pl.col("symbol_id") == "2489").select("broker", "broker_name").unique()
-    all_names.append(n)
-names = pl.concat(all_names).unique(subset=["broker"])
-
-# 日內當沖
-ds = pl.read_parquet("../data/daily_summary/2489.parquet")
-ds = ds.with_columns(pl.col("broker").cast(pl.Utf8))
-disp = ds.filter((pl.col("date") >= date(2026,3,2)) & (pl.col("date") <= date(2026,3,18)))
-dt = (
-    disp.filter((pl.col("buy_shares") > 0) & (pl.col("sell_shares") > 0))
-    .with_columns(pl.min_horizontal("buy_shares", "sell_shares").alias("dt_shares"))
-    .group_by("broker").agg(pl.col("dt_shares").sum().alias("total_dt"))
-)
-
-# 合併
-top = cumul.head(15).join(names, on="broker", how="left")
-top = top.join(global_rank, on="broker", how="left")
-top = top.join(local_rank, on="broker", how="left")
-top = top.join(dt, on="broker", how="left").with_columns(pl.col("total_dt").fill_null(0))
-
-bot = cumul.tail(15).reverse().join(names, on="broker", how="left")
-bot = bot.join(global_rank, on="broker", how="left")
-bot = bot.join(local_rank, on="broker", how="left")
-bot = bot.join(dt, on="broker", how="left").with_columns(pl.col("total_dt").fill_null(0))
-
-# 表格
-print("【吸籌方 Top 15】")
-print(f"{'代碼':>5} {'名稱':<12} {'淨(張)':>8} {'當沖(張)':>8} {'個股排名':>8} {'全市場排名':>10}")
-for row in top.iter_rows(named=True):
-    ns = row["total_net_shares"] / 1000
-    dt_l = row["total_dt"] / 1000
-    name = row.get("broker_name") or "?"
-    lr = row.get("local_rank") or "-"
-    gr = row.get("global_rank") or "-"
-    gp = row.get("global_pnl")
-    gp_s = f"(+{gp/1e8:.0f}億)" if gp and gp > 0 else f"({gp/1e8:.0f}億)" if gp else ""
-    print(f"  {row['broker']:>5} {name:<12} {ns:>+8,.0f} {dt_l:>8,.0f} {lr:>8} {gr:>6} {gp_s}")
-
-print()
-print("【出貨方 Top 15】")
-print(f"{'代碼':>5} {'名稱':<12} {'淨(張)':>8} {'當沖(張)':>8} {'個股排名':>8} {'全市場排名':>10}")
-for row in bot.iter_rows(named=True):
-    ns = row["total_net_shares"] / 1000
-    dt_l = row["total_dt"] / 1000
-    name = row.get("broker_name") or "?"
-    lr = row.get("local_rank") or "-"
-    gr = row.get("global_rank") or "-"
-    gp = row.get("global_pnl")
-    gp_s = f"(+{gp/1e8:.0f}億)" if gp and gp > 0 else f"({gp/1e8:.0f}億)" if gp else ""
-    print(f"  {row['broker']:>5} {name:<12} {ns:>+8,.0f} {dt_l:>8,.0f} {lr:>8} {gr:>6} {gp_s}")
-```
-
-::: {.callout-important}
-## 關鍵修正
-
-**出貨方不是「散戶」**。處置期間最大賣方是：
-
-- **凱基-台北**（全市場 PNL **#1**，累計 +3,125 億）：淨賣 -9,005 張
-- **凱基**（全市場 #9，+626 億）：淨賣 -4,956 張
-- **元大**（全市場 #3，+1,327 億）：淨賣 -4,292 張
-- **美林**（全市場 #4，+1,039 億）：淨賣 -905 張
-- **野村**（全市場 #5，+885 億）：淨賣 -1,617 張
-
-這些是**台股全市場排名 Top 10 的券商自營部門**。他們在 2489 個股上也排名前列（#3~#9），是真正的知情交易者。
-
-**吸籌方也不是「散戶接盤」**。最大買方國泰（全市場 #6，+864 億）是另一個頂級自營。但凱基-松山（+5,237 張）個股排名 #951 — 是一個在 2489 上歷史績效極差的分點。
-:::
-
-## 修正 2：「隱性當沖」的真實規模
-
-```{python}
-#| label: deep-daytrade
-#| code-fold: true
-
-# 日當沖佔比
-disp_with_dt = (
-    disp.with_columns(
-        pl.min_horizontal("buy_shares", "sell_shares").alias("dt_shares"),
-    )
-)
-
-daily_dt = (
-    disp_with_dt.group_by("date").agg(
-        pl.col("dt_shares").sum().alias("total_dt"),
-        pl.col("buy_shares").sum().alias("total_buy"),
-        (pl.col("dt_shares") > 0).sum().alias("n_dt_brokers"),
-    )
-    .sort("date")
-    .with_columns((pl.col("total_dt") / pl.col("total_buy") * 100).alias("dt_pct"))
-)
-
-fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 6), sharex=True)
-
-dates = [d.strftime("%m/%d") for d in daily_dt["date"].to_list()]
-dt_pct = daily_dt["dt_pct"].to_list()
-n_brokers = daily_dt["n_dt_brokers"].to_list()
-
-ax1.bar(dates, dt_pct, color="coral", alpha=0.8)
-ax1.axhline(y=50, color="red", linestyle="--", alpha=0.5, label="50%")
-ax1.set_ylabel("當沖佔買量 (%)")
-ax1.set_title("處置期間日內當沖比率")
-ax1.legend()
-
-ax2.bar(dates, n_brokers, color="steelblue", alpha=0.8)
-ax2.set_ylabel("當沖券商家數")
-ax2.set_xlabel("日期")
-
-plt.tight_layout()
-plt.show()
-
-print(f"\n處置期間當沖統計：")
-print(f"  平均當沖佔買量比：{sum(dt_pct)/len(dt_pct):.1f}%")
-print(f"  平均當沖券商家數：{sum(n_brokers)/len(n_brokers):.0f}")
-print(f"  → 每天有 300~600 家券商在 20 分鐘撮合間隔中做當沖")
-```
-
-外資法人的當沖行為特別值得關注：
-
-| 券商 | 淨部位 | 當沖量 | 當沖佔交易比 | 本質 |
-|------|--------|--------|------------|------|
-| 摩根士丹利 | -3,874 張 | 6,297 張 | **74%** | 高頻套利為主，順便出貨 |
-| 美商高盛 | -1,717 張 | 2,764 張 | **67%** | 同上 |
-| 統一 | +3,568 張 | 5,930 張 | **60%** | 大量當沖中淨累積 |
-| 富邦 | +1,754 張 | 5,057 張 | **68%** | 大量當沖中淨累積 |
-
-## 修正 3：借券空頭的精確追蹤
-
-```{python}
-#| label: deep-lending
-#| code-fold: true
-
-sh = pl.read_parquet("/Users/vikhuang/r20/data/tej/shareholding.parquet")
-r = (
-    sh.filter((pl.col("coid") == "2489") & (pl.col("mdate") >= date(2026,2,23)) & (pl.col("mdate") <= date(2026,3,20)))
-    .sort("mdate")
-)
-
-dates_sh = [d.strftime("%m/%d") for d in r["mdate"].to_list()]
-long_t = r["long_t"].to_list()
-borr_t = [v or 0 for v in r["borr_t1"].to_list()]
-short_t = [v or 0 for v in r["short_t"].to_list()]
-
-fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 6), sharex=True)
-
-# 處置期間背景
-disp_start_idx = dates_sh.index("03/02")
-disp_end_idx = dates_sh.index("03/18")
-
-for ax in [ax1, ax2]:
-    ax.axvspan(disp_start_idx - 0.5, disp_end_idx + 0.5, alpha=0.1, color="red", label="處置期間")
-
-ax1.plot(dates_sh, [v or 0 for v in long_t], "o-", color="red", label="融資餘額")
-ax1.set_ylabel("張數")
-ax1.set_title("融資餘額：散戶多殺多")
-ax1.legend()
-ax1.annotate(f"49,872→34,722\n(-30.4%)", xy=(8, 40000), fontsize=9, color="red",
-            bbox=dict(boxstyle="round,pad=0.3", facecolor="lightyellow"))
-
-ax2.plot(dates_sh, borr_t, "s-", color="purple", label="借券餘額")
-ax2.plot(dates_sh, short_t, "^-", color="blue", label="融券餘額", alpha=0.7)
-ax2.set_ylabel("張數")
-ax2.set_xlabel("日期")
-ax2.set_title("借券 + 融券餘額：空頭持續建倉")
-ax2.legend()
-ax2.annotate(f"借券 5,972→8,648\n(+44.8%)", xy=(8, 7000), fontsize=9, color="purple",
-            bbox=dict(boxstyle="round,pad=0.3", facecolor="lavender"))
-
-plt.xticks(rotation=45)
-plt.tight_layout()
-plt.show()
-
-print("關鍵事件：")
-print("  3/11: 借券單日暴增 +2,325 張（處置期間最大增幅）")
-print("  3/19 出處置: 融資/融券/借券全部歸零（TEJ 資料特性，非實際平倉）")
-print("  3/20: 借券暴增至 12,740 張（+4,092 張 vs 3/18），空頭大舉進場")
-print("  3/20: 融資暴增至 48,762 張（散戶重新開融資追高→被套）")
-```
-
-::: {.callout-tip}
-## 融資 vs 借券的故事
-
-處置期間兩股力量對抗：
-
-- **融資客（散戶多頭）**：餘額從 49,872 → 34,722 張（-30.4%）。在處置的低流動性環境中被迫減碼，或主動停損。
-- **借券方（專業空頭）**：餘額從 5,972 → 8,648 張（+44.8%）。3/11 單日增 2,325 張。持續加碼空頭。
-
-3/20 崩盤後，借券再增至 12,740 張 — 空頭不是平倉，而是**繼續加碼**。
-:::
-
-## 關鍵分點故事弧線
-
-```{python}
-#| label: deep-story-arcs
-#| code-fold: true
-
-ds_full = pl.read_parquet("../data/daily_summary/2489.parquet")
-ds_full = ds_full.with_columns(
-    pl.col("broker").cast(pl.Utf8),
-    (pl.col("buy_shares") - pl.col("sell_shares")).alias("net_shares"),
-)
-full = ds_full.filter((pl.col("date") >= date(2026,2,23)) & (pl.col("date") <= date(2026,3,20)))
-
-# 追蹤 6 個關鍵角色
-key_brokers = {
-    "9268": "凱基-台北 (#1全市場)",
-    "8880": "國泰 (#6全市場)",
-    "1470": "摩根士丹利",
-    "9217": "凱基-松山 (#951個股)",
-    "1560": "港商野村 (#5全市場)",
-    "9800": "元大 (#3全市場)",
-}
-
-# 價格
-prices_tej = pl.read_parquet("/Users/vikhuang/r20/data/tej/prices.parquet")
-p2489 = prices_tej.filter(pl.col("coid") == "2489").select("mdate", "close_d")
-
-dates_all = sorted(full["date"].unique().to_list())
-
-fig, axes = plt.subplots(3, 2, figsize=(14, 12))
-axes_flat = axes.flatten()
-
-for idx, (code, label) in enumerate(key_brokers.items()):
-    ax = axes_flat[idx]
-    cumul = 0
-    xs, ys_cumul, ys_daily = [], [], []
-
-    for d in dates_all:
-        day_data = full.filter((pl.col("broker") == code) & (pl.col("date") == d))
-        net = day_data["net_shares"][0] / 1000 if len(day_data) > 0 else 0
-        cumul += net
-        xs.append(d)
-        ys_cumul.append(cumul)
-        ys_daily.append(net)
-
-    # 價格 on twin axis
-    ax2 = ax.twinx()
-    price_vals = []
-    for d in dates_all:
-        p = p2489.filter(pl.col("mdate") == d)
-        price_vals.append(p["close_d"][0] if len(p) > 0 else None)
-    ax2.plot(xs, price_vals, color="gray", alpha=0.3, linewidth=1)
-    ax2.set_ylabel("股價", color="gray", fontsize=8)
-
-    # 累積部位
-    colors = ["green" if y >= 0 else "red" for y in ys_cumul]
-    ax.fill_between(xs, ys_cumul, alpha=0.3, color="green" if cumul > 0 else "red")
-    ax.plot(xs, ys_cumul, "o-", markersize=3, color="darkgreen" if cumul > 0 else "darkred")
-
-    # 處置期間背景
-    disp_start = date(2026, 3, 2)
-    disp_end = date(2026, 3, 18)
-    ax.axvspan(disp_start, disp_end, alpha=0.08, color="red")
-
-    ax.set_title(f"{label}", fontsize=10, fontweight="bold")
-    ax.set_ylabel("累積淨部位(張)")
-    ax.axhline(y=0, color="black", linewidth=0.5)
-    ax.tick_params(axis="x", rotation=45, labelsize=7)
-
-plt.suptitle("六大關鍵分點的完整故事弧線 (2/23~3/20)", fontsize=13, fontweight="bold")
-plt.tight_layout()
-plt.show()
-```
-
-### 六大角色解讀
-
-**凱基-台北（全市場 #1）**：處置首兩日大舉出貨 -6,309 張，之後小幅調整，3/18（最後一天）再砸 -2,279 張。3/20 繼續賣 -4,624 張。**有紀律的大規模出場，精準避開崩盤**。
-
-**國泰（全市場 #6）**：處置期間持續吸籌，在 3/10 最低點（35.40）大買 +2,196 張，3/11 再加 +1,508 張。**逆勢抄底，判斷股價被處置壓制低估**。3/20 崩盤仍加碼 +495 張。
-
-**摩根士丹利**：看似淨賣 -3,874 張，但 74% 交易量是當沖。**真正的策略是處置股高頻套利**，利用 20 分鐘撮合間隔的定價效率低落獲利。淨賣部分可能是套利方向的偏差。
-
-**凱基-松山（個股 #951）**：在 2489 歷史上績效最差的分點之一，卻在處置期間大舉買入 +5,237 張，11 天淨買。**這是新的資金進場，不是基於歷史績效的判斷**。可能代表新的委託人/策略。
-
-**野村（全市場 #5）**：只出現 4 天，純賣 -1,617 張，0 天買入。**果斷退場，不留任何部位**。
-
-**元大（全市場 #3）**：行為矛盾——處置前期買賣互見，3/18 突然大賣 -3,473 張（處置最後一天）。3/20 繼續砸 -8,031 張。**最後一刻轉向，趕在出處置前清倉**。
-
-## 3/20 崩盤微觀解剖
-
-```{python}
-#| label: deep-crash-320
-#| code-fold: true
-
-import polars as pl
-from datetime import datetime
-
-# Tick 價格崩跌
-trades = pl.read_parquet("/Volumes/DataSSD/twse-tick/trades/Equity/20260320.parquet")
-t2489 = trades.filter((pl.col("symbol") == "2489") & (pl.col("isTrial") == False)).sort("time")
-
-# 轉換為分鐘 OHLCV
-t2489_min = t2489.with_columns(
-    (pl.col("time") // 60_000_000 * 60_000_000).alias("min_bucket")
-)
-min_ohlc = (
-    t2489_min.group_by("min_bucket").agg(
-        pl.col("price").first().alias("open"),
-        pl.col("price").max().alias("high"),
-        pl.col("price").min().alias("low"),
-        pl.col("price").last().alias("close"),
-        pl.col("size").sum().alias("volume"),
-    )
-    .sort("min_bucket")
-    .with_columns(
-        pl.col("min_bucket").map_elements(
-            lambda x: datetime.fromtimestamp(x / 1_000_000).strftime("%H:%M"),
-            return_dtype=pl.Utf8,
-        ).alias("time_str")
-    )
-)
-
-# 只看 09:00~10:00（崩跌核心時段）
-crash_period = min_ohlc.filter(
-    pl.col("time_str").str.starts_with("09:")
-)
-
-fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 7), sharex=True,
-                                 gridspec_kw={"height_ratios": [3, 1]})
-
-times = crash_period["time_str"].to_list()
-opens = crash_period["open"].to_list()
-closes = crash_period["close"].to_list()
-highs = crash_period["high"].to_list()
-lows = crash_period["low"].to_list()
-volumes = [v / 1000 for v in crash_period["volume"].to_list()]
-
-x = range(len(times))
-
-# 蠟燭圖
-for i, (o, c, h, l) in enumerate(zip(opens, closes, highs, lows)):
-    color = "green" if c >= o else "red"
-    ax1.plot([i, i], [l, h], color=color, linewidth=0.8)
-    ax1.plot([i, i], [min(o,c), max(o,c)], color=color, linewidth=4)
-
-ax1.axhline(y=47.15, color="blue", linestyle="--", alpha=0.3, label="開盤 47.15")
-ax1.axhline(y=38.65, color="red", linestyle="--", alpha=0.3, label="收盤 38.65")
-ax1.axvline(x=times.index("09:12") if "09:12" in times else 12, color="orange",
-            linestyle=":", alpha=0.5)
-ax1.annotate("09:12:48\n大單砸穿", xy=(12, 46), fontsize=9, color="orange",
-            ha="center", bbox=dict(boxstyle="round,pad=0.3", facecolor="lightyellow"))
-ax1.set_ylabel("價格")
-ax1.set_title("3/20 崩盤：逐分鐘蠟燭圖（09:00~10:00）", fontsize=12, fontweight="bold")
-ax1.legend(fontsize=8)
-
-# 成交量
-colors_v = ["green" if c >= o else "red" for o, c in zip(opens, closes)]
-ax2.bar(x, volumes, color=colors_v, alpha=0.7)
-ax2.set_ylabel("量(張)")
-ax2.set_xticks(list(x)[::3])
-ax2.set_xticklabels([times[i] for i in range(0, len(times), 3)], rotation=45)
-
-plt.tight_layout()
-plt.show()
-
-print("3/20 崩盤時序：")
-print("  09:00    開盤 47.15（漲停價）")
-print("  09:00~09:12  47.15 持平，小額交易（每筆 1~22 股）")
-print("  09:12:48  大量 499 股拆單賣壓湧入（程式交易特徵）")
-print("           47.15 → 46.00 逐格砸穿（12 秒內）")
-print("  09:14    跳空至 43.00（買盤真空）")
-print("  09:21    跌至 39.80")
-print("  09:23    觸及最低 38.65（跌停價）")
-print("  09:25~09:35  反彈至 41.80 後再回落")
-print("  → 12 分鐘內從漲停跌到跌停，振幅 18%")
-```
-
-### 3/20 分點交叉：誰在高賣？誰在低買？
-
-```{python}
-#| label: deep-crash-brokers
-#| code-fold: true
-
-tx = pl.read_parquet("/Users/vikhuang/r20/data/fugle/broker_tx/broker_tx_20260320.parquet")
-tx2489 = tx.filter(pl.col("symbol_id") == "2489").with_columns(
-    pl.col("price").cast(pl.Float64).alias("price_f")
-)
-
-# ≥45 賣出（開盤高價出貨）
-hs = (
-    tx2489.filter((pl.col("price_f") >= 45.0) & (pl.col("sell") > 0))
-    .group_by("broker", "broker_name")
-    .agg(pl.col("sell").sum().alias("sell_sh"))
-    .sort("sell_sh", descending=True)
-)
-
-# <40 買入（崩跌抄底）
-lb = (
-    tx2489.filter((pl.col("price_f") < 40.0) & (pl.col("buy") > 0))
-    .group_by("broker", "broker_name")
-    .agg(pl.col("buy").sum().alias("buy_sh"))
-    .sort("buy_sh", descending=True)
-)
-
-fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
-
-# 高價賣出
-top_hs = hs.head(10)
-ax1.barh(range(10), [v/1000 for v in top_hs["sell_sh"].to_list()], color="red", alpha=0.7)
-ax1.set_yticks(range(10))
-ax1.set_yticklabels(top_hs["broker_name"].to_list(), fontsize=9)
-ax1.set_xlabel("賣出張數")
-ax1.set_title("≥45 元賣出 Top 10\n（開盤高價出貨）", fontsize=11, fontweight="bold")
-ax1.invert_yaxis()
-
-# 低價買入
-top_lb = lb.head(10)
-ax2.barh(range(10), [v/1000 for v in top_lb["buy_sh"].to_list()], color="green", alpha=0.7)
-ax2.set_yticks(range(10))
-ax2.set_yticklabels(top_lb["broker_name"].to_list(), fontsize=9)
-ax2.set_xlabel("買入張數")
-ax2.set_title("<40 元買入 Top 10\n（崩跌後抄底）", fontsize=11, fontweight="bold")
-ax2.invert_yaxis()
-
-plt.suptitle("3/20 崩盤日：高價出貨 vs 低價抄底", fontsize=13, fontweight="bold")
-plt.tight_layout()
-plt.show()
-
-print("【凱基系統的攻防】")
-print("  凱基（自營）: ≥45 賣出 9,483 張 → 開盤精準出貨")
-print("  凱基-台北:    <40 買入 9,953 張 → 崩跌後大量抄底")
-print("  → 同一家券商不同分點，一邊在漲停出貨，一邊在跌停抄底")
-print()
-print("【元大的反轉】")
-print("  元大: ≥45 賣出 1,970 張 → 高價先出")
-print("  元大: <40 買入 4,515 張 → 低價大量回補")
-print("  → 3/18 最後一天清倉 -3,473 張，3/20 高出低進")
-```
-
-## 最終結論（修正版）
-
-::: {.callout-note}
-## 處置期間的真實戰場
-
-1. **這不是「聰明錢 vs 散戶」，而是「不同知情交易者的多空對決」**。出貨方（凱基系統、美林、野村）和吸籌方（國泰、永豐金）都是全市場 Top 10 級別的專業券商。
-
-2. **外資法人（摩根士丹利、高盛）不是在出貨，而是在做處置股套利**。74% 的交易量是當沖，他們利用 20 分鐘撮合的低效率做價差。
-
-3. **借券空頭是隱藏的第三方力量**。處置期間借券增 44.8%（+2,676 張），3/20 崩盤後再增至 12,740 張。這些空頭在處置期間悄悄建倉，出處置後收割。
-
-4. **融資客是最大輸家**。餘額從 ~50,000 降至 ~35,000 張（-30%），被低流動性的 20 分鐘撮合逼出場。3/20 又衝進去（+48,762 張），在漲停追高後被套在 38.65。
-
-5. **3/20 崩盤是精準設計的**。凱基自營在 ≥45 出貨 9,483 張，同時凱基-台北在 <40 抄底 9,953 張。同一券商體系的兩個分點，一個做空一個做多。12 分鐘從漲停到跌停。
-
-6. **國泰的逆向策略值得追蹤**。在所有人出逃時持續吸籌（+7,761 張），在最低點 35.40 大買 1,402 張。3/20 崩盤仍加碼。cost basis ~39.5，目前帳面微虧。如果股價回到 40 以上，國泰是最大贏家。
-:::
+## 五、借券空頭：隱藏的第三方力量
+
+| 日期 | 融資餘額 | 變動 | 借券餘額 | 變動 | 融券餘額 | 變動 | 階段 |
+|------|---------|------|---------|------|---------|------|------|
+| 2026-02-23 | 48,564 | — | 4,977 | — | 530 | — | 漲停 |
+| 2026-02-24 | 48,419 | -145 | 4,686 | -291 | 595 | +65 | 漲停 |
+| 2026-02-25 | 49,168 | +749 | 4,953 | +267 | 668 | +73 | 漲停 |
+| 2026-02-26 | 50,819 | +1,651 | 5,577 | **+624** | 2,722 | +2,054 | 漲停 |
+| 2026-03-02 | 49,872 | -947 | 5,972 | +395 | 1,683 | -1,039 | 處置 |
+| 2026-03-03 | 42,900 | -6,972 | 5,972 | — | 1,076 | -607 | 處置 |
+| 2026-03-04 | 41,135 | -1,765 | 5,972 | — | 978 | -98 | 處置 |
+| 2026-03-05 | 40,226 | -909 | 6,121 | +149 | 941 | -37 | 處置 |
+| 2026-03-06 | 40,265 | +39 | 5,724 | -397 | 735 | -206 | 處置 |
+| 2026-03-09 | 40,078 | -187 | 5,585 | -139 | 1,141 | +406 | 處置 |
+| 2026-03-10 | 38,823 | -1,255 | 5,585 | — | 699 | -442 | 處置 |
+| 2026-03-11 | 37,458 | -1,365 | 7,910 | **+2,325** | 552 | -147 | 處置 |
+| 2026-03-12 | 36,401 | -1,057 | 8,166 | +256 | 419 | -133 | 處置 |
+| 2026-03-13 | 35,621 | -780 | 8,359 | +193 | 462 | +43 | 處置 |
+| 2026-03-16 | 35,442 | -179 | 8,381 | +22 | 446 | -16 | 處置 |
+| 2026-03-17 | 34,598 | -844 | 8,418 | +37 | 299 | -147 | 處置 |
+| 2026-03-18 | 34,722 | +124 | 8,648 | +230 | 406 | +107 | 處置 |
+| 2026-03-19 | 0 | -34,722 | 0 | **-8,648** | 0 | -406 | 出處置 |
+| 2026-03-20 | 48,762 | +48,762 | 12,740 | **+12,740** | 2 | +2 | 出處置 |
+
+### 關鍵觀察
+
+**1. 借券空頭持續建倉**：5,972 → 8,648 張（+2,676, **+44.8%**）。3/11 單日 +2,325 張。
+
+**2. 融資多殺多**：49,872 → 34,722 張（-15,150, **-30.4%**）。處置的低流動性（20 分鐘撮合）
+加上禁止融資新增，迫使散戶斷頭或減碼。最劇烈的 3/3 單日 -6,972 張。
+
+**3. 3/19 數據歸零**：TEJ 處置結束後重新計算，融資/融券/借券當日顯示為零或 null。
+
+**4. 3/20 借券暴增至 12,740 張**：比 3/18（8,648）再增 +4,092 張。空頭在崩盤日繼續加碼，
+不是在平倉。他們在 47.15 放空，38.65 收盤 — 單日利潤 18%。
+
+**5. 3/20 融資暴增至 48,762 張**：散戶在漲停開盤追高開融資，被套在 38.65。**這是崩盤的接盤方**。
 
 ---
 
-::: {.callout-note collapse="true"}
-## 資料來源與方法說明
+## 六、3/20 崩盤精確還原
 
-- 市場行情資料：TEJ 日頻 OHLCV（`~/r20/data/tej/prices.parquet`）
-- 處置/注意旗標：TEJ stock_attr（`atten_fg`, `disp_fg`）
-- 融資融券/借券：TEJ shareholding（`long_t`, `short_t`, `borr_t1`）
-- 券商分點資料：Fugle broker_tx（日頻 × 券商 × 價位）
-- ws-branch 彙總：daily_summary、pnl_daily、pnl（FIFO 損益）
-- 全市場排名：ws-branch broker_ranking（全市場 3 年滾動 PNL）
-- Tick 微觀結構：Fugle tick trades + orderbooks（SSD）
-- 所有計算使用 Polars，圖表使用 matplotlib
-- 本報告資料截至 2026-03-20
-- **交叉驗證**：每個結論至少經過兩個獨立資料源驗證
-:::
+3/20 恢復正常連續撮合，共 19,499 筆成交，成交量 145,087 張（週轉率 23.8%）。
+
+### Tick 時序
+
+| 時間 | 事件 | 價格 |
+|------|------|------|
+| 09:00 | 開盤 | **47.15**（漲停價）|
+| 09:00~09:12 | 維持漲停，小額交易（每筆 1~50 股）| 47.15 |
+| **09:12:48** | **大量 499 股拆單賣壓**（程式交易拆單，避免大單揭露）| 47.15 → 46.00（12 秒）|
+| 09:14 | 跳空，買盤真空 | 43.00 → 41.50 |
+| 09:21 | 持續下殺 | 39.80 |
+| **09:23** | 觸及最低 | **38.65** |
+| 09:25~13:30 | 反彈後震盪 | 38~42 來回 |
+| 13:30 | 收盤 | **38.65** |
+
+**從漲停到接近跌停，11 分鐘。**
+
+### 大單時序 × 分價量：拆單指紋辨識
+
+3/20 共有 161 筆 ≥100 張的大單，合計 60,211 張（佔全日成交量 42%）。
+其中出現兩種明顯的程式交易拆單指紋：
+
+**指紋 A：499 張拆單**
+
+| 價格 | 筆數 | 合計 | 時間 | 方向 |
+|------|------|------|------|------|
+| 47.15 | 18 | 8,982 張 | **09:12:48**（全部在同一秒內）| **賣壓 → 觸發崩跌** |
+| 38.65 | 15 | 7,485 張 | 09:25、10:18、10:22、12:10（分四波）| 買盤（跌停承接）|
+
+broker_tx 交叉：凱基自營（9200）在 47.15 賣出 **9,483 張**，與 09:12:48 的 499 × 18 + 451 = 9,451 張**高度吻合**。
+→ **09:12:48 觸發崩跌的 499 張拆單，極大概率來自凱基自營的客戶。**（1 個月 PNL #2，漲停段大贏家）
+
+**指紋 B：487 張拆單**
+
+| 價格 | 筆數 | 合計 | 時間 | 方向 |
+|------|------|------|------|------|
+| 38.65 | 21 | 10,227 張 | 09:25（6筆）、10:22（11筆）、12:59（4筆）| 買盤（分三波承接）|
+
+487 拆單只出現在 38.65（跌停價），只有買方向。候選匹配：
+- 元富-西松（9B2n）在 38.65 買入 6,012 張
+- 凱基-台北（9268）在 38.65 買入 6,030 張
+
+兩者在 38.65 的買入量都約 6,000 張，但 487 × 21 = 10,227 張，超過任一單一分點。
+推測：**487 拆單是兩個或以上分點的程式交易合併效果**（可能共用同一策略系統）。
+
+**其他大單匹配**：
+
+| 時間 | 價格 | 量 | broker_tx 匹配 | 說明 |
+|------|------|-----|---------------|------|
+| 09:00:06 | 47.15 | **6,008** | 開盤集合競價（多方掛單合併） | 全日最大單筆 |
+| 09:14:48 | **43.00** | **1,748** | 凱基-台北賣 437、元大賣 106 | 跳空下殺接盤（買方分散） |
+| 09:16:53 | 41.00 | 1,339 | — | 連續下殺 |
+| 09:18:55 | 42.90 | **2,269** | — | 首波反彈 |
+| 09:21:07 | 41.20 | 1,376 | — | 二次下殺 |
+| 09:23:32 | 40.00 | 806 | — | 跌破 40 |
+| 10:18:53 | 38.65 | 499×5+436+499×2+372 = **3,803** | 連續拆單買入 | 第二波跌停承接 |
+| 10:22:46~50 | 38.65 | 487×6+100×3+200×2+499×3+484+487×6+415 = **8,600** | 最大規模承接 | 第三波跌停掃貨 |
+
+### 元富-西松的特殊行為
+
+元富-西松（9B2n）的價位分佈極度異常：
+
+- 在 38.65 買入 **6,012 張**（幾乎全部集中在跌停價）
+- 同時在 38.65~42.00 區間分散賣出 **6,167 張 + 其他零星 ~1,100 張**
+- 在 47.15 買入 320 張、賣出 10 張
+- **淨部位 -769 張**（微量淨賣）
+
+這是典型的**跌停價掃貨 + 反彈後分批出場**的日內策略。在 38.65 一次性大量買入，
+然後在 39~42 的反彈中以每個價位 10~100 張的小量分批賣出。
+
+### 凱基-台北的全價位分佈
+
+凱基-台北（9268）的行為更複雜：
+
+- 在 47.15 **買入 286 張、賣出 1,546 張**（開盤出貨）
+- 在 43.00 **賣出 437 張**（跳空後繼續賣）
+- 在 38.65 **買入 6,030 張、賣出 6,645 張**（跌停價大量雙向交易）
+- 在 39~42 區間大量雙向分散交易
+
+整體淨部位 -4,624 張（淨賣）。但行為模式是**全價位做市**——在每個價位都有買有賣，
+在極端價位（47.15 和 38.65）量最大。這不是單純的方向性交易，
+更像是該據點有**多個不同策略的客戶**同時在操作。
+
+### 分點交叉：誰在高賣？誰在低買？
+
+**≥45 元賣出 Top 5（開盤高價出貨）**：
+
+| 分點 | 賣出張數 | VWAP | 說明 |
+|------|---------|------|------|
+| 凱基（9200）| **9,483** | 47.15 | 幾乎全在漲停價出 |
+| 元大（9800）| 1,970 | 47.11 | |
+| 凱基-台北（9268）| 1,546 | 47.15 | |
+| 瑞銀（1650）| 623 | 47.15 | |
+| 統一（5850）| 413 | 47.15 | |
+
+**<40 元買入 Top 5（崩跌抄底）**：
+
+| 分點 | 買入張數 | VWAP | 說明 |
+|------|---------|------|------|
+| **凱基-台北（9268）**| **9,953** | 38.88 | 崩跌後最大買方 |
+| 元富-西松（9B2n）| 6,035 | 38.65 | 最低價掃貨 |
+| 元大（9800）| 4,515 | 39.18 | 高出低進 |
+| 富邦（9600）| 3,291 | 39.13 | |
+| 國泰-敦南（8888）| 2,409 | 39.10 | |
+
+**凱基分點的分歧**：凱基自營（9200）的客戶在 ≥45 出貨 9,483 張，
+凱基-台北（9268）的客戶在 <40 買入 9,953 張。同一券商招牌下，不同據點的客戶方向完全相反。
+
+---
+
+## 七、分價量 × Tick 交叉驗證：每次撮合誰在買誰在賣
+
+處置期間每天只有 15 次撮合（20 分鐘間隔），每次有明確的成交價和成交量。
+Fugle 分點資料（broker_tx）記錄了每個分點在每個價位的買賣張數。
+**兩者交叉，可以精確還原每次撮合的買賣雙方。**
+
+以下挑選四個關鍵交易日，逐次撮合拆解。
+
+### 3/2（處置首日，收 43.55，+9.97%）
+
+處置首日仍收漲停。成交集中在三個價位：41.05（開盤撮合）、42.15、43.55（漲停價）。
+
+| 時間 | 成交價 | 量(張) | 主要買方 | 主要賣方 |
+|------|-------|-------|---------|---------|
+| 09:00 | 41.05 | 3,299 | 統一-城中 720、統一-士林 522、富邦 452 | 元大 539、國泰-敦南 217 |
+| 09:20 | 42.15 | 5,353 | **凱基-松山 700**、統一 599、永豐金-敦南 544 | **凱基 1,140**、凱基-台北 470 |
+| 09:40~13:30 | **43.55** | 16,105 | **凱基-松山 2,028**、富邦-仁愛 1,713、**麥格理 1,405** | **凱基-台北 2,335**、**凱基 2,244**、元大-大同 1,028 |
+
+**發現**：
+
+1. **凱基系分點方向分歧**：凱基-松山的客戶在 42.15~43.55 買入 2,728 張；凱基自營和凱基-台北的客戶在同價位賣出 4,579 張。同一券商招牌下，不同據點的客戶看法完全相反。
+2. **麥格理進場**：外資法人麥格理在 43.55 漲停價買入 1,405 張（處置期共買 4,040 張，只出現 4 天）。
+3. **開盤價 41.05 而非漲停**：處置首日開盤未鎖漲停，41.05 先成交 3,299 張後才逐步推升至 43.55。
+
+### 3/3（處置 D2，從 47.90 崩至 40.30）
+
+這是處置期間價格波動最劇烈的一天：開盤撮合 47.90（漲停），之後一路崩至 39.20，收盤回到 40.30。
+16 次撮合中，價格經歷了完整的崩跌和反彈。
+
+| 時間 | 成交價 | 主要買方 | 主要賣方 |
+|------|-------|---------|---------|
+| 09:00 | **47.90** | **台新-建北 1,885**、統一 824、凱基-松山 516 | 富邦 530、凱基-台北 465 |
+| 09:40 | 47.15 | 麥格理 1,000、凱基-松山 906 | 統一 773、富邦 610 |
+| 10:02 | 43.55 | 富邦 1,049、麥格理 600、**國泰 539** | 凱基-台北 799、凱基 319 |
+| 10:22 | 43.40 | 富邦 906、永豐金 302 | 凱基 256 |
+| 11:44 | 41.55 | **國泰 400**、麥格理 200 | 富邦 515、華南永昌 353 |
+| 12:04 | 41.30 | **國泰 714**、麥格理 200 | 凱基-台北 253、野村 160 |
+| 12:44 | 39.30 | **國泰 704**、凱基-台中 400 | **凱基 810**、凱基-台北 636 |
+| 13:04 | **39.20** | 凱基-松山 685、**國泰 500** | **凱基-台北 1,062**、凱基-信義 800 |
+| 13:30 | 40.30 | 統一-士林 193、凱基-台北 163 | 統一-新竹 330 |
+
+**發現**：
+
+1. **國泰逐級承接**：從 43.55 開始買入 539 張，41.55 加碼 400 張，41.30 再加 714 張，39.30 追加 704 張，39.20 再加 500 張。**價格越跌買越多，典型的分批掛單承接策略**。
+2. **台新-建北在漲停 47.90 大買 1,885 張**：這是當天最高價的最大買方。3/3 收盤跌至 40.30，帳面虧損 16%。但台新-建北在整個處置期累積 +3,034 張——堅定看多。
+3. **凱基多個分點全天在賣**：凱基自營、凱基-台北、凱基-信義的客戶從 47.90 一路賣到 39.20。
+4. **富邦行為矛盾**：09:00 在 47.90 賣出 530 張，10:02 在 43.55 又買入 1,049 張。高賣低買，利用處置期的劇烈波動做波段。
+
+### 3/10（處置最低日，收 35.40）
+
+處置期間最慘烈的一天。開盤撮合 39.00，之後一路崩至 35.40 並鎖住到收盤。
+
+| 時間 | 成交價 | 主要買方 | 主要賣方 |
+|------|-------|---------|---------|
+| 09:00 | 39.00 | 元大-士林 200、凱基-板橋 104 | 元大 200、凱基 60 |
+| 09:22 | **36.50** | **國泰 600**、凱基 400、凱基-基隆 250 | **富邦-仁愛 1,054**、元大 610 |
+| 09:42 | 36.60 | 凱基 320、聯邦-興中 300、凱基-市政 260 | 摩根士丹利 243、國票-安和 200 |
+| 10:22 | 38.40 | 國泰 100 | 統一 229、凱基-台北 97 |
+| 11:22 | 36.00 | 富邦 220、凱基-站前 91 | 永豐金-信義 200、元大 200 |
+| **11:42~13:30** | **35.40** | **國泰 1,400**、富邦 800、摩根士丹利 403 | 統一 1,014、**永豐金-敦南 1,009**、國票-安和 647 |
+
+**發現**：
+
+1. **國泰精準抄底**：09:22 在 36.50 買入 600 張，11:42 在 35.40（最低價）買入 **1,400 張**。國泰在這一天的行為是教科書級的逆勢承接。
+2. **永豐金體系的矛盾**：永豐金總部（9A00）處置期間是淨買方（+3,431 張），但永豐金-敦南（9A8F）在 35.40 最低價賣出 1,009 張。同一券商不同據點、不同客戶、完全相反的方向。
+3. **摩根士丹利的雙面**：在 35.40 買入 403 張（抄底），但同時 09:42 在 36.60 也被記為買方。處置期間摩根士丹利整體淨賣 -3,874 張，但在最低點反而是買方——**趁恐慌低點回補部分空頭**。
+4. **35.40 鎖住 6 次撮合**（11:42~13:30）：買賣雙方在 35.40 僵持不下，國泰 1,400 張 vs 統一 1,014 張 + 永豐金-敦南 1,009 張。下午完全沒有新的價格發現。
+
+### 3/18（處置最後一天，收 39.00）
+
+最後一天，所有參與者都知道隔天恢復正常交易。行為會暴露真實意圖。
+
+| 時間 | 成交價 | 主要買方 | 主要賣方 |
+|------|-------|---------|---------|
+| 09:00 | 39.90 | 富邦 100 | 富邦 205、**凱基 100** |
+| 09:40 | 38.85 | 富邦 600、永豐金 120 | **凱基 710**、富邦 219 |
+| 10:00 | 38.50 | 國票-安和 550、群益-忠孝 405、凱基-市政 400 | **凱基 1,470**、凱基-台北 703、富邦 670 |
+| 10:20 | **38.00** | 永豐金 436、統一 368 | **凱基 1,020**、宏遠 430、凱基-高雄 230 |
+| 10:42 | 39.50 | 統一 636、永豐金 453、台新 270 | 凱基-高雄 572、凱基-台北 403 |
+| 11:22 | 39.00 | 統一 863、元富-大昌 371、摩根士丹利 260 | 凱基-台北 899、凱基-高雄 819、**高盛 565** |
+| 13:30 | 39.00 | 統一 863、元富-大昌 371 | 凱基-台北 899、凱基-高雄 819、高盛 565 |
+
+**發現**：
+
+1. **凱基自營（9200）最後一天全面清倉**：在 38.50 掛賣 1,470 張、38.00 掛賣 1,020 張、38.85 掛賣 710 張——**不惜以低於前日收盤的價格出場**。這是「不計代價出清」的訊號。
+2. **永豐金最後一天大買**：處置期整體 +3,431 張，最後一天在 38.00~39.50 多個價位累積。加上 3/2~3/18 的逐日數據，永豐金是全程穩定的買方。
+3. **統一在最後一天轉為大買方**：11:22 和 13:30 在 39.00 買入 863 張。統一處置期整體是淨買方（+3,568 張）。
+4. **高盛在最後一天出現**：39.00 賣出 565 張。處置期整體淨賣 -1,717 張，最後一天加速。
+
+### 交叉驗證總結
+
+分價量與 tick 的交叉驗證揭示了幾個靠日頻數據看不到的事實：
+
+1. **同券商不同分點方向相反是常態**：凱基-松山（買）vs 凱基自營、凱基-台北（賣）。每個分點是獨立營業據點，背後是不同客戶。方向相反只代表不同客戶的判斷分歧，不代表任何協調行為。
+
+2. **國泰的承接策略是分批掛單**：不是一次性市價單，而是在多個價位分散掛買單，越跌掛越多。3/10 在 36.50 和 35.40 兩個價位分別掛 600 和 1,400 張。這是有計畫的吸籌。
+
+3. **同券商不同分點方向完全相反很常見**：永豐金買、永豐金-敦南賣；富邦有時買有時賣。每個分點是獨立個體，反映的是該據點客戶群的行為，不是券商的統一策略。
+
+4. **處置的 20 分鐘撮合使大單無處藏身**：正常交易中，大單可以拆成小單在連續撮合中隱藏。但處置的集合競價中，所有掛單在撮合瞬間同時成交，broker_tx 精確記錄了每個分點在每個價位的量。這是分點分析最透明的環境。
+
+---
+
+## 八、短窗口 PNL 分層（2/1~3/20）
+
+使用 2/1~3/20 的完整窗口（涵蓋漲停、處置、出處置全程），排名結果：
+
+| 排名 | 分點 | PNL（2/1~3/20）| 處置期淨買超 | 解讀 |
+|------|------|---------------|------------|------|
+| #1 | 群益金鼎 | +4.56 億 | +245 | 小量持有，不積極 |
+| #2 | **凱基** | **+4.17 億** | **-4,956** | 大贏家出場 |
+| #3 | 元大-樹林 | +2.88 億 | -31 | 觀望 |
+| #4 | **凱基-台北** | **+1.93 億** | **-9,005** | 最大出貨方 |
+| #5 | **永豐金** | **+1.80 億** | **+3,431** | 贏家仍加碼 |
+| #6 | 摩根士丹利 | +1.39 億 | -3,874 | 出場 |
+| #7 | 富邦 | +1.35 億 | +1,754 | 加碼 |
+| #8 | 高盛 | +1.30 億 | -1,717 | 出場 |
+| #9 | **國泰** | **+1.15 億** | **+7,761** | 最大吸籌方 |
+| #10 | 野村 | +1.09 億 | -1,617 | 出場 |
+
+分層結果：
+
+| 分層 | 處置期淨買超 | 家數 | 含義 |
+|------|------------|------|------|
+| **贏家 Top 20** | **-12,926 張** | 19 | 這輪行情賺最多的人在出場 |
+| **輸家 Bottom 20** | **+5,697 張** | 18 | 帳面虧損的人在加碼 |
+| 其他 | +6,224 張 | 768 | |
+
+（註：窗口從 2/1~3/1 改為 2/1~3/20 後，Top 20 和 Bottom 20 成員幾乎不變，分層淨買超數字完全相同。
+原因：處置期間成交量小，對 PNL 的邊際影響有限；真正決定排名的是漲停段的部位方向。）
+
+**贏家陣營分裂**：
+
+- **出場派**：凱基（#2, -4,956 張）、凱基-台北（#4, -9,005 張）、摩根士丹利（#6, -3,874 張）、
+  高盛（#8, -1,717 張）、野村（#10, -1,617 張）
+- **加碼派**：永豐金（#5, +3,431 張）、富邦（#7, +1,754 張）、國泰（#9, +7,761 張）
+
+**不是「聰明錢 vs 散戶」，是贏家之間的多空分歧。**
+出場派認為漲停段的利潤已足夠，趁處置期流動性低出場；
+加碼派認為處置壓制了股價，是加碼的好機會。
+
+---
+
+## 九、國泰的策略
+
+| 日期 | 淨買超(張) | 股價 | 說明 |
+|------|-----------|------|------|
+| 2/2~2/11 | +3,960 | 17~19 | 股價 17-19 元時已大量建倉 |
+| 2/23~2/26 | +353 | 29.8~39.6 | 漲停期小量加碼 |
+| 3/2~3/3 | +2,377 | 43.6→40.3 | 處置首兩日逆勢大買 |
+| **3/10~3/11** | **+3,704** | **35.4→37.5** | **處置最低點精準抄底** |
+| 3/12~3/18 | +1,436 | 37.6~39.0 | 持續累積 |
+| 3/19 | -441 | 42.9 | 出處置漲停，小量減碼 |
+| 3/20 | +495 | 38.65 | 崩盤仍加碼 |
+
+國泰從 2 月初 17~19 元就在建倉，整體成本遠低於處置期間的 39.5 VWAP。
+3/10 最低點 35.40 時單日買 +2,196 張。3/20 崩盤仍加碼。
+**行為與客戶完全一致——長線看好基本面，逢低加碼。**
+
+---
+
+## 十、凱基-松山之謎
+
+| 日期 | 淨買超(張) | 說明 |
+|------|-----------|------|
+| 1 月全月 | -658 | 持續小賣 |
+| 2/24~2/25 | +880 | 突然轉買 |
+| **2/26** | **+19,926** | **單日買 2 萬張 = 公司股本 4%** |
+| 3/2~3/3 | +4,824 | 處置首兩日繼續大買 |
+| 3/4~3/20 | +596 | 之後幾乎停手 |
+
+1 個月 PNL 排名 #952（倒數第三）— 這批 2 萬張在 39.6 買入後遭遇處置，帳面大虧。
+1 月還在小賣，2/24 突然反轉 — **新的委託人/新的資金進場**。
+總持有約 25,000 張（股本 4%），成本 ~40 元。這不是投機，是**策略性持股**。
+
+---
+
+## 十一、回答客戶的問題
+
+### 問題 1：場上有哪些對手？
+
+**賣方（對手盤）**：
+
+1. **凱基多個分點**（自營、台北、信義）：處置期合計淨賣 -16,858 張，3/20 自營再賣 -8,031 張。
+   但凱基-台北的客戶 3/20 在低價買入 9,953 張 — 不同分點的客戶方向完全不同。
+
+2. **外資法人**（摩根士丹利 -3,874、高盛 -1,717、野村 -1,617、美林 -905、瑞銀 -741）：
+   合計約 -8,854 張。這些是**真正的方向性出場**（處置期間禁止當沖，每筆都是實際部位變化）。
+   **外資的出貨量已在處置期 + 3/20 大幅釋放**。
+
+3. **元大**（9800）：處置期 -4,292 張，3/20 再賣 -5,303 張。但 3/20 同時低價買入 4,515 張（高出低進）。
+
+4. **借券空頭**：12,740 張（3/20）。身份不明，但如果股價漲回 43+，會被迫回補 — **潛在軋空動力**。
+
+**買方（同盟）**：
+
+1. **國泰**（+7,761 張）：2 月初 17~19 元建倉，處置期最低點加碼，3/20 崩盤仍買。
+   **行為與客戶完全一致。**
+
+2. **凱基-松山**（+25,000 張含漲停期）：2/26 單日 2 萬張，策略性持股。成本 ~40。
+
+3. **永豐金**（+3,431 張）：1 個月 PNL #5（贏家仍加碼），穩定機構買盤。
+
+4. **台新-建北**（+3,034 張）、統一（+3,568 張）、凱基-永和（+2,698 張）等地方據點持續累積。
+
+### 問題 2：賣壓還有多少？可不可以加碼？
+
+**賣壓評估**：
+
+| 來源 | 處置期淨賣 | 3/20 淨賣 | 剩餘評估 |
+|------|-----------|----------|---------|
+| 凱基自營 | -4,956 | -8,031 | **大部分已出**。3/20 出貨量超過處置 13 天合計 |
+| 凱基-台北 | -9,005 | +5,329(net) | **已反轉為買方**。3/20 低價抄底 9,953 張 |
+| 外資法人 | ~-8,854 | ~-6,400 | **大部分已出**。野村、美林量本就不大 |
+| 元大 | -4,292 | -5,303 | 仍在出，但同時低價回補 4,515 張 |
+| 借券空頭 | — | 12,740 張 | 股價漲回 43+ 可能觸發回補（軋空買盤）|
+| 散戶融資 | — | 48,762 張新融資 | **最大風險**。3/20 追高被套，若續跌會多殺多 |
+
+**結論**：
+
+1. **機構賣壓已在 3/20 大幅釋放**。凱基自營 + 外資在 3/20 的拋售量等於甚至超過處置 13 天合計。
+   短期內這些賣方不太可能有同等規模的拋售。
+
+2. **新的風險是 3/20 散戶融資追高盤**（48,762 張）。成本 40~47，若續跌會追繳斷頭。
+
+3. **借券空頭 12,740 張是雙刃劍**。跌則空頭獲利平倉（不構成賣壓）；
+   漲回 43+ 則空頭被迫回補（額外買盤）。
+
+4. **國泰（+7,761 張）和凱基-松山（+25,000 張）是最大支撐**。沒有出場跡象。
+
+5. **以客戶成本 20 元計算**：目前 38.65 已有 93% 利潤。即使回到 35（處置最低），仍有 75%。
+   以 EPS 3 × P/E 20 = 目標 60 計算，仍有 55% 上行空間。
+
+**加碼考量**：
+
+- ✅ 機構賣壓大部分已釋放
+- ✅ 國泰等同方向大戶仍在加碼
+- ✅ 借券空頭若被軋空會產生額外買盤
+- ⚠️ 散戶融資 48,762 張是短期不穩定因素
+- ⚠️ 股價短期可能在 35~43 震盪消化
+- ⚠️ 若再次觸發處置，流動性再次受限
+
+---
+
+## 附錄：處置外的當沖行為解讀
+
+處置期間禁止當沖。但處置前後的當沖數據揭示了重要資訊：
+
+### 2/26（漲停第四天，進處置前一日）— 當沖 8,672 張（15.1%）
+
+| 分點 | 買(張) | 賣(張) | 沖(張) | 淨(張) | 解讀 |
+|------|-------|-------|-------|-------|------|
+| 元大（9800）| 4,835 | 7,395 | 4,835 | **-2,560** | 當沖後仍大量淨賣 — 順勢減碼 |
+| 凱基-台北（9268）| 2,702 | 2,024 | 2,024 | +678 | 當沖後淨買 — 在高位累積 |
+| 統一（5850）| 1,386 | 1,312 | 1,312 | +74 | 幾乎純當沖 |
+| 凱基-城中（9227）| 1,360 | 307 | 307 | **+1,053** | 少量沖，大量淨買 |
+| 永豐金（9A00）| 1,081 | 350 | 350 | **+731** | 少量沖，大量淨買 |
+
+**2/26 是進處置前最後一個可當沖的日子**。元大利用當沖日大賣 -2,560 張（可以先賣後買，降低風險），
+而永豐金和凱基-城中則趁此日大量建倉。
+
+### 3/19（出處置第一天）— 當沖 4,063 張（17.6%）
+
+| 分點 | 買(張) | 賣(張) | 沖(張) | 淨(張) | 解讀 |
+|------|-------|-------|-------|-------|------|
+| 元大（9800）| 4,251 | 1,252 | 1,252 | **+2,998** | 出處置即大買（隔日 3/20 反手大賣） |
+| 富邦（9600）| 1,602 | 1,102 | 1,102 | +500 | 出處置加碼 |
+| 凱基-台北（9268）| 1,083 | 1,033 | 1,033 | +50 | 幾乎純沖 — 試探市場深度 |
+| 統一（5850）| 619 | 1,104 | 619 | -485 | 出處置即減碼 |
+
+**3/19 當沖量不大（4,063 張）**，因為漲停鎖死（42.9），流動性有限。
+注意元大 3/19 淨買 +2,998 張，但 3/20 淨賣 -5,303 張 — **一日之間完全反轉**。
+
+### 3/20（崩盤日）— 當沖 66,168 張（45.6%）
+
+3/20 的當沖量是整個期間最驚人的：**145,087 張成交量中 66,168 張是當沖**。
+開盤 47.15 → 最低 38.65 的 18% 振幅，為當沖客創造了巨大利潤空間。
+
+| 分點 | 買(張) | 賣(張) | 沖(張) | 淨(張) | 解讀 |
+|------|-------|-------|-------|-------|------|
+| 凱基-台北（9268）| 12,800 | 17,424 | 12,800 | **-4,624** | 沖 12,800 張 + 淨賣 4,624 |
+| 元大（9800）| 9,711 | 15,014 | 9,711 | **-5,303** | 沖 9,711 張 + 淨賣 5,303 |
+| 元富-西松（9B2n）| 6,531 | 7,300 | 6,531 | -769 | 幾乎純沖 |
+| 富邦（9600）| 3,948 | 4,778 | 3,948 | -830 | |
+| 元大-士林（981j）| 2,264 | 3,139 | 2,264 | -875 | |
+| 凱基（9200）| 1,747 | 9,778 | 1,747 | **-8,031** | **沖量小但淨賣巨大 — 真出貨** |
+| 國泰-敦南（8888）| 4,118 | 1,535 | 1,535 | **+2,583** | 沖完仍淨買 — 逢低承接 |
+| 國泰（8880）| 1,847 | 1,352 | 1,352 | +495 | 沖完仍淨買 |
+
+**解讀**：
+
+1. **凱基-台北和元大是最大當沖客**。他們在開盤 47.15 賣出，崩跌後 38~39 買回，
+   單趟當沖利潤約 20%。這解釋了為什麼凱基-台北在 ≥45 賣出 1,546 張同時又在 <40 買入 9,953 張
+   — **大部分是當沖的買回腿，不是新建部位**。
+
+2. **凱基自營（9200）不一樣**：沖量只有 1,747 張，但淨賣 -8,031 張。
+   **這是真正的方向性出貨**，不是當沖。
+
+3. **國泰系（8880 + 8888）沖完仍是淨買方**（+3,078 張合計）。他們在崩盤中用當沖降低成本，
+   但方向仍然是加碼。
+
+4. **3/20 的 66,168 張當沖 = 33,084 張買 + 33,084 張賣被抵消**。
+   扣除當沖後，真正的「部位轉移」約 78,919 張（其中淨賣方約 39,000 張）。
+
+---
+
+*報告完*

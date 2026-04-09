@@ -4,12 +4,14 @@ version = "0.30.0"
 description = "Broker behavior analysis from trade-level data"
 requires-python = ">=3.12"
 dependencies = [
-    "polars>=1.0.0",
+    "gcsfs>=2024.1",
     "numpy>=2.0.0",
-    "google-cloud-bigquery>=3.40.0",
-    "xlsxwriter>=3.2.9",
-    "xlrd>=2.0.2",
+    "polars>=1.0.0",
+    "python-dotenv>=1.0",
+    "ws-bot-core",
     "ws-core",
+    "xlrd>=2.0.2",
+    "xlsxwriter>=3.2.9",
 ]
 
 [project.scripts]
@@ -32,4 +34,5 @@ testpaths = ["tests"]
 pythonpath = ["."]
 
 [tool.uv.sources]
+ws-bot-core = { git = "https://github.com/vikhuang/ws-bot-core" }
 ws-core = { path = "../ws-core", editable = true }

@@ -20,8 +20,8 @@ from typing import Literal
 
 import polars as pl
 
-_REPO = Path(__file__).resolve().parents[1]
-CLUSTERS_PARQUET = _REPO / "experiments" / "broker_clusters.parquet"
+_REPO = Path(__file__).resolve().parents[3]
+CLUSTERS_PARQUET = _REPO / "experiments" / "taxonomy" / "broker_clusters.parquet"
 
 BrokerCohort = Literal["retail", "prop_shell", "institutional", "mixed", "unknown"]
 

@@ -124,41 +124,6 @@ wheels = [
 ]
 
 [[package]]
-name = "broker-analytics"
-version = "0.30.0"
-source = { editable = "." }
-dependencies = [
-    { name = "gcsfs" },
-    { name = "numpy" },
-    { name = "polars" },
-    { name = "python-dotenv" },
-    { name = "ws-bot-core" },
-    { name = "ws-core" },
-    { name = "xlrd" },
-    { name = "xlsxwriter" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "pytest" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "gcsfs", specifier = ">=2024.1" },
-    { name = "numpy", specifier = ">=2.0.0" },
-    { name = "polars", specifier = ">=1.0.0" },
-    { name = "python-dotenv", specifier = ">=1.0" },
-    { name = "ws-bot-core", git = "https://github.com/vikhuang/ws-bot-core" },
-    { name = "ws-core", editable = "../ws-core-flow-readers" },
-    { name = "xlrd", specifier = ">=2.0.2" },
-    { name = "xlsxwriter", specifier = ">=3.2.9" },
-]
-
-[package.metadata.requires-dev]
-dev = [{ name = "pytest", specifier = ">=9.0.2" }]
-
-[[package]]
 name = "certifi"
 version = "2026.1.4"
 source = { registry = "https://pypi.org/simple" }
@@ -1160,6 +1125,41 @@ dependencies = [
     { name = "python-dotenv" },
     { name = "requests" },
 ]
+
+[[package]]
+name = "ws-branch"
+version = "1.0.0.dev0"
+source = { editable = "." }
+dependencies = [
+    { name = "gcsfs" },
+    { name = "numpy" },
+    { name = "polars" },
+    { name = "python-dotenv" },
+    { name = "ws-bot-core" },
+    { name = "ws-core" },
+    { name = "xlrd" },
+    { name = "xlsxwriter" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "gcsfs", specifier = ">=2024.1" },
+    { name = "numpy", specifier = ">=2.0.0" },
+    { name = "polars", specifier = ">=1.0.0" },
+    { name = "python-dotenv", specifier = ">=1.0" },
+    { name = "ws-bot-core", git = "https://github.com/vikhuang/ws-bot-core" },
+    { name = "ws-core", editable = "../ws-core-flow-readers" },
+    { name = "xlrd", specifier = ">=2.0.2" },
+    { name = "xlsxwriter", specifier = ">=3.2.9" },
+]
+
+[package.metadata.requires-dev]
+dev = [{ name = "pytest", specifier = ">=9.0.2" }]
 
 [[package]]
 name = "ws-core"

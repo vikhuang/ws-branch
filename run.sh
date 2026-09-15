@@ -53,14 +53,14 @@ FAILED=0
 
 echo "" | tee -a "$LOG_FILE"
 echo "[1/4] ETL..." | tee -a "$LOG_FILE"
-if ! uv run python etl.py --incr >> "$LOG_FILE" 2>&1; then
+if ! uv run python pnl/etl.py --incr >> "$LOG_FILE" 2>&1; then
     echo "ETL FAILED" | tee -a "$LOG_FILE"
     FAILED=1
 fi
 
 if [ "$FAILED" -eq 0 ]; then
     echo "[2/4] PNL Engine..." | tee -a "$LOG_FILE"
-    if ! uv run python pnl_engine.py --incr >> "$LOG_FILE" 2>&1; then
+    if ! uv run python pnl/pnl_engine.py --incr >> "$LOG_FILE" 2>&1; then
         echo "PNL Engine FAILED" | tee -a "$LOG_FILE"
         FAILED=1
     fi

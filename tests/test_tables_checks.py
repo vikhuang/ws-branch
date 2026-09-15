@@ -1,4 +1,4 @@
-"""factory 單元測試:合成資料、已知答案。"""
+"""tables.checks 單元測試:合成資料、已知答案。"""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import datetime
 
 import polars as pl
 
-from factory import reconcile
+from ws_branch.tables.checks import reconcile_vol as reconcile
 
 
 def _totals(rows: list[tuple[str, str, int, int]]) -> pl.DataFrame:

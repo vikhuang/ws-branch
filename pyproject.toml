@@ -1,7 +1,7 @@
 [project]
-name = "broker-analytics"
-version = "0.30.0"
-description = "Broker behavior analysis from trade-level data"
+name = "ws-branch"
+version = "1.0.0.dev0"
+description = "分點資料的清洗聚合與歸因量測(L1 tables / L2 measure / L3 products;PNL 時代封存於 pnl/)"
 requires-python = ">=3.12"
 dependencies = [
     "gcsfs>=2024.1",
@@ -15,7 +15,7 @@ dependencies = [
 ]
 
 [project.scripts]
-broker = "broker_analytics.interfaces.cli:main"
+ws-branch = "ws_branch.cli:main"
 
 [dependency-groups]
 dev = [
@@ -27,11 +27,11 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["broker_analytics"]
+packages = ["src/ws_branch"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
-pythonpath = ["."]
+testpaths = ["tests", "pnl/tests"]
+pythonpath = ["src", "pnl", "."]
 
 [tool.uv.sources]
 ws-bot-core = { git = "https://github.com/vikhuang/ws-bot-core" }

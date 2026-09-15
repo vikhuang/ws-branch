@@ -150,7 +150,7 @@ requires-dist = [
     { name = "polars", specifier = ">=1.0.0" },
     { name = "python-dotenv", specifier = ">=1.0" },
     { name = "ws-bot-core", git = "https://github.com/vikhuang/ws-bot-core" },
-    { name = "ws-core", editable = "../ws-core" },
+    { name = "ws-core", editable = "../ws-core-flow-readers" },
     { name = "xlrd", specifier = ">=2.0.2" },
     { name = "xlsxwriter", specifier = ">=3.2.9" },
 ]
@@ -1164,7 +1164,7 @@ dependencies = [
 [[package]]
 name = "ws-core"
 version = "0.1.0"
-source = { editable = "../ws-core" }
+source = { editable = "../ws-core-flow-readers" }
 dependencies = [
     { name = "gcsfs" },
     { name = "polars" },
@@ -1176,6 +1176,12 @@ requires-dist = [
     { name = "gcsfs", specifier = ">=2026.3.0" },
     { name = "polars", specifier = ">=1.0" },
     { name = "python-dotenv", specifier = ">=1.0" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "numpy", specifier = ">=1.26" },
+    { name = "pytest", specifier = ">=8.0" },
 ]
 
 [[package]]

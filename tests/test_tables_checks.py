@@ -30,19 +30,29 @@ def test_reconcile_pass_exact() -> None:
 
 
 def test_reconcile_catches_mismatch() -> None:
-    t1 = _totals([("2330", "2026-01-05", 1_600_000, 1_500_000)])  # 買方差 6.7%
+    t1 = _totals([("2330", "2026-01-05", 1_600_000, 1_500_000)])  # 買方差 100 張
     px = _px([("2330", "2026-01-05", 1500)])
     bad = reconcile(t1, px)
     assert bad.height == 1
-    assert bad[0, "rel_b"] > 0.06 and bad[0, "rel_s"] < 0.001
+    assert bad[0, "diff_b"] == 100.0 and bad[0, "diff_s"] == 0.0
+
+
+def test_reconcile_oddlot_within_one_lot_passes() -> None:
+    # 零股尾數:21,501 股 vs 21 張(差 0.501 張)必須通過——TEJ vol 只計整張
+    t1 = _totals([("1531", "2025-12-18", 21_501, 21_501)])
+    px = _px([("1531", "2025-12-18", 21)])
+    assert reconcile(t1, px).height == 0
+    # 但差 1.5 張要抓到
+    t1b = _totals([("1531", "2025-12-18", 22_501, 21_501)])
+    assert reconcile(t1b, px).height == 1
 
 
 def test_reconcile_tolerance_boundary() -> None:
-    # 0.05% 差在預設容差(0.1%)內
+    # 0.05% 差(0.75 張)在預設容差內;收緊 tol 且 abs_lots=0 才抓
     t1 = _totals([("2330", "2026-01-05", 1_500_750, 1_500_000)])
     px = _px([("2330", "2026-01-05", 1500)])
     assert reconcile(t1, px).height == 0
-    assert reconcile(t1, px, tol=0.0001).height == 1
+    assert reconcile(t1, px, tol=0.0001, abs_lots=0.0).height == 1
 
 
 def test_reconcile_ignores_zero_vol_and_unmatched() -> None:

@@ -7,7 +7,11 @@ from typing import Callable
 
 import polars as pl
 
-from ws_branch.tables.transforms import t1_broker_daily
+from ws_branch.tables.transforms import (
+    t1_broker_daily,
+    t3_official_daily,
+    t4_broker_features,
+)
 
 FIRST_YEAR = 2021
 
@@ -79,11 +83,97 @@ def _verify_t1(n_samples: int, seed: int) -> None:
           f"(鉅額/特殊交易,監控用)")
 
 
+def _verify_t3(n_samples: int, seed: int) -> None:
+    """T3 對帳:抽樣列 vs ws-core shareholding 原始值 ×1000 逐格重導。"""
+    import random
+
+    from ws_core import shareholding
+
+    from ws_branch.tables import io
+    from ws_branch.tables.transforms.t3_official_daily import convert
+
+    rng = random.Random(seed)
+    years = io.existing_years("t3_official_daily")
+    frames = []
+    for y in rng.sample(years, min(4, len(years))):
+        ylf = pl.scan_parquet(io.year_path("t3_official_daily", y))
+        dates = ylf.select("date").unique().collect()["date"].to_list()
+        for d in rng.sample(dates, min(2, len(dates))):
+            day = ylf.filter(pl.col("date") == d).collect()
+            frames.append(day.sample(min(n_samples // 8 + 1, day.height),
+                                     seed=rng.randint(0, 9999)))
+    mine = pl.concat(frames)
+    raw = shareholding(coids=mine["symbol_id"].unique().to_list(),
+                       start=str(mine["date"].min()), end=str(mine["date"].max()))
+    ref = convert(raw).collect()
+    j = mine.join(ref, on=["symbol_id", "date"], how="inner", suffix="_ref")
+    if j.height < mine.height * 0.9:
+        raise SystemExit(f"FAIL: 重導覆蓋不足 {j.height}/{mine.height}")
+    for c in ["foreign_buy_sh", "fund_net_sh", "prop_hedge_sell_sh",
+              "foreign_buy_amt", "day_trade_pct"]:
+        bad = j.filter((pl.col(c) - pl.col(f"{c}_ref")).abs() > 1e-6)
+        if bad.height:
+            print(bad.select("symbol_id", "date", c, f"{c}_ref").head(5))
+            raise SystemExit(f"FAIL: {c} 與原始重導不符 {bad.height} 列")
+    print(f"PASS: T3 抽樣 {j.height} 列 × 5 欄逐格重導一致")
+
+
+def _verify_t4(n_samples: int, seed: int) -> None:
+    """T4 對帳:抽樣分點日自 T1 重算比對 + 不變量(ratio/share ∈ [0,1])。"""
+    import random
+
+    from ws_branch.tables import io
+    from ws_branch.tables.transforms.t4_broker_features import compute_broker_day
+
+    rng = random.Random(seed)
+    years = io.existing_years("t4_broker_features")
+    frames = []
+    for y in rng.sample(years, min(3, len(years))):
+        ylf = pl.scan_parquet(io.year_path("t4_broker_features", y))
+        dates = ylf.select("date").unique().collect()["date"].to_list()
+        d = rng.choice(dates)
+        day = ylf.filter(pl.col("date") == d).collect()
+        inv = day.filter(
+            (pl.col("directional_ratio") < -1e-9)
+            | (pl.col("directional_ratio") > 1 + 1e-9)
+            | (pl.col("top1_share") > pl.col("top5_share") + 1e-9)
+            | (pl.col("top5_share") > 1 + 1e-9))
+        if inv.height:
+            print(inv.head(5))
+            raise SystemExit(f"FAIL: {d} 有 {inv.height} 列違反不變量")
+        t1_day = (pl.scan_parquet(io.year_path("t1_broker_daily", y))
+                  .filter(pl.col("date") == d)
+                  .select("broker", "broker_name", "date",
+                          "buy_dollar", "sell_dollar").collect())
+        recomputed = compute_broker_day(t1_day)
+        j = day.join(recomputed, on=["broker", "date"], suffix="_rc")
+        bad = j.filter(
+            ((pl.col("gross_amt") - pl.col("gross_amt_rc")).abs() > 1)
+            | ((pl.col("n_symbols") - pl.col("n_symbols_rc")).abs() > 0))
+        if bad.height:
+            raise SystemExit(f"FAIL: {d} 有 {bad.height} 分點與 T1 重算不符")
+        frames.append(day)
+    n = sum(f.height for f in frames)
+    print(f"PASS: T4 不變量 + T1 重算一致(抽 {len(frames)} 日 {n:,} 分點日)")
+
+
 TABLES: dict[str, Table] = {
     "t1_broker_daily": Table(
         name="t1_broker_daily",
         build_year=t1_broker_daily.build_year,
         verify=_verify_t1,
     ),
-    # T3 官方對齊表 / T4 特徵表:P3 於此登記
+    "t3_official_daily": Table(
+        name="t3_official_daily",
+        build_year=t3_official_daily.build_year,
+        verify=_verify_t3,
+        first_year=2016,
+    ),
+    "t4_broker_features": Table(
+        name="t4_broker_features",
+        build_year=t4_broker_features.build_year,
+        verify=_verify_t4,
+    ),
+    # T2 價位表不物化:ws-core broker_tx_pricelevel_scan 即視圖(REDESIGN §3)
+    # TDCC/主動 ETF 量小,ws-core 直讀不物化
 }

@@ -119,7 +119,9 @@ def _verify_t3(n_samples: int, seed: int) -> None:
 
 
 def _verify_t4(n_samples: int, seed: int) -> None:
-    """T4 對帳:抽樣分點日自 T1 重算比對 + 不變量(ratio/share ∈ [0,1])。"""
+    """T4 對帳:抽樣分點日自 T1 重算比對 + 不變量(ratio/share ∈ [0,1];
+    v2:multiplicity/basket_self_sim ∈[0,1]、sector_hhi ∈(0,1]、
+    foreign_sim/fund_sim(含 20/60D 滾動版)∈[-1,1])。"""
     import random
 
     from ws_branch.tables import io
@@ -133,11 +135,24 @@ def _verify_t4(n_samples: int, seed: int) -> None:
         dates = ylf.select("date").unique().collect()["date"].to_list()
         d = rng.choice(dates)
         day = ylf.filter(pl.col("date") == d).collect()
+        sim_cols = ["foreign_sim_buy", "foreign_sim_sell",
+                    "fund_sim_buy", "fund_sim_sell"]
+        sim_window_cols = [f"{c}_{w}d" for c in sim_cols for w in (20, 60)]
+        sim_bad = pl.any_horizontal([
+            (pl.col(c) < -1 - 1e-9) | (pl.col(c) > 1 + 1e-9)
+            for c in sim_cols + sim_window_cols])
         inv = day.filter(
             (pl.col("directional_ratio") < -1e-9)
             | (pl.col("directional_ratio") > 1 + 1e-9)
             | (pl.col("top1_share") > pl.col("top5_share") + 1e-9)
-            | (pl.col("top5_share") > 1 + 1e-9))
+            | (pl.col("top5_share") > 1 + 1e-9)
+            # v2(2026-09-16 O1):multiplicity ∈[0,1]、basket_self_sim ∈[0,1]
+            # (金額皆非負→cosine 非負)、sector_hhi ∈(0,1]、相似度欄位 ∈[-1,1]
+            | (pl.col("multiplicity") < -1e-9) | (pl.col("multiplicity") > 1 + 1e-9)
+            | (pl.col("basket_self_sim") < -1e-9)
+            | (pl.col("basket_self_sim") > 1 + 1e-9)
+            | (pl.col("sector_hhi") <= 0) | (pl.col("sector_hhi") > 1 + 1e-9)
+            | sim_bad)
         if inv.height:
             print(inv.head(5))
             raise SystemExit(f"FAIL: {d} 有 {inv.height} 列違反不變量")

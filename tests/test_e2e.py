@@ -78,6 +78,14 @@ def _mk_universe(root: Path) -> None:
     ]
     pl.DataFrame(rows).write_parquet(root / "tej" / "shareholding.parquet")
 
+    # t4 v2(sector_hhi/top_sector)需要 ws-core tickers 讀取器;WS_DATA_ROOT
+    # 覆寫後這個讀取器也指到合成小宇宙,故此處補一份最小 tickers fixture。
+    (root / "tickers").mkdir(parents=True, exist_ok=True)
+    pl.DataFrame({
+        "ticker_local": ["2330", "1531"],
+        "industry_local": ["半導體業", "其他電機"],
+    }).write_parquet(root / "tickers" / "tw.parquet")
+
 
 def _run(args: list[str], env: dict, expect_ok: bool = True) -> str:
     r = subprocess.run([sys.executable, "-m", "ws_branch", *args],
@@ -128,6 +136,46 @@ def test_e2e_t4_hand_checked(universe: dict) -> None:
     exp_ratio = abs((600_000 * 100 + 21_501 * 35.5) - (200_000 * 100 + 21_501 * 35.5)) \
         / (g2330 + g1531)
     assert a1[0, "directional_ratio"] == pytest.approx(exp_ratio)
+
+
+def test_e2e_t4_v2_hand_checked(universe: dict) -> None:
+    import math
+
+    df = pl.read_parquet(universe["tables"] / "t4_broker_features" / "year=2026.parquet")
+    g2330_d1 = 600_000 * 100.0 + 200_000 * 100.0
+    g1531_d1 = (21_501 + 21_501) * 35.5
+    g2330_d2 = 50_000 * 101.0 + 50_000 * 101.0
+
+    # sector_hhi/top_sector:A1@D1 碰兩個產業(2330=半導體業,1531=其他電機)
+    a1_d1 = df.filter((pl.col("broker") == "A1") & (pl.col("date") == D1)).row(0, named=True)
+    total = g2330_d1 + g1531_d1
+    exp_hhi = (g2330_d1 / total) ** 2 + (g1531_d1 / total) ** 2
+    assert a1_d1["sector_hhi"] == pytest.approx(exp_hhi)
+    assert a1_d1["top_sector"] == "半導體業"
+
+    # basket_self_sim:A1 D2(僅 2330)vs D1(2330+1531)cosine
+    a1_d2 = df.filter((pl.col("broker") == "A1") & (pl.col("date") == D2)).row(0, named=True)
+    norm_d1 = math.sqrt(g2330_d1**2 + g1531_d1**2)
+    norm_d2 = g2330_d2
+    exp_sim = (g2330_d1 * g2330_d2) / (norm_d1 * norm_d2)
+    assert a1_d2["basket_self_sim"] == pytest.approx(exp_sim)
+    # A1 首個活躍日(D1)無「昨天」可比 → null,不得補 0
+    assert a1_d1["basket_self_sim"] is None
+
+    # multiplicity 對全表都要落在 [0,1](不變量,verify 也會查同一件事)
+    finite = df.filter(pl.col("multiplicity").is_not_null())
+    assert finite.height > 0
+    assert finite["multiplicity"].min() >= -1e-9
+    assert finite["multiplicity"].max() <= 1 + 1e-9
+
+    # 小宇宙每個分點日購物籃都 < _MIN_SUPPORT(5 檔),foreign_sim/fund_sim
+    # 一律 null——這是「資料太小不硬湊統計量」的設計行為,不是遺漏欄位
+    assert df["foreign_sim_buy"].drop_nulls().len() == 0
+    assert set(df.columns) >= {
+        "foreign_sim_buy_20d", "foreign_sim_buy_60d",
+        "fund_sim_sell_20d", "fund_sim_sell_60d",
+        "daytrade_assoc", "foreign_sim_confidence", "fund_sim_confidence",
+    }
 
 
 def test_e2e_verifies_pass(universe: dict) -> None:

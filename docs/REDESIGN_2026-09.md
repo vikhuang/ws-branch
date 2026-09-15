@@ -1,117 +1,117 @@
-# ws-branch 重設計提案（2026-09-15，待 user 審後動工）
+# ws-branch 重設計提案 v2（2026-09-15，待 user 審後動工）
 
-> 一句話：ws-branch 從「分點 PNL 回測系統」升格為「**分點資料的量測與歸因中心**」，
-> 承接 ws-quant 這一年長出來的分點研究，產出標籤表與訊號檔給下游用。
-> 本文件是施工前的藍圖，審過才動工。
+> 一句話：ws-branch 的新核心是**把分點資料清洗聚合成一組乾淨、對過帳的表**，
+> 供歸因研究（分點流量是誰的錢、什麼狀態）與下游（ws-quant/ws-desk)使用。
+> PNL/FIFO 整層降為封存件。本文件是施工前的藍圖,審過才動工。
 
-## 0. 決策紀錄（user 已拍板，2026-09-15）
+## 0. 決策紀錄（user 拍板）
 
-1. 分點相關研究歸 ws-branch；ws-quant 只留策略與回測本業
-2. 標準資料讀取器放 ws-core（全生態共用一把尺）
-3. 分群/身分規則整包從 ws-quant 搬來；ws-quant 改讀 ws-branch 產出的標籤表
-4. 先寫本文件，user 審過再施工；全程在 worktree（branch `redesign`）
+- 2026-09-15 上午:①分點研究歸 ws-branch;②標準讀取器放 ws-core;
+  ③分群/身分規則從 ws-quant 搬來,ws-quant 改讀產出檔;④先文件後施工,全程 worktree
+- 2026-09-15 v2 修訂:**PNL 不是核心**——長期無人使用,招牌成果缺關鍵驗證,
+  且 U3 已證總公司席位是混合通道(對它算單席位損益答非所問)。
+  ws-branch 先聚焦**清洗並聚合資料**;歸因研究(另一 LLM 提案的可取部分)
+  蓋在乾淨資料之上,PNL 降級封存(不刪,復用前須補 IS/OOS+beta 檢查)
 
-## 1. 為什麼要重設計（三個事實）
+## 1. 為什麼重設計（四個事實）
 
-1. **分點研究長錯地方了。** ws-quant 的處置實驗資料夾裡塞了一整套全市場分點
-   研究（散戶化剖面、官方對帳、身分規則），跟處置無關，是借住。
-2. **「做過」不等於「做對」。** 這一週抓到的三個案子：
-   - 身分規則的自營桶用了近一年，實測是空殼（只蓋到 0.06% 的量）
-   - conviction 訊號「Sharpe 5-8」缺 IS/OOS 分段與 beta 拆離，數字目前只是傳聞
-   - 分群文件說散戶密集群佔市場 89%，實算 53%——矛盾沒人追過
-3. **本 repo 休眠中。** 資料凍在 2026-03，重資料層已被清掉，復活 = 全量重跑。
+1. 分點研究長錯地方:全市場分點研究借住在 ws-quant 的處置實驗資料夾
+2. 「做過」≠「做對」:自營桶空殼用了近一年;conviction「Sharpe 5-8」缺
+   IS/OOS 分段與 beta 拆離;分群文件 89% vs 實算 53% 矛盾無人追
+3. 本 repo 休眠:資料凍在 2026-03,重資料層已清空
+4. 價值實測:PNL 層算了 12GB,user 一年未用過——使用率就是價值的答案
 
 ## 2. 邊界（三專案分工）
 
 | 專案 | 管什麼 | 不管什麼 |
 |---|---|---|
-| **ws-core** | 怎麼「正確地讀」每種原始資料（單位/髒列/陷阱全封在裡面）| 不做任何研究判斷 |
-| **ws-branch** | 看懂分點：身分（誰在用這櫃檯）、技巧（歷史賺不賺）、狀態（這批錢走到哪一步）；產標籤表與訊號檔 | 不做回測定生死、不碰策略上線 |
-| **ws-quant** | 拿訊號驗證賺不賺（回測、治理、上線裁決）| 不再自己養分點量測邏輯 |
+| **ws-core** | 怎麼「正確地讀」每種原始資料(單位/髒列/陷阱全封在裡面) | 不做研究判斷 |
+| **ws-branch** | 分點資料的**清洗、聚合、對帳**,及其上的歸因量測;產標籤表與訊號檔 | 不回測定生死、不碰上線 |
+| **ws-quant** | 拿訊號驗證賺不賺(回測、治理、上線裁決) | 不再自己養分點量測 |
 
-**溝通規矩：不互相 import 程式碼，只交換檔案。**
-先例 = ws-quant↔ws-trade（spec YAML + CSV）、ws-branch→ws-quant 7 訊號 CSV 回測（2026 已走通）。
+**溝通規矩:不互相 import 程式碼,只交換檔案**(先例:ws-quant↔ws-trade;
+ws-branch 7 訊號 CSV→ws-quant 回測,2026 已走通)。
 
-## 3. 新架構（四層）
+## 3. 核心產品:四張表(schema 先行,由第一批假說反推,防清洗失焦)
+
+| 表 | 粒度 | 內容 | 服務誰 |
+|---|---|---|---|
+| **T1 主表** | 分點×股票×日 | 買/賣股數與金額(canonical 清洗:單位、逗號、"-"列 coalesce) | 所有下游 |
+| **T2 價位表** | 分點×股票×日×**價位** | 分價買賣量——**不壓扁**。這是獨有優勢欄位,多數籌碼站直接丟棄 | 價格積極度(BuyLocation)、撮合指紋 join |
+| **T3 官方對齊表** | 股票×日 | 外資/投信/自營官方買賣 gross(千股→股)、集保週級距、主動 ETF 持倉變化 | 歸因模型的「答案卷」 |
+| **T4 特徵表** | 分點×日 / 分點×股票×日 | 方向比 \|B−S\|/(B+S)、連買/連賣天數、gross、集中度、籃子向量、累積流量 | 分群重做、歸因、狀態量測 |
+
+**每張表都帶自動對帳測試**(迴歸防線,錯了自己叫):
+- T1 總量 == TEJ 成交量(分毫不差,已有先例)
+- T1 外資席位 vs T3 qfii corr > 0.95(0.97 先例)
+- T2 聚合 == T1(內部一致性)
+
+## 4. 架構(四層,PNL 移出主線)
 
 ```
-L0 讀資料   ws-core 標準讀取器（本 repo 自己的 etl.py 逐步廢掉）
-             broker_tx(2021+) / tej_shareholding(千股!) / tdcc / 主動ETF
-L1 量測     三個獨立模組,互不 import:
-             identity/  身分:名字規則+行為分群+官方對帳(外資0.97先例)
-             skill/     技巧:FIFO PNL、timing alpha、rolling ranking(現有搬入)
-             state/     狀態:新進場/連買天數/反手/擁擠度/價格積極度(新建)
-L2 產品     每日產出,檔案交付:
-             broker_labels.parquet   每分點:身分機率+技巧分位+狀態旗標
-             flow_states.parquet     每股每日:五條 latent flow + 生命週期
-             signals/*.csv           Signal Contract 格式(既有規格)
-L3 研究     experiments/ + 家法(從 ws-quant 移植):
-             預期先行 / 獨立紅隊重算 / trial ledger / 體檢先於使用
+L0 讀資料   ws-core 標準讀取器(本 repo 的 etl.py 逐步廢掉)
+L1 資料廠   四張表的建造與對帳(新核心;Clean Architecture 的 domain+application)
+L2 量測     蓋在四張表上,依序:
+             identity/  身分:名字規則+行為分群重做+官方對帳
+             state/     狀態:新進場/連買/反手/擁擠/價格積極度
+             attribution/ 歸因:NNLS/籃子指紋 → 五條 latent flow(外資型/投信型/
+                          自營型/本土集中型/散戶擴散型)——研究題,過家法才進產品
+L3 產品     broker_labels.parquet(每分點:身分機率+狀態旗標)
+             flow_states.parquet(每股每日:latent flow+生命週期)
+             signals/*.csv(Signal Contract,給 ws-quant 回測)
+
+[封存] pnl/(FIFO/timing alpha/聰明錢):archive/ 保留可讀,主線不維護。
+       復用前置條件:IS/OOS 分段+beta 拆離重驗,且先說清楚要回答什麼問題。
 ```
 
-現有的 Clean Architecture（domain/infrastructure/application/interfaces）保留，
-L1 三模組落在 domain+application；L0 換成 ws-core 是 infrastructure 的置換。
+## 5. 搬遷清單
 
-## 4. 搬遷清單
+**從 ws-quant 搬來(連同體檢義務)**:`src/broker_taxonomy/`、
+`broker_loader.py` 身分規則(含自營空殼 bug 註記)、u1/u1b/u2/u3 系列腳本與
+findings(複本,原檔留 ws-quant 作歷史)。
+**留在 ws-quant**:處置策略線全部、回測引擎、治理層。
+**過渡期相容**:ws-quant 的 `src.broker_taxonomy` 凍結不動,直到
+broker_labels.parquet 上線且處置線改讀成功,才刪舊模組。不做大爆炸切換。
 
-**從 ws-quant 搬來（連同體檢義務）**
-- `src/broker_taxonomy/`（四群分群、簽名 pair、虎尾幫名單）
-- `src/data_layer/broker_loader.py` 的身分規則（含已知 bug：自營空殼）
-- 本週對帳與量測腳本：u1/u1b/u2/u3 系列（散戶化剖面、官方對帳）
-- 對應的 findings 與 frontier 記錄（複本；ws-quant 原檔留存為歷史）
-
-**留在 ws-quant**
-- 處置策略線全部（v2、H-20260911、生態圖鑑報告）
-- 回測引擎、治理層、experiments 秩序
-
-**過渡期相容**：ws-quant 處置線腳本 import 的 `src.broker_taxonomy` **凍結不動**，
-直到 broker_labels.parquet 上線且處置線改讀標籤表，才刪舊模組。不做大爆炸式切換。
-
-## 5. 舊資產體檢表 v0（重驗優先於新挖；★=施工前必辦）
+## 6. 舊資產體檢表 v0(重驗優先於新挖;★=主線必辦)
 
 | 資產 | 聲稱 | 已知裂縫 | 體檢動作 |
 |---|---|---|---|
-| ★ conviction 等 11 策略 | 10-60d Sharpe 5-8 | 無 IS/OOS 分段、60d 未拆 beta | 復活資料後首件事：分段+beta 拆離重跑 |
-| ★ 分群 vol_share | C0+C3=89% 市場量 | 與實算 53% 矛盾 | 查口徑（母體/單位/分母），寫結論 |
-| 身分規則 | 五類 cohort | 自營桶空殼（U3 已證） | prop 桶標記棄用；HQ 改讀「法人混合通道」 |
-| 四群分群 | 806 分點行為分群 | 建於單一窗口，未測時間穩定性 vs 官方錨 | 對 tej_shareholding 錨重驗+標註有效期 |
-| FIFO PNL | 每(股,分點)損益 | HQ 席位=混合通道，PNL 非單一主體 | 文件加註;外資席位(0.97)可信,HQ 打折 |
-| 簽名 pair 40 組 | 100% persistent | 2026 新制/大型化 regime 未重驗 | 滾動重驗 persistence |
-| T+1 日內線 | 已封存(時區 bug) | — | 維持封存,墓碑保留 |
+| ★ 分群 vol_share | C0+C3=89% 市場量 | 與實算 53% 矛盾 | 查口徑,寫一頁結論 |
+| ★ 身分規則 | 五類 cohort | 自營桶空殼(U3 已證) | prop 桶棄用;HQ 改「法人混合通道」語意 |
+| ★ 四群分群 | 806 分點行為分群 | 單一窗口建成,未驗時間穩定性 | 在 T4 上重做,對 T3 官方錨驗證 |
+| 簽名 pair 40 組 | 100% persistent | 2026 新制/大型化未重驗 | 滾動重驗 persistence |
+| conviction 等 11 策略 | 10-60d Sharpe 5-8 | 無 IS/OOS、未拆 beta | **隨 PNL 封存**;復用時才補 |
+| T+1 日內線 | 已封存(時區 bug) | — | 維持封存 |
 
-## 6. ws-core 新增讀取器（另開小 PR 到 ws-core）
+## 7. ws-core 新增讀取器(另開 PR 到 ws-core)
 
 | 讀取器 | 封進去的陷阱 |
 |---|---|
 | broker_tx | 單位=股;price 千分位逗號(<2026-05-29 高價股);"-"彙總列 coalesce;2021+ 全史 |
 | tej_shareholding | **單位=千股**(U3 實測);三大法人 buy/sell gross 語意 |
 | tdcc_distribution | 週頻;級距 schema;epoch 時區 |
-| etf_holdings | 主動 ETF 每日 JSON→表;申贖 vs 調倉不可分的但書 |
+| etf_holdings | 主動 ETF 每日 JSON→表;申贖與調倉不可分的但書 |
 
-每個讀取器附**對帳測試**當迴歸防線：broker_tx 總量==TEJ vol（分毫不差先例）、
-外資席位 vs qfii corr>0.95（0.97 先例）。
-
-## 7. 施工順序（估 1-2 週,每階段可獨立驗收）
+## 8. 施工順序(估 1-1.5 週;順序不可倒)
 
 | 階段 | 內容 | 驗收 |
 |---|---|---|
-| P1 | ws-core 四個讀取器+對帳測試 | 測試綠;兩條對帳先例重現 |
-| P2 | 復活資料層:用 ws-core 讀取器重跑 daily_summary+FIFO 到當下 | verify 通過;資料到最新交易日 |
-| P3 | 體檢表 ★ 兩案(conviction 重驗、89/53 矛盾) | 各出一頁結論,更新第 5 節 |
-| P4 | 搬遷:taxonomy/身分規則/u 系列入 L1;identity 模組成形 | ws-branch 內測試綠;ws-quant 原模組凍結未動 |
-| P5 | broker_labels.parquet v1 上線(身分+技巧+基本狀態) | schema 定稿;ws-quant 處置線試讀成功 |
-| P6 | L3 研究區開張:家法文件+第一批假說(NNLS 歸因/價格積極度/主動ETF對帳) | 假說各有凍結預期才准跑 |
+| P1 | ws-core 四讀取器+對帳測試 | 測試綠;兩條對帳先例重現 |
+| P2 | T1/T2 建表(2021+ 全史)+對帳 | 總量==TEJ;外資 corr>0.95 |
+| P3 | T3/T4 建表;還債:★三案體檢 | 特徵表就緒;三案各一頁結論 |
+| P4 | 搬遷+identity 重做(在 T4 上重分群,對 T3 錨驗) | 新分群+標註有效期;ws-quant 舊模組仍凍結 |
+| P5 | broker_labels.parquet v1 上線 | schema 定稿;ws-quant 處置線試讀成功 |
+| P6 | 歸因研究開張(NNLS/籃子指紋/BuyLocation/主動ETF對帳),家法全套 | 每題先凍結預期;產出入 trial ledger |
 
-P1-P2 是地基,P3 是還債,P4-P5 是搬家,P6 才是新研究。**順序不可倒。**
+## 9. 風險
 
-## 8. 風險
+- 清洗失焦 → 已用「schema 先行、假說反推」鎖住(第 3 節)
+- 兩套讀取邏輯並存期 → 對帳測試互驗,P2 完成即廢舊 etl.py
+- ws-quant 過渡期斷鏈 → 凍結舊模組保護
+- 範圍蔓延 → P6 之前不開新假說;PNL 不得悄悄復活
 
-- **兩套讀取邏輯並存期**（舊 etl.py vs ws-core）:以對帳測試互驗,P2 完成即廢舊
-- **ws-quant 過渡期斷鏈**:靠「凍結舊模組直到標籤表上線」保護
-- **範圍蔓延**:P6 的新假說清單已存在誘惑,家規=P1-P5 沒驗收前不開新題
-- 資料量:全量重跑 ETL+FIFO 約 15-20 分鐘/次,非風險僅提醒
+## 10. 下一步
 
-## 9. 本文件的下一步
-
-user 審閱 → 修訂 → 核准後按 P1 開工。P1 動的是 ws-core(另開 worktree/PR),
-本 repo 從 P2 起動工,全程留在 branch `redesign`,驗收後才併 main。
+user 審 v2 → 核准後 P1 開工(ws-core 另開 worktree/PR)。
+本 repo 從 P2 起動工,全程 branch `redesign`,驗收後併 main。

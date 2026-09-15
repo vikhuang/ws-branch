@@ -61,14 +61,17 @@ exploration 工具,看與讀完全自由;任何「它能預測」的聲明進 ws
 tables/(宣告+IO)                       measure/(全純函數)
   registry 新增:                          actor.py      多重性/自相似度/指紋
     t4 v2   分點×日   行動者狀態擴欄        position.py   軌跡+FIFO 持倉狀態
-    t5_position_state 分點×股×日(白名單)     (_fifo.py = 自 pnl/ 提取的純域邏輯,
+    t5a_trajectory    分點×股×日(全體,活躍門檻)
+    t5b_cost_state    分點×股×日(白名單,FIFO) (_fifo.py = 自 pnl/ 提取的純域邏輯,
     t6_exec_style     分點×股×日(活躍門檻)     附出處與復用聲明)
     t7_counterparty_watch 股×日(watchlist)  execution.py  BuyLocation/細碎度/時序
   io 擴充:stateful checkpoint(T5 用)      relation.py   對手盤歸因/共動(純計算)
 
 products/(IO,給人與下游)
   profile.py       每分點每日一張臉(四層欄位齊)→ broker_profiles parquet
-  stock_reader.py  每股每日一份讀本(誰在買/新老手/像誰的錢/買位/對手盤)
+  stock_reader.py  每股每日一份讀本(誰在買/新老手/像誰的錢/買位/對手盤/
+                   **擁擠度**=同方向分點數與增速——描述量,頁面必附註腳
+                   「breadth 型預測已判死 R-dispo-breadth-crowding」)
                    → stock_reader parquet + 單股一頁渲染(ws-desk context 餵料)
   labels.py        broker_labels parquet(ws-quant 處置線契約,原 P5 承諾)
 
@@ -76,12 +79,22 @@ experiments/flow_lab/  共動群組批次、markout 曲面、一切預測性研�
 ```
 
 **表 schema 草案**(建表時定稿,單位一律股/元,日期=台北 Date):
+- t3 補欄(2026-09-16):融資融券/借券(`buy_l/sell_l/long_t/...`,shareholding
+  本有,建表時未選)——讀本環境描述用;作預測子已判死(R-counter-cyclical),
+  不重測。
 - t4 v2 新欄:`multiplicity`(0-1 複合)、`basket_self_sim`、`foreign_sim`、
-  `fund_sim`(+信賴帶旗標)、沿用 v1 全欄。
-- t5_position_state(**白名單宇宙**:無 dash HQ 席位+簽名 pair+名單分點,
-  可設定擴充;≈120 分點,控規模):`broker, symbol_id, date, pos_sh,
-  cost_avg, unreal_pnl_pct, pos_age_days, flow_age_days, net_1d/5d/20d/60d,
-  consec_buy/sell, flipped`。
+  `fund_sim`(+信賴帶旗標;買/賣向量各算一次)、**`sector_hhi`、`top_sector`**
+  (產業碼自 ws-core tickers;TEJ 產業粗,主題籃子辨識力受限——2026-09-16 補)、
+  **`daytrade_assoc`**(所持股票 T3 vol_dtp 以 gross 加權;區分當沖/隔日沖幫 vs
+  現貨散戶——補)、`oddlot_share`(股數 mod 1000 佔比;**可緩**,與多重性重複)、
+  滾動窗 20/60/120/250D 版身分相似度;沿用 v1 全欄。
+- t5a_trajectory(**全體**分點×股票×日,活躍門檻:近 60 日 gross≥N 張,控規模;
+  讀本「新面孔/老手」須對當日所有買方成立,故不限白名單——2026-09-16 補):
+  `broker, symbol_id, date, net_1d/3d/5d/10d/20d/60d, consec_buy/sell,
+  flow_age_days, prior60d_exposure, flipped, cum_flow_20`。
+- t5b_cost_state(**白名單宇宙**:無 dash HQ 席位+簽名 pair+名單分點,可設定
+  擴充;≈120 分點;客戶穩定才有「成本」語意):`broker, symbol_id, date,
+  pos_sh, cost_avg, unreal_pnl_pct, pos_age_days`(FIFO,stateful)。
 - t6_exec_style(活躍門檻 gross≥10 張):`broker, symbol_id, date, vwap_buy,
   vwap_sell, buy_location, sell_location, n_price_levels, frag_score,
   session_guess(nullable,tick 期間才有)`。
@@ -113,7 +126,7 @@ experiments/flow_lab/  共動群組批次、markout 曲面、一切預測性研�
 | 期 | 內容 | 驗收 |
 |---|---|---|
 | O1 | t4 v2(actor:多重性+指紋)+ 3450 讀本原型 v1 | 指紋錨重現;user 讀得出東西 |
-| O2 | t5 部位狀態(FIFO 白名單)+ TDCC 對向檢查 | 3450 的 JPM 成本線自動重現手工結論;倒貨率×虧損深度描述表 |
+| O2 | t5a 軌跡(全體)+ t5b 成本狀態(FIFO 白名單)+ TDCC 對向檢查 | 3450 的 JPM 成本線自動重現手工結論;倒貨率×虧損深度描述表 |
 | O3 | t6 執行風格(T2 聚合+BuyLocation) | 分盤股 vs 撮合指紋一致;讀本 v2 加執行欄 |
 | O4 | products 三件套上線(profile/讀本/labels)→ ws-quant 處置線改讀 labels → 拆凍結舊模組;ws-desk 接讀本 | 原 P5 驗收條款;每日批次入 run 排程 |
 | O5 | 關係層(對手盤 watch 表+共動群組首輪批次於 flow_lab) | 分盤股 exact 一致率;共動群組產出外資暗流嫌疑名單 v1 |
@@ -143,3 +156,12 @@ experiments/flow_lab/  共動群組批次、markout 曲面、一切預測性研�
 - REDESIGN §13(P6 backlog):整節歸入 O6;籃子指紋提前至 O1(升為 t4 v2
   欄位);恆等式 QA 維持 O1 前置;PCF 採購決策不變(待 user)。
 - pnl/ 封存狀態不變;唯一提取物=`domain/fifo.py` 純域邏輯(附出處註記)。
+
+## 9. 提案覆蓋審計(2026-09-16,對照外部提案兩篇逐指標)
+
+做完 O1-O6 覆蓋約九成。五處原設計漏洞已於本版補入(上方標「補」):
+①軌跡對全體(t5a)②產業維度③融資欄+零股比(可緩)④當沖關聯度⑤讀本擁擠度
+(帶墓碑)。**刻意不做**:猜 beneficial owner(制度上不可能)、每日全參數
+w_{b,k,t,s}(辨識性)、技巧曲面當每日產品(先研究)、GBM 自由挖掘(閘住)。
+**資料缺**:被動 ETF PCF(待 user 拍板採購)。**延後**:指數調整流
+(index/rebalance character,需指數事件日曆,stock_attr 成分旗標可推,等案例)。

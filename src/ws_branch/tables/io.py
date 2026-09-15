@@ -9,16 +9,22 @@
 from __future__ import annotations
 
 import datetime
+import os
 from pathlib import Path
 
 import polars as pl
 
 REPO = Path(__file__).resolve().parents[3]
-DATA_DIR = REPO / "data"
+
+
+def data_dir() -> Path:
+    """表的根目錄。`WS_BRANCH_DATA_DIR` 可覆寫(e2e 測試/搬家用)。"""
+    override = os.environ.get("WS_BRANCH_DATA_DIR")
+    return Path(override) if override else REPO / "data"
 
 
 def table_dir(name: str) -> Path:
-    return DATA_DIR / name
+    return data_dir() / name
 
 
 def year_path(name: str, year: int) -> Path:

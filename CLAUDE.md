@@ -2,7 +2,9 @@
 
 > **重設計中(2026-09,branch `redesign`)**:本 repo 使命改為「分點資料的
 > 清洗聚合與歸因量測」——藍圖 `docs/REDESIGN_2026-09.md`、體檢帳本
-> `docs/audit_ledger.md`。新核心:
+> `docs/audit_ledger.md`。**P4-P6 重心已轉移至觀測站架構
+> `docs/OBSERVATORY_2026-09.md`(2026-09-16;四層維度+O1-O6 分期,動
+> 手前先讀)**。新核心:
 > - CLI:`uv run python -m ws_branch build|verify [--table t1_broker_daily|
 >   t3_official_daily|t4_broker_features] [--year Y]`(factory.py=相容薄殼)
 > - `src/ws_branch/` 三色分層:tables(registry/runner/io/transforms/checks)

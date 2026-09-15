@@ -1,5 +1,15 @@
 # ws-branch
 
+> **重設計中(2026-09,branch `redesign`)**:本 repo 使命改為「分點資料的
+> 清洗聚合與歸因量測」——藍圖 `docs/REDESIGN_2026-09.md`、體檢帳本
+> `docs/audit_ledger.md`。新核心:
+> - `factory.py` — T1 主表(分點×股票×日,2021+ 全史)建造與對帳;
+>   T2 價位表 = ws-core `broker_tx_pricelevel_scan` lazy 視圖(不物化)
+> - `measurement/` — 身分(identity,已遷入含修正)/ 狀態 / 歸因
+> - `experiments/flow_lab/` — 研究區(家法:預期先行/紅隊/體檢先於使用)
+> - **PNL/FIFO 層(etl.py、pnl_engine.py、聰明錢/conviction)封存**:
+>   不維護不重建;復用前置條件見 audit_ledger。以下舊文件僅供考古。
+
 ## Build & Run
 
 ```bash

@@ -139,3 +139,56 @@ user 審 v2 → 核准後 P1 開工(ws-core 另開 worktree/PR)。
 6. ws-quant 側等 user 拍板:《生態圖鑑》要不要補 U1 散戶化章節;
    rejected.yaml pull_rate retry 標記已消耗
 7. 持續盤:H-20260911 週更(23/60)、3450 高盛殘餘出清/JPM 十日窗
+
+## 13. P6 歸因研究 backlog(2026-09-15 蒸餾自外部 LLM 提案二,經本地實證修正)
+
+> 來源 = user 徵詢的外部 LLM 匿名資金流估計器提案(兩篇)。收其可取、
+> 標其不知、丟其重複。**任何一題開跑前:凍結預期、鎖鄰近變體、入 trial
+> ledger——治理不隨提案來,隨家法來。**
+
+### 採用的框架語言
+
+- **兩層構念**:Investor Identity(外資/投信/自營/其他)vs **Flow Character**
+  (informed/index/避險/集中大戶/散戶 churn)。後者較可能載 alpha——與
+  ws-quant facts #8 八連殺教訓(「人」無資訊、「狀態」有)理論-實證互證。
+- **會計恆等式監督框架**:Other = 總量 − 四官方桶;前四桶有 T3 地面真值
+  可監督,Other 為無監督分解對象(RetailDiffuse/LocalConcentrated/
+  CorporateLike/Unknown)。
+- **修正(A5,提案不知)**:分點日報 ⊆ TEJ vol(鉅額/特殊交易不在分點資料),
+  恆等式必須聲明在「普通盤宇宙」;Other 殘差含鉅額,須另行對帳或揭露。
+- **錨的可信度分級(U3 實證,提案不知)**:外資錨 corr 0.97(歸因可做準)/
+  投信錨 0.58(先天低精度,輸出須帶寬信賴帶)/自營名字錨=空殼(僅能靠
+  官方 T3 數字,無分點監督)。五條 latent flow 不得一視同仁標精度。
+
+### 實驗排序(便宜且能判別者先)
+
+1. **籃子指紋 probe**(全篇最佳招,T1×T3 現成):分點日持股向量 vs 官方
+   外資/投信日向量的 cos/rank-corr——市場整體當指紋,非逐股比對。
+   先當診斷:哪些分點日與外資向量高相似?時間穩定嗎?(≈半天)
+2. **恆等式一致性 QA**:T3 的 tot_* 欄 vs 四桶加總;Other 殘差與分點
+   宇宙的鉅額缺口對帳(A5 的延伸,1 小時級)。
+3. **NNLS 歸因 v1**:w≥0+稀疏+時間平滑;**權重設為慢變量(週/月頻)**,
+   每日重估必不穩;階層式收縮(sector/size 分層+先驗)防對 stock×branch
+   硬估;驗收=外資權重須重現名字席位名單(0.97 錨)。
+4. **價格積極度 BuyLocation**(T2 現成):VWAP_buy 相對日內區間位置,
+   身分/性格分類的特徵,也是獨立描述量。
+5. **生命週期狀態**:FlowAge/NewEntry/CumFlow/反手——ws-branch 原
+   11 策略部分重疊,引用其封存結論,不重蓋。
+6. **markout 技巧曲面**(封存 PNL 軸的重生形態):VWAP markout 取代 FIFO、
+   Skill(b,horizon,side,sector) 曲面取代單一分數;**復活前置=補 IS/OOS
+   分段+beta 拆離(帳本欠條)**;fade-the-crowded-skill(SSRN preprint
+   假說,當輸入不當事實)。
+7. **X 光交叉驗證**:TDCC 級距(**本地僅 2025-03+ 週頻**,歷史短)、
+   當沖佔比(T3 已有)、融資融券(shareholding 有,T3 未納,需時再加欄)。
+8. **主動 ETF fingerprint**(在庫 2026-04+):holdings 變化 × T3 投信流 ×
+   分點籃子三方疊合;申贖污染但書照 ws-core docstring。
+
+### 明確不做/待拍板
+
+- **不做**:每日重估的 w_{b,k,t,s} 全參數版(辨識性不足);GBM 交互作用
+  自由挖掘(HARKing;若做,特徵與交互須預先宣告+trial ledger);
+  把 SSRN 數字當已驗證事實。
+- **待 user 拍板**:被動 ETF PCF 申贖籃資料採購(本地無;liquidity_shock
+  評估卡過的同一缺口)。
+- **設計權在本 repo**:schema/feature 對著真實 T1-T4(單位/覆蓋/怪癖)設計,
+  外部提案只當點子產生器。

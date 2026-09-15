@@ -1,6 +1,6 @@
 [project]
 name = "ws-branch"
-version = "1.0.0.dev0"
+version = "1.0.0"
 description = "分點資料的清洗聚合與歸因量測(L1 tables / L2 measure / L3 products;PNL 時代封存於 pnl/)"
 requires-python = ">=3.12"
 dependencies = [

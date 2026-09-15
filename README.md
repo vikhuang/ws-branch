@@ -1,5 +1,20 @@
 # ws-branch
 
+> **v1.0.0(2026-09-15)重設計**:本 repo 使命改為「分點資料的清洗聚合與歸因量測」。
+> 藍圖 `docs/REDESIGN_2026-09.md`、體檢帳本 `docs/audit_ledger.md`。
+>
+> - 四張表:T1 分點×股票×日(2021+ 物化)/T2 價位表(ws-core lazy 視圖)/
+>   T3 官方法人流(2016+,單位=股/元)/T4 分點日行為特徵
+> - CLI:`uv run python -m ws_branch build|verify --table <t> [--year Y]`
+> - 架構:`src/ws_branch/` 三色分層(純轉換/IO 殼/宣告);測試金字塔
+>   (單元+e2e 合成小宇宙+真資料對帳),`uv run pytest`
+> - **以下舊 README 描述的 PNL/FIFO 系統已整包封存於 `pnl/`**,主線不維護;
+>   復用前置條件見 audit_ledger。
+
+---
+
+# (封存)ws-branch PNL 系統(原 README)
+
 全市場券商分點交易資料的 PNL 回測系統。回答五個問題：
 
 1. **哪些券商在賺錢？** — 依 FIFO 計算每家券商的已實現 + 未實現損益，全市場排名

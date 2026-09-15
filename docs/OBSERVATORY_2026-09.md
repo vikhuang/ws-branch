@@ -125,7 +125,7 @@ experiments/flow_lab/  共動群組批次、markout 曲面、一切預測性研�
 
 | 期 | 內容 | 驗收 |
 |---|---|---|
-| O1 | t4 v2(actor:多重性+指紋)+ 3450 讀本原型 v1 | 指紋錨重現;user 讀得出東西 |
+| O1 ✅(2026-09-16) | t4 v2(actor:多重性+指紋)+ 3450 讀本原型 v1 | 指紋錨重現(2026 全年,institutional cohort vs 母體:foreign_sim_buy Welch t=4.77 p=1.8e-6 d=0.30;foreign_sim_sell t=7.98 p=1.5e-15 d=0.50;fund_sim 更強 d=1.65-1.79——四項皆顯著,方向正確);3450 讀本(2026-09-14 解禁 day-1)獨立重現手工結論:摩根大通/美商高盛/美林三席外資賣壓、元大等 HQ 席位人群化(multiplicity 0.6-0.8) |
 | O2 | t5a 軌跡(全體)+ t5b 成本狀態(FIFO 白名單)+ TDCC 對向檢查 | 3450 的 JPM 成本線自動重現手工結論;倒貨率×虧損深度描述表 |
 | O3 | t6 執行風格(T2 聚合+BuyLocation) | 分盤股 vs 撮合指紋一致;讀本 v2 加執行欄 |
 | O4 | products 三件套上線(profile/讀本/labels)→ ws-quant 處置線改讀 labels → 拆凍結舊模組;ws-desk 接讀本 | 原 P5 驗收條款;每日批次入 run 排程 |
@@ -133,6 +133,10 @@ experiments/flow_lab/  共動群組批次、markout 曲面、一切預測性研�
 | O6 | 預測性研究(原 P6 backlog §13 全部歸此,含 markout 曲面/fade 假說) | 家法全套,逐題凍結預期 |
 
 原 P4(重分群)併入 O1:在 t4 v2 特徵上重做,對 T3 錨驗,標有效期。
+**未完成(O1 這輪未做,順延)**:實際的重分群重做——本輪 O1 施工只完成
+user 指定的 5 項任務(schema/驗證錨/3450 讀本/測試),沒有動 P4 的分群
+演算法;`measure/identity.py` 的 CLUSTER_VOLUME_SHARE 等仍是舊窗口
+(2021-01~2025-08)版本,尚未在 t4 v2 特徵上重跑。
 
 ## 6. 治理邊界(一條線,寫死)
 

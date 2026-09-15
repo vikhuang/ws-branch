@@ -55,6 +55,20 @@ def scan_t1(*, start: str | None = None, end: str | None = None) -> pl.LazyFrame
     return lf
 
 
+def reconcile(t1_totals: pl.DataFrame, px: pl.DataFrame,
+              tol: float = 0.001) -> pl.DataFrame:
+    """純比較:T1 每股日總買/賣(股)/1000 vs TEJ vol(千股),回傳超差列。
+
+    t1_totals 欄位:symbol_id, date, buy, sell;px 欄位:symbol_id, date, vol。
+    """
+    j = t1_totals.join(px, on=["symbol_id", "date"], how="inner").filter(
+        pl.col("vol") > 0)
+    return j.with_columns(
+        ((pl.col("buy") / 1000 - pl.col("vol")).abs() / pl.col("vol")).alias("rel_b"),
+        ((pl.col("sell") / 1000 - pl.col("vol")).abs() / pl.col("vol")).alias("rel_s"),
+    ).filter((pl.col("rel_b") > tol) | (pl.col("rel_s") > tol))
+
+
 def verify(n_samples: int = 60, seed: int = 20260915) -> None:
     """對帳:隨機抽 n 個(股票,日),T1 總買進(股)/1000 須 == TEJ vol(千股)。
 
@@ -81,12 +95,9 @@ def verify(n_samples: int = 60, seed: int = 20260915) -> None:
                  columns=["coid", "mdate", "vol"])
           .rename({"coid": "symbol_id", "mdate": "date"})
           .with_columns(pl.col("date").cast(pl.Date)))
-    j = t1.join(px, on=["symbol_id", "date"], how="inner").filter(pl.col("vol") > 0)
-    rel_b = ((j["buy"] / 1000 - j["vol"]).abs() / j["vol"])
-    rel_s = ((j["sell"] / 1000 - j["vol"]).abs() / j["vol"])
-    bad = j.filter((rel_b > 0.001) | (rel_s > 0.001))
-    print(f"verify: 抽樣 {j.height} 股日(跨 {j['date'].dt.year().n_unique()} 年), "
-          f"買方最大相對差 {rel_b.max():.5%}, 賣方 {rel_s.max():.5%}")
+    bad = reconcile(t1, px)
+    n_joined = t1.join(px, on=["symbol_id", "date"], how="inner").height
+    print(f"verify: 抽樣 {n_joined} 股日(跨 {t1['date'].dt.year().n_unique()} 年)")
     if bad.height:
         print(bad.head(10))
         raise SystemExit(f"FAIL: {bad.height} 股日對不平 TEJ vol")

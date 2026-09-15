@@ -97,9 +97,9 @@ broker_labels.parquet 上線且處置線改讀成功,才刪舊模組。不做大
 
 | 階段 | 內容 | 驗收 |
 |---|---|---|
-| P1 | ws-core 四讀取器+對帳測試 | 測試綠;兩條對帳先例重現 |
-| P2 | T1/T2 建表(2021+ 全史)+對帳 | 總量==TEJ;外資 corr>0.95 |
-| P3 | T3/T4 建表;還債:★三案體檢 | 特徵表就緒;三案各一頁結論 |
+| P1 | ws-core 四讀取器+對帳測試 | 測試綠;兩條對帳先例重現 | **✅ 2026-09-15,ws-core v0.10.0 已 ship** |
+| P2 | T1/T2 建表(2021+ 全史)+對帳 | 閉環(修正語意:broker ⊆ TEJ,A5) **✅ 2026-09-15;2021-23 需 BQ 補驗** |
+| P3 | T3/T4 建表;還債:★三案體檢 | 特徵表就緒;三案各一頁結論 | **✅ 2026-09-15(帳本 A1-A5 結案)** |
 | P4 | 搬遷+identity 重做(在 T4 上重分群,對 T3 錨驗) | 新分群+標註有效期;ws-quant 舊模組仍凍結 |
 | P5 | broker_labels.parquet v1 上線 | schema 定稿;ws-quant 處置線試讀成功 |
 | P6 | 歸因研究開張(NNLS/籃子指紋/BuyLocation/主動ETF對帳),家法全套 | 每題先凍結預期;產出入 trial ledger |
@@ -115,3 +115,16 @@ broker_labels.parquet 上線且處置線改讀成功,才刪舊模組。不做大
 
 user 審 v2 → 核准後 P1 開工(ws-core 另開 worktree/PR)。
 本 repo 從 P2 起動工,全程 branch `redesign`,驗收後併 main。
+
+## 11. 施工補記(2026-09-15)
+
+- 架構全面重排(user 核准):單一套件 `src/ws_branch/` 三色分層
+  (transforms/checks/measure=純;io/products=IO;registry/taxonomy=宣告);
+  PNL 時代整包物理封存於 `pnl/`(原名 legacy,user 定名)。
+- 三次記憶體事故與條文化修法:①並行 OOM→序列執行;②單程序多年建表
+  polars 不還記憶體堆 94GB 壓縮頁→一年一子程序;③verify 全史 unique
+  30GB→逐年抽日+謂詞下推。教訓:36GB 機器上 RSS 是假象,**壓縮區才是
+  真水位**,任何億級查詢先按壓縮區預算設計。
+- T4 建表逐月切塊(group 鍵含 date,月切無損)。
+- 四張表落地:T1 8.5GB/6.8 億列、T3 91MB/470 萬列(2016+)、
+  T4 61MB/120 萬分點日;T2=ws-core lazy 視圖。

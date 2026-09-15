@@ -35,5 +35,4 @@ pythonpath = ["src", "pnl", "."]
 
 [tool.uv.sources]
 ws-bot-core = { git = "https://github.com/vikhuang/ws-bot-core" }
-# TEMP(redesign 分支施工期): 指向 flow-readers worktree;ws-core 該分支併 main 後改回 ../ws-core
-ws-core = { path = "../ws-core-flow-readers", editable = true }
+ws-core = { path = "../ws-core", editable = true }

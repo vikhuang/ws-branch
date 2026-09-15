@@ -1,8 +1,17 @@
-"""通用執行器:對 registry 內任何表做 build / verify。序列執行,不並行。"""
+"""通用執行器:對 registry 內任何表做 build / verify。
+
+兩條硬規矩(皆為 2026-09-15 實付事故):
+1. 序列執行,不並行(OOM,exit 137)
+2. **重活一年一程序**:polars 的已用記憶體不還 OS,多年共用單一程序
+   會在數分鐘內堆出 90GB 壓縮頁塞爆 swap——多年建表一律逐年 spawn
+   子程序,做完即退、記憶體歸還
+"""
 
 from __future__ import annotations
 
 import datetime
+import subprocess
+import sys
 
 import polars as pl
 
@@ -19,7 +28,16 @@ def _resolve(name: str) -> Table:
 def build(name: str, year: int | None = None, force: bool = False) -> None:
     t = _resolve(name)
     this_year = datetime.date.today().year
-    years = [year] if year else list(range(t.first_year, this_year + 1))
+    if year is None:
+        # 多年 = 逐年子程序(規矩 2);單年才在本程序執行
+        for y in range(t.first_year, this_year + 1):
+            cmd = [sys.executable, "-m", "ws_branch", "build",
+                   "--table", name, "--year", str(y)]
+            if force:
+                cmd.append("--force")
+            subprocess.run(cmd, check=True)
+        return
+    years = [year]
     for y in years:
         out = io.year_path(t.name, y)
         # 存在即跳過(含當年)——當年的增量更新之後以明確的 --incr 語意提供,

@@ -26,6 +26,10 @@ def _cohens_d(a: pl.Series, b: pl.Series) -> float:
     return (a.mean() - b.mean()) / pooled
 
 
+def _corr(a: pl.Series, b: pl.Series) -> float:
+    return pl.DataFrame({"a": a, "b": b}).select(pl.corr("a", "b")).item()
+
+
 def _auc(pos: pl.Series, neg: pl.Series) -> float:
     """Mann-Whitney AUC:隨機抽一正一負,正 > 負 的機率(= 分佈可分性)。"""
     both = pl.concat([
@@ -147,13 +151,13 @@ def q2_stability(t4: pl.DataFrame) -> None:
     s = s.with_columns(pl.col(col).shift(1).over("broker").alias("_lag"),
                        pl.len().over("broker").alias("_days"))
     active = s.filter(pl.col("_days") >= 60)
-    lag1 = pl.corr(active[col], active["_lag"])
+    lag1 = _corr(active[col], active["_lag"])
     print(f"  日層級 lag-1 自相關(≥60 活躍日分點,pooled):{lag1:.3f}")
     bins = [(1, 5), (5, 10), (10, 30), (30, 100), (100, 10_000)]
     for lo, hi in bins:
         b = active.filter((pl.col("n_symbols") >= lo) & (pl.col("n_symbols") < hi))
         if b.height > 100:
-            print(f"    n_symbols [{lo},{hi}): lag-1={pl.corr(b[col], b['_lag']):.3f} "
+            print(f"    n_symbols [{lo},{hi}): lag-1={_corr(b[col], b['_lag']):.3f} "
                   f"(n={b.height:,})")
     mid = datetime.date(YEAR, 5, 15)
     halves = (active.with_columns((pl.col("date") < mid).alias("h1"))
@@ -161,7 +165,7 @@ def q2_stability(t4: pl.DataFrame) -> None:
               .filter(pl.col("n") >= 20)
               .pivot(values="m", index="broker", on="h1").drop_nulls())
     if halves.height:
-        rho = pl.corr(halves["true"].rank(), halves["false"].rank())
+        rho = _corr(halves["true"].rank(), halves["false"].rank())
         print(f"  分點層級上下半年均值 Spearman(兩半各 ≥20 日,n={halves.height}):{rho:.3f}")
 
 
@@ -177,7 +181,7 @@ def q3_popularity(t4: pl.DataFrame) -> pl.DataFrame:
     for y in ["foreign_sim_buy", "fund_sim_buy", "foreign_sim_sell", "fund_sim_sell"]:
         x = "popularity_sim_buy" if y.endswith("buy") else "popularity_sim_sell"
         sub = t4.filter(pl.col(y).is_not_null() & pl.col(x).is_not_null())
-        print(f"  corr({y}, {x}) = {pl.corr(sub[y], sub[x]):.3f}")
+        print(f"  corr({y}, {x}) = {_corr(sub[y], sub[x]):.3f}")
     print("\n  institutional vs 其他 —— 原版 / 殘差版(扣掉 popularity 的 OLS 線):")
     for y in ["foreign_sim_buy", "fund_sim_buy", "foreign_sim_sell", "fund_sim_sell"]:
         x = "popularity_sim_buy" if y.endswith("buy") else "popularity_sim_sell"

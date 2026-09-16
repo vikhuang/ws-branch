@@ -37,7 +37,10 @@ from ws_core.tickers import tickers_df
 from ws_branch.measure import actor
 from ws_branch.tables import io
 
-_BUFFER_DAYS = 7  # 月初「前一交易日」可能落在上個月;7 曆天足以跨過連假
+_BUFFER_DAYS = 14  # 月初「前一交易日」可能落在上個月;過年是最長連假
+# (2026 實測 2/23 前連休 12 個月曆天,恰好整段落在 2 月內未跨月界,但過年
+# 哪一年落在哪個月邊界純看農曆,不能假設「這次沒跨月界」就是永遠安全——
+# 14 天留出安全邊際,不得隨便縮小)
 
 
 def compute_broker_day(t1_slice: pl.DataFrame) -> pl.DataFrame:

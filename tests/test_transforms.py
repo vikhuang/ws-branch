@@ -178,6 +178,22 @@ def test_compute_multiplicity_hand_computed_and_null_self_sim_fallback() -> None
     assert b["multiplicity"] == pytest.approx(1 - (0.8 + 0.6) / 2)  # 退回兩分量
 
 
+def test_compute_multiplicity_core_null_is_null_even_with_self_sim_present() -> None:
+    # 目前的資料管線裡 directional_ratio/top5_share 只會同時為 null(都由
+    # compute_broker_day 的 gross_amt==0 觸發),但這裡刻意測「兩者缺一
+    # 個、basket_self_sim 卻有值」這個管線目前不會產生、但函數本身不該
+    # 依賴這個巧合的組合——不得因為 mean_horizontal 靜默跳過 null 而算出
+    # 一個看似正常的數字(regression test:防止之後改回 mean_horizontal)。
+    daily = pl.DataFrame({
+        "broker": ["A"],
+        "directional_ratio": [None],
+        "top5_share": [0.6],
+        "basket_self_sim": [0.9],
+    })
+    out = actor.compute_multiplicity(daily)
+    assert out.row(0, named=True)["multiplicity"] is None
+
+
 def test_rolling_identity_similarity_hand_computed() -> None:
     dates = [datetime.date(2026, 1, d) for d in range(1, 11)]
     daily = pl.DataFrame({

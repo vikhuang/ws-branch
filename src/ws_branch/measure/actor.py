@@ -219,16 +219,32 @@ def compute_multiplicity(daily: pl.DataFrame) -> pl.DataFrame:
     退回只用另外兩分量的平均,不得靜默補 0(0 會誤讀成「跟昨天完全不像」
     而把新分點/久未活動分點誤判成人群化櫃檯)。
 
+    直接用 `pl.mean_horizontal` 對三欄取平均會有陷阱:它會**靜默跳過
+    null**(等同 nanmean),不是我們要的「basket_self_sim 缺值時明確退回
+    兩分量」。directional_ratio/top5_share 兩者目前總是同時為 null(都
+    由 compute_broker_day 的 gross_amt==0 觸發),此時 mean_horizontal
+    對三個 null 取平均會正確回傳 null——但這是**兩個獨立判斷剛好同步的
+    巧合**,不是設計保證;之後任何一邊的 null 觸發條件被改動,
+    mean_horizontal 會在不知不覺間換成用剩下的 1-2 個分量硬算,不會報錯
+    也不會留痕跡。因此這裡改用明確的三段式 when/then,把「三分量都在→
+    三分量平均」「directional_ratio/top5_share 在但 basket_self_sim 缺→
+    兩分量平均」「directional_ratio/top5_share 缺→null」三種狀態各自
+    寫死,不依賴 mean_horizontal 的隱式跳過行為。
+
     Returns: 原欄位 + multiplicity(∈[0,1])
     """
-    unity_with_self_sim = pl.mean_horizontal(
-        "directional_ratio", "top5_share", "basket_self_sim"
+    core_present = (
+        pl.col("directional_ratio").is_not_null() & pl.col("top5_share").is_not_null()
     )
-    unity_without_self_sim = pl.mean_horizontal("directional_ratio", "top5_share")
     unity = (
-        pl.when(pl.col("basket_self_sim").is_not_null())
-        .then(unity_with_self_sim)
-        .otherwise(unity_without_self_sim)
+        pl.when(~core_present)
+        .then(None)
+        .when(pl.col("basket_self_sim").is_not_null())
+        .then(
+            (pl.col("directional_ratio") + pl.col("top5_share")
+             + pl.col("basket_self_sim")) / 3
+        )
+        .otherwise((pl.col("directional_ratio") + pl.col("top5_share")) / 2)
     )
     return daily.with_columns((1 - unity).alias("multiplicity"))
 

@@ -1,0 +1,110 @@
+"""T3b 會計界限表:股票×日×側的硬上下界(不含任何行為模型)。
+
+架構文件 §4.4/§5.1。這張表回答「公開資料的會計約束最多能說到什麼程度」:
+官方外資量有多少**必須**在外資席位之外、cohort 內的外資量能被夾到多窄、
+未屬於四個官方桶的餘額有多大、以及有多少市場成交量根本不在分點資料裡。
+
+粒度:symbol_id × date × side(buy/sell 長表,不用寬表塞雙側)。
+universe:僅普通股(measure.universe;T3 的指數彙總列會讓外資買入虛增 4.7 倍)。
+cohort:外資券商席位 12 家,以**代號**宣告(measure.universe.FOREIGN_BROKER_CODES);
+        不用 classify_broker_cohort 的 institutional 桶——它含本土法人席位。
+
+三個口徑刻意分開存,不能互相取代:
+- `market_total_sh`  = TEJ vol(全市場成交量 V)
+- `observed_total_sh`= T1 分點加總(⊆ V,A5)
+- `unobserved_sh`    = V − T1(鉅額/特殊交易,不得分配給任何可見席位)
+界限用 V 當總量約束;若改用 T1 總量會把未觀測交易默默算成可見席位的配額。
+
+記憶體:T1 逐月切塊後先聚合到股票日(1 億列 → 40 萬列),再與小表 join。
+"""
+
+from __future__ import annotations
+
+import datetime
+
+import polars as pl
+from ws_core import prices, stock_attr
+
+from ws_branch.measure import accounting, universe
+from ws_branch.tables import io
+
+_OFFICIAL_BUCKETS = {
+    "buy": ["foreign_buy_sh", "fund_buy_sh", "prop_self_buy_sh", "prop_hedge_buy_sh"],
+    "sell": ["foreign_sell_sh", "fund_sell_sh", "prop_self_sell_sh", "prop_hedge_sell_sh"],
+}
+
+
+def _t1_stock_day(year: int, month: int) -> pl.DataFrame:
+    """T1 逐月 → 股票日 × (全市場, 外資 cohort) 的買賣股數。"""
+    start = datetime.date(year, month, 1)
+    end = (datetime.date(year + 1, 1, 1) if month == 12
+           else datetime.date(year, month + 1, 1)) - datetime.timedelta(days=1)
+    lf = io.scan("t1_broker_daily", start=str(start), end=str(end))
+    is_cohort = pl.col("broker").is_in(list(universe.FOREIGN_BROKER_CODES))
+    return (lf.group_by("symbol_id", "date")
+            .agg(pl.col("buy_sh").sum().alias("observed_total_buy_sh"),
+                 pl.col("sell_sh").sum().alias("observed_total_sell_sh"),
+                 pl.col("buy_sh").filter(is_cohort).sum().alias("cohort_buy_sh"),
+                 pl.col("sell_sh").filter(is_cohort).sum().alias("cohort_sell_sh"),
+                 pl.col("broker").n_unique().alias("n_brokers"))
+            .collect())
+
+
+def build_year(year: int) -> pl.LazyFrame:
+    uni = universe.stock_universe(
+        stock_attr(start=f"{year}-01-01", end=f"{year}-12-31",
+                   columns=["coid", "mdate", "stktp_c"]))
+    t3 = io.scan("t3_official_daily", start=f"{year}-01-01", end=f"{year}-12-31").collect()
+    # TEJ vol 單位=張,轉股與 T1/T3 對齊
+    px = (prices(start=f"{year}-01-01", end=f"{year}-12-31",
+                 columns=["coid", "mdate", "vol"])
+          .select(pl.col("coid").alias("symbol_id"),
+                  pl.col("mdate").cast(pl.Date).alias("date"),
+                  (pl.col("vol") * 1000).cast(pl.Float64).alias("market_total_sh")))
+
+    parts: list[pl.DataFrame] = []
+    for month in range(1, 13):
+        t1 = _t1_stock_day(year, month)
+        if t1.height == 0:
+            continue
+        wide = (universe.apply_universe(t1, uni)
+                .join(t3, on=["symbol_id", "date"], how="inner")
+                .join(px, on=["symbol_id", "date"], how="inner"))
+        if wide.height == 0:
+            continue
+        rows = []
+        for side in ("buy", "sell"):
+            df = (wide
+                  .with_columns(pl.lit(side).alias("side"))
+                  .rename({f"observed_total_{side}_sh": "observed_total_sh",
+                           f"cohort_{side}_sh": "cohort_sh",
+                           f"foreign_{side}_sh": "official_foreign_sh",
+                           f"fund_{side}_sh": "official_fund_sh",
+                           f"prop_self_{side}_sh": "official_prop_self_sh",
+                           f"prop_hedge_{side}_sh": "official_prop_hedge_sh"}))
+            df = accounting.flow_bounds(
+                df, cohort_col="cohort_sh", official_col="official_foreign_sh",
+                market_col="market_total_sh", prefix="foreign")
+            df = accounting.actor_residual(
+                df, market_col="market_total_sh",
+                bucket_cols=["official_foreign_sh", "official_fund_sh",
+                             "official_prop_self_sh", "official_prop_hedge_sh"],
+                out="other_actor_sh")
+            df = accounting.unobserved_flow(
+                df, market_col="market_total_sh",
+                observed_col="observed_total_sh", out="unobserved_sh")
+            rows.append(df.select(
+                "symbol_id", "date", "side", "market_total_sh", "observed_total_sh",
+                "unobserved_sh", "unobserved_sh_ok", "n_brokers", "cohort_sh",
+                "official_foreign_sh", "official_fund_sh", "official_prop_self_sh",
+                "official_prop_hedge_sh", "other_actor_sh", "other_actor_sh_ok",
+                "foreign_x_lo", "foreign_x_hi", "foreign_x_width",
+                "foreign_y_lo", "foreign_y_hi",
+                "foreign_cov_lo", "foreign_cov_hi", "foreign_bounds_ok"))
+        parts.append(pl.concat(rows))
+    if not parts:
+        raise ValueError(f"t3b_accounting_bounds {year}: 無任何月份有資料")
+    return (pl.concat(parts)
+            .with_columns(pl.lit(universe.UNIVERSE_VERSION).alias("universe_version"),
+                          pl.lit(universe.FOREIGN_BROKER_COHORT_VERSION).alias("cohort_version"))
+            .lazy())

@@ -48,7 +48,7 @@ def _mk_universe(root: Path) -> None:
     _write_broker_shard(root, D1, [
         # 2330:買總=賣總=1,001,000 股 → vol=1001 張(整除)
         R("2330", dt1, "A1", "元大-台北", "100.00", 600_000, 200_000),
-        R("2330", dt1, "F1", "摩根大通", "1,085.00", 400_000, 800_000),  # 逗號價
+        R("2330", dt1, "8440", "摩根大通", "1,085.00", 400_000, 800_000),  # 逗號價/外資 cohort
         R("2330", dt1, "P1", "國泰-自營", "-", 1_000, 1_000),           # dash-only
         # 1531:21,501 股 → vol=21 張(零股尾數,考 1 張容差)
         R("1531", dt1, "A1", "元大-台北", "35.50", 21_501, 21_501),
@@ -67,16 +67,31 @@ def _mk_universe(root: Path) -> None:
     base = {k: 0.0 for k in [
         "qfii_buy", "qfii_sell", "qfii_ex", "fund_buy", "fund_sell", "fund_ex",
         "dlrp_buy", "dlrp_sell", "dlrp_ex", "dlrh_buy", "dlrh_sell", "dlrh_ex",
-        "qfii_bamt", "qfii_samt", "fund_bamt", "fund_samt", "vol_dt", "vol_dtp"]}
+        "qfii_bamt", "qfii_samt", "fund_bamt", "fund_samt", "vol_dt", "vol_dtp",
+        # T3 v2:自營金額 + 三大法人合計
+        "dlrp_bamt", "dlrp_samt", "dlrh_bamt", "dlrh_samt",
+        "tot_buy", "tot_sell", "tot_bamt", "tot_samt"]}
     rows = [
+        # 2330@D1:官方外資買 400 張、賣 800 張;全市場 1,001 張(vol)
+        # → 買方 cohort(F1=摩根大通,代號 8440)400 張,界限可手算
         {"coid": "2330", "mdate": D1, **base,
          "qfii_buy": 400.0, "qfii_sell": 800.0, "qfii_ex": -400.0,
          "qfii_bamt": 434_000.0, "qfii_samt": 868_000.0,
+         "tot_buy": 400.0, "tot_sell": 800.0,
          "vol_dt": 100.0, "vol_dtp": 9.99},
-        {"coid": "1531", "mdate": D1, **base, "fund_buy": 21.0, "fund_ex": 21.0},
+        {"coid": "1531", "mdate": D1, **base, "fund_buy": 21.0, "fund_ex": 21.0,
+         "tot_buy": 21.0},
         {"coid": "2330", "mdate": D2, **base},
     ]
     pl.DataFrame(rows).write_parquet(root / "tej" / "shareholding.parquet")
+
+    # stock_attr:universe gate 的來源(逐日證券類型)。2330/1531 為普通股,
+    # 另埋一檔 ETF 與一列指數,驗證 gate 會擋掉它們。
+    pl.DataFrame({
+        "coid": ["2330", "1531", "0050", "IX0001"] * 2,
+        "mdate": [D1] * 4 + [D2] * 4,
+        "stktp_c": ["普通股", "普通股", "ETF", "指數"] * 2,
+    }).write_parquet(root / "tej" / "stock_attr.parquet")
 
     # t4 v2(sector_hhi/top_sector)需要 ws-core tickers 讀取器;WS_DATA_ROOT
     # 覆寫後這個讀取器也指到合成小宇宙,故此處補一份最小 tickers fixture。
@@ -102,7 +117,8 @@ def universe(tmp_path_factory: pytest.TempPathFactory) -> dict:
     tables = tmp_path_factory.mktemp("mini_tables")
     _mk_universe(src)
     env = {"WS_DATA_ROOT": str(src), "WS_BRANCH_DATA_DIR": str(tables)}
-    for t in ["t1_broker_daily", "t3_official_daily", "t4_broker_features"]:
+    for t in ["t1_broker_daily", "t3_official_daily", "t3b_accounting_bounds",
+              "t4_broker_features"]:
         _run(["build", "--table", t, "--year", "2026"], env)
     return {"env": env, "tables": tables}
 
@@ -110,7 +126,7 @@ def universe(tmp_path_factory: pytest.TempPathFactory) -> dict:
 def test_e2e_t1_hand_checked(universe: dict) -> None:
     df = pl.read_parquet(universe["tables"] / "t1_broker_daily" / "year=2026.parquet")
     assert df["date"].dtype == pl.Date and set(df["date"].to_list()) == {D1, D2}
-    f1 = df.filter((pl.col("broker") == "F1") & (pl.col("date") == D1))
+    f1 = df.filter((pl.col("broker") == "8440") & (pl.col("date") == D1))
     assert f1[0, "buy_dollar"] == pytest.approx(400_000 * 1085.0)  # 逗號價正確
     p1 = df.filter(pl.col("broker") == "P1")
     assert p1[0, "buy_sh"] == 1_000 and p1[0, "has_dash"]           # dash coalesce
@@ -176,6 +192,38 @@ def test_e2e_t4_v2_hand_checked(universe: dict) -> None:
         "fund_sim_sell_20d", "fund_sim_sell_60d",
         "daytrade_assoc", "foreign_sim_confidence", "fund_sim_confidence",
     }
+
+
+def test_e2e_t3b_bounds_hand_checked(universe: dict) -> None:
+    df = pl.read_parquet(
+        universe["tables"] / "t3b_accounting_bounds" / "year=2026.parquet")
+    # universe gate:只有普通股 2330/1531 進表,ETF 0050 與指數 IX0001 被擋掉
+    assert set(df["symbol_id"].unique()) == {"2330", "1531"}
+    assert set(df["side"].unique()) == {"buy", "sell"}
+
+    r = df.filter((pl.col("symbol_id") == "2330") & (pl.col("date") == D1)
+                  & (pl.col("side") == "buy")).row(0, named=True)
+    # V=1,001 張=1,001,000 股;T1 觀測=600k+400k+1k(dash)=1,001,000
+    assert r["market_total_sh"] == pytest.approx(1_001_000)
+    assert r["observed_total_sh"] == pytest.approx(1_001_000)
+    assert r["unobserved_sh"] == pytest.approx(0.0) and r["unobserved_sh_ok"]
+    # cohort(8440 摩根大通)買 400,000 股;官方外資買 400,000 股
+    assert r["cohort_sh"] == pytest.approx(400_000)
+    assert r["official_foreign_sh"] == pytest.approx(400_000)
+    # 手算界限:L=max(0, 400k+400k−1,001k)=0;U=min(400k,400k)=400k
+    assert r["foreign_x_lo"] == pytest.approx(0.0)
+    assert r["foreign_x_hi"] == pytest.approx(400_000)
+    assert r["foreign_cov_hi"] == pytest.approx(1.0)  # 上界剛好 100%
+    assert r["foreign_y_lo"] == pytest.approx(0.0)    # 不必有外資在 cohort 外
+    # 餘額 = V − 四桶 = 1,001k − 400k = 601k(未識別種類,不得叫散戶)
+    assert r["other_actor_sh"] == pytest.approx(601_000) and r["other_actor_sh_ok"]
+    assert r["universe_version"] == "stock_v1"
+
+    # 1531@D1 賣方:零股尾數 21,501 股 vs vol 21 張 → 未觀測 −501 股,容差內
+    r2 = df.filter((pl.col("symbol_id") == "1531") & (pl.col("side") == "sell")
+                   ).row(0, named=True)
+    assert r2["unobserved_sh"] == pytest.approx(21_000 - 21_501)
+    assert r2["unobserved_sh_ok"]
 
 
 def test_e2e_verifies_pass(universe: dict) -> None:

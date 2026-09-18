@@ -10,6 +10,7 @@ import polars as pl
 from ws_branch.tables.transforms import (
     t1_broker_daily,
     t3_official_daily,
+    t3b_accounting_bounds,
     t4_broker_features,
 )
 
@@ -172,6 +173,55 @@ def _verify_t4(n_samples: int, seed: int) -> None:
     print(f"PASS: T4 不變量 + T1 重算一致(抽 {len(frames)} 日 {n:,} 分點日)")
 
 
+def _verify_t3b(n_samples: int, seed: int) -> None:
+    """T3b 對帳:界限的數學不變量 + 與 T1/T3 重算一致 + universe gate 生效。
+
+    界限不做 clipping(架構文件 §5.1),所以這裡不是「看起來合法就過」——
+    先查輸入自洽旗標,再查不自洽列的比例是否在可接受範圍。
+    """
+    import random
+
+    from ws_branch.tables import io
+
+    rng = random.Random(seed)
+    years = io.existing_years("t3b_accounting_bounds")
+    checked = 0
+    for y in rng.sample(years, min(2, len(years))):
+        ylf = pl.scan_parquet(io.year_path("t3b_accounting_bounds", y))
+        dates = ylf.select("date").unique().collect()["date"].to_list()
+        for d in rng.sample(dates, min(max(n_samples // 20, 2), len(dates))):
+            day = ylf.filter(pl.col("date") == d).collect()
+            # 界限的數學不變量只在輸入自洽的列上成立;輸入不自洽的列(官方桶
+            # 超過 V)照 §5.1 以旗標擋下發布,不 clip 也不在此當硬錯誤
+            ok = day.filter(pl.col("foreign_bounds_ok"))
+            bad = ok.filter(
+                (pl.col("foreign_x_lo") > pl.col("foreign_x_hi") + 1e-6)
+                | (pl.col("foreign_x_lo") < -1e-6)
+                | (pl.col("foreign_x_hi") > pl.col("cohort_sh") + 1e-6)
+                | (pl.col("foreign_x_hi") > pl.col("official_foreign_sh") + 1e-6)
+                | (pl.col("foreign_y_lo") > pl.col("foreign_y_hi") + 1e-6)
+                | (pl.col("foreign_cov_lo") > pl.col("foreign_cov_hi") + 1e-9))
+            if bad.height:
+                print(bad.head(5))
+                raise SystemExit(f"FAIL: {d} 有 {bad.height} 列界限自相矛盾")
+            n_bad_input = day.height - ok.height
+            n_bad_resid = day.filter(~pl.col("other_actor_sh_ok")).height
+            n_bad_unobs = day.filter(~pl.col("unobserved_sh_ok")).height
+            print(f"  {d}: {day.height:,} 列(可發布 {ok.height:,});輸入不自洽 "
+                  f"{n_bad_input}、餘額為負 {n_bad_resid}、閉環破裂 {n_bad_unobs}")
+            if n_bad_input > day.height * 0.01:
+                raise SystemExit(
+                    f"FAIL: {d} 輸入不自洽 {n_bad_input}/{day.height} 超過 1%——"
+                    f"口徑問題,非零星資料瑕疵")
+            if n_bad_unobs:
+                print(day.filter(~pl.col("unobserved_sh_ok")).head(3))
+                raise SystemExit(
+                    f"FAIL: {d} 有 {n_bad_unobs} 列 T1 超過 TEJ vol 逾 1 張容差"
+                    f"(閉環破裂,A5 硬性不變量)")
+            checked += day.height
+    print(f"PASS: T3b 界限不變量 + 閉環(抽查 {checked:,} 列)")
+
+
 TABLES: dict[str, Table] = {
     "t1_broker_daily": Table(
         name="t1_broker_daily",
@@ -183,6 +233,12 @@ TABLES: dict[str, Table] = {
         build_year=t3_official_daily.build_year,
         verify=_verify_t3,
         first_year=2016,
+    ),
+    "t3b_accounting_bounds": Table(
+        name="t3b_accounting_bounds",
+        build_year=t3b_accounting_bounds.build_year,
+        verify=_verify_t3b,
+        first_year=2021,
     ),
     "t4_broker_features": Table(
         name="t4_broker_features",

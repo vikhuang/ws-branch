@@ -27,9 +27,21 @@ def test_t3_convert_units_and_names() -> None:
         "dlrh_buy": [3.0], "dlrh_sell": [4.0], "dlrh_ex": [-1.0],
         "qfii_bamt": [28_050_947.0], "qfii_samt": [2_450_000.0],
         "fund_bamt": [411_600.0], "fund_samt": [0.0],
+        # v2:自營兩桶金額 + 三大法人合計(千元/千股)
+        "dlrp_bamt": [2_450.0], "dlrp_samt": [4_900.0],
+        "dlrh_bamt": [7_350.0], "dlrh_samt": [9_800.0],
+        "tot_buy": [11_621.0], "tot_sell": [1_006.0],
+        "tot_bamt": [28_472_747.0], "tot_samt": [2_464_700.0],
         "vol_dt": [2057.0], "vol_dtp": [10.37],
     })
     out = convert(raw).collect()
+    assert out[0, "prop_self_buy_amt"] == pytest.approx(2_450_000)     # 千元→元
+    assert out[0, "prop_hedge_sell_amt"] == pytest.approx(9_800_000)
+    assert out[0, "official_total_buy_sh"] == pytest.approx(11_621_000)  # 千股→股
+    # tot 實測 = 四桶合計:11,449+168+1+3 = 11,621 張
+    assert out[0, "official_total_buy_sh"] == pytest.approx(
+        out[0, "foreign_buy_sh"] + out[0, "fund_buy_sh"]
+        + out[0, "prop_self_buy_sh"] + out[0, "prop_hedge_buy_sh"])
     assert out[0, "foreign_buy_sh"] == pytest.approx(11_449_000)  # 千股→股
     assert out[0, "fund_net_sh"] == pytest.approx(168_000)
     assert out[0, "prop_hedge_sell_sh"] == pytest.approx(4_000)

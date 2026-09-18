@@ -234,3 +234,13 @@ Q3 結果(見下方「結果」)顯示 foreign_sim 幾乎全是熱門度,且分�
    指數,故**未受污染**(已由 join 語意保證,非巧合);但任何**只用 T3 的
    彙總**(本文件 A4 第一版即中招)必須先過濾。建議入 audit_ledger 為未結案項
    (T3 建表要不要加 stock-only 旗標,屬 T3 邏輯,本輪不改)。
+
+## 定義澄清(2026-09-18,對照 ws-quant `docs/actor_layer_v3_architecture_alignment_2026-09-18.md` §4.2)
+
+本文件所有「金額 cosine」數字(Q3b、補證 B)的定義是 **support-restricted cosine**:分子與
+兩側 norm 都只在「該分點當日有買入的股票集合」上計算,官方向量在支撐集合外的部分
+**不計入 norm**。它不是對齊文件要求的「共同 universe、未交易視為零」的全市場配置
+相似度。兩者關係:\(\cos_{full}=\cos_{support}\times\|f_{support}\|/\|f_{full}\|\),差一個
+「官方向量的 norm 有多少落在分點支撐集合內」的因子,對大籃子分點 ≈1、小籃子 <1,
+會改變跨分點排序。Phase 4 重跑時須用 full-universe 定義,本文件數字保留為歷史探索
+證據(定義、期間、cohort 如上),不升格為驗收門檻。

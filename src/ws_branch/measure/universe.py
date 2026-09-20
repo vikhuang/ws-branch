@@ -48,20 +48,47 @@ FOREIGN_BROKER_COHORT_VERSION: Final = "foreign_seat_v1"
 2026 年已有台新/元富合併造成 51 個代號換名的先例(本名單 12 家不受影響)。
 """
 
-FOREIGN_BROKER_CODES: Final[frozenset[str]] = frozenset({
-    "8440",  # 摩根大通
-    "1480",  # 美商高盛
-    "1470",  # 台灣摩根士丹利
-    "1650",  # 新加坡商瑞銀
-    "1440",  # 美林
-    "1590",  # 花旗環球
-    "8960",  # 香港上海匯豐
-    "8900",  # 法銀巴黎
-    "8890",  # 大和國泰
-    "6010",  # 犇亞證券
-    "9200",  # 港商野村
-    "9100",  # 港商麥格理
-})
+FOREIGN_BROKER_NAMES: Final[dict[str, str]] = {
+    "8440": "摩根大通",
+    "1480": "美商高盛",
+    "1470": "台灣摩根士丹利",
+    "1650": "新加坡商瑞銀",
+    "1440": "美林",
+    "1590": "花旗環球",
+    "8960": "香港上海匯豐",
+    "8900": "法銀巴黎",
+    "8890": "大和國泰",
+    "6010": "犇亞證券",
+    "1560": "港商野村",
+    "1360": "港商麥格理",
+}
+"""代號→名稱對照,供 `assert_cohort_names` 對實際資料自我驗證。
+
+**代號必須自資料查得,不得憑印象填**:2026-09-18 首版曾把 9200/9100 誤填為
+港商野村/港商麥格理,實際上 9200=凱基、9100=群益金鼎(兩個本土券商總公司),
+使 cohort 混入本土 HQ、真外資席位反而漏掉,t3b 全表數字失真。名單改為帶
+名稱的 dict + 建表時強制對帳,即為此錯而設。
+"""
+
+FOREIGN_BROKER_CODES: Final[frozenset[str]] = frozenset(FOREIGN_BROKER_NAMES)
+
+
+def assert_cohort_names(broker_name_map: pl.DataFrame) -> None:
+    """用實際資料的 (broker, broker_name) 驗證 cohort 名單,不符即 raise。
+
+    broker_name_map 需含 `broker`, `broker_name`。建表入口必須呼叫——宣告的
+    代號與資料對不上時要當場炸掉,不能讓錯誤的 cohort 靜默產出一整年的表。
+    """
+    actual = dict(broker_name_map.select("broker", "broker_name").unique().iter_rows())
+    wrong = {c: (n, actual.get(c)) for c, n in FOREIGN_BROKER_NAMES.items()
+             if actual.get(c) not in (None, n)}
+    missing = [c for c in FOREIGN_BROKER_NAMES if c not in actual]
+    if wrong:
+        raise ValueError(
+            f"外資 cohort 代號與資料不符({FOREIGN_BROKER_COHORT_VERSION}):"
+            + "; ".join(f"{c} 宣告={exp} 實際={got}" for c, (exp, got) in wrong.items()))
+    if missing:
+        print(f"  警告:cohort 代號 {missing} 在本期資料中未出現(可能未交易)")
 
 
 def stock_universe(stock_attr_slice: pl.DataFrame) -> pl.DataFrame:

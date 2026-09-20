@@ -51,6 +51,11 @@ def _t1_stock_day(year: int, month: int) -> pl.DataFrame:
 
 
 def build_year(year: int) -> pl.LazyFrame:
+    # cohort 代號必須與當期資料的名稱對得上,對不上當場炸掉(2026-09-18
+    # 實付教訓:誤填 9200/9100 使本土 HQ 混入 cohort,整年表失真)
+    universe.assert_cohort_names(
+        io.scan("t1_broker_daily", start=f"{year}-01-01", end=f"{year}-12-31")
+        .select("broker", "broker_name").unique().collect())
     uni = universe.stock_universe(
         stock_attr(start=f"{year}-01-01", end=f"{year}-12-31",
                    columns=["coid", "mdate", "stktp_c"]))
@@ -93,6 +98,13 @@ def build_year(year: int) -> pl.LazyFrame:
             df = accounting.unobserved_flow(
                 df, market_col="market_total_sh",
                 observed_col="observed_total_sh", out="unobserved_sh")
+            # 界限只在「V 可信」時可發布:V 來自 TEJ vol,而 2026-05-05 /
+            # 07-17 兩天全市場性地 T1 > TEJ vol(見 audit_ledger A6),那種
+            # 日子的 V 偏低會讓 L=max(0,S+F−V) 虛高。三個旗標合成一欄,
+            # 下游不必自己記得要 AND。
+            df = df.with_columns(
+                (pl.col("foreign_bounds_ok") & pl.col("unobserved_sh_ok")
+                 & pl.col("other_actor_sh_ok")).alias("bounds_publishable"))
             rows.append(df.select(
                 "symbol_id", "date", "side", "market_total_sh", "observed_total_sh",
                 "unobserved_sh", "unobserved_sh_ok", "n_brokers", "cohort_sh",
@@ -100,7 +112,8 @@ def build_year(year: int) -> pl.LazyFrame:
                 "official_prop_hedge_sh", "other_actor_sh", "other_actor_sh_ok",
                 "foreign_x_lo", "foreign_x_hi", "foreign_x_width",
                 "foreign_y_lo", "foreign_y_hi",
-                "foreign_cov_lo", "foreign_cov_hi", "foreign_bounds_ok"))
+                "foreign_cov_lo", "foreign_cov_hi", "foreign_bounds_ok",
+                "bounds_publishable"))
         parts.append(pl.concat(rows))
     if not parts:
         raise ValueError(f"t3b_accounting_bounds {year}: 無任何月份有資料")

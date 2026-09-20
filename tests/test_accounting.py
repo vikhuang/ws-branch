@@ -155,3 +155,32 @@ def test_unobserved_flow_tolerates_odd_lot_remainder() -> None:
         pl.DataFrame({"V": [119_000.0], "obs": [121_000.0]}), market_col="V",
         observed_col="obs", out="unobs").row(0, named=True)
     assert not broken["unobs_ok"]
+
+
+def test_assert_cohort_names_catches_wrong_code() -> None:
+    """2026-09-18 實付事故的回歸測試。
+
+    當時的錯:宣告「港商野村」的代號,資料裡其實是本土券商總公司。此處把
+    1560 在資料中的名字換成凱基來重現——檢查必須當場 raise,而不是讓錯誤的
+    cohort 靜默產出一整年的表。
+    """
+    data = pl.DataFrame({
+        "broker": list(universe.FOREIGN_BROKER_NAMES),
+        "broker_name": [("凱基" if c == "1560" else n)
+                        for c, n in universe.FOREIGN_BROKER_NAMES.items()]})
+    with pytest.raises(ValueError, match="1560"):
+        universe.assert_cohort_names(data)
+
+
+def test_assert_cohort_names_passes_on_correct_map() -> None:
+    ok = pl.DataFrame({"broker": list(universe.FOREIGN_BROKER_NAMES),
+                       "broker_name": list(universe.FOREIGN_BROKER_NAMES.values())})
+    universe.assert_cohort_names(ok)  # 不得 raise
+
+
+def test_foreign_cohort_has_no_local_hq_seats() -> None:
+    # 凱基(9200)、群益金鼎(9100)是本土券商總公司,不得在外資 cohort
+    for code in ("9200", "9100", "7790"):
+        assert code not in universe.FOREIGN_BROKER_CODES
+    assert universe.FOREIGN_BROKER_NAMES["1560"] == "港商野村"
+    assert universe.FOREIGN_BROKER_NAMES["1360"] == "港商麥格理"

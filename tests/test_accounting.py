@@ -192,3 +192,16 @@ def test_foreign_cohort_excludes_domestic_broker_with_retail_branches() -> None:
     # 但本 cohort 不得含(2026-09-20 官方登記檔查證)
     assert "6010" not in universe.FOREIGN_BROKER_CODES
     assert "1520" in universe.HISTORICAL_FOREIGN_CODES  # 瑞士信貸,建早年表要用
+
+
+def test_unobserved_tolerance_is_relative_for_large_stocks() -> None:
+    # 大型股的零股尾差按規模放大:2330 級別(7,500 萬股)差 5 萬股仍在 0.1% 內
+    ok = accounting.unobserved_flow(
+        pl.DataFrame({"V": [75_000_000.0], "obs": [75_050_000.0]}),
+        market_col="V", observed_col="obs", out="u").row(0, named=True)
+    assert ok["u_ok"], "純絕對 1 張容差會把大型股正常尾差誤判成破裂"
+    # 但 2026-07-17 那種 0.8% 級的漂移要抓得出來
+    bad = accounting.unobserved_flow(
+        pl.DataFrame({"V": [75_000_000.0], "obs": [75_600_000.0]}),
+        market_col="V", observed_col="obs", out="u").row(0, named=True)
+    assert not bad["u_ok"]

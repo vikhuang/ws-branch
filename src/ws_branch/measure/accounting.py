@@ -84,23 +84,32 @@ def actor_residual(
 
 
 ODD_LOT_TOLERANCE_SH: float = 1_000.0
-"""零股容差 1 張(= 1,000 股)。
+REL_TOLERANCE: float = 0.001
+"""閉環容差 = max(V × 0.1%, 1 張)——沿用 `checks.reconcile_vol` 的既有規則。
 
-TEJ vol 只計整張、broker_tx 含零股(A5 實證:119,153 股 vs 119 張),所以
-T1 加總幾乎必然小幅超過 V×1000。2026 全年實測:不加容差時 96.8% 的股票日
-會被誤判成閉環破裂。超過 1 張才是真的破裂——與 `checks.closure_overshoots`
-同一條規則,不另立第二套容差。
+兩個成分各有成因,缺一不可:
+- 絕對 1 張:TEJ vol 只計整張、broker_tx 含零股(A5 實證 119,153 股 vs
+  119 張),小型股的尾差靠這個容納。
+- 相對 0.1%:大型股的零股尾差會按規模放大,純絕對容差會把它誤判成破裂。
+  2026 全年實測正常日 T1/V 中位 **1.00095**(168 日的 p10-p90 = 1.00068~
+  1.00137),即系統性漂移 ~0.1%,正是此容差的來源。
+
+2026-09-20 首版只用絕對容差,雖然仍指認出同樣的兩天,但把 5,173 列標成破裂
+(正確容差下是 2,586 列)——多出的是大型股的正常尾差。
 """
 
 
 def unobserved_flow(
     df: pl.DataFrame, *, market_col: str, observed_col: str, out: str,
-    tolerance: float = ODD_LOT_TOLERANCE_SH,
+    tolerance: float = ODD_LOT_TOLERANCE_SH, rel_tolerance: float = REL_TOLERANCE,
 ) -> pl.DataFrame:
     """未觀測交易 = V − T1 可觀測總量(鉅額/特殊交易;A5 實證 broker ⊆ TEJ)。
 
-    差額為小幅負值是零股尾差(見 ODD_LOT_TOLERANCE_SH),不是錯誤;超過容差
-    才代表閉環破裂,`{out}_ok` 標 False。差額本身照實存(可為負),不 clip。
+    差額為小幅負值是零股尾差(見 ODD_LOT_TOLERANCE_SH),不是錯誤;超過
+    max(V×0.1%, 1 張) 才代表閉環破裂,`{out}_ok` 標 False。差額本身照實存
+    (可為負),不 clip。
     """
     diff = pl.col(market_col) - pl.col(observed_col)
-    return df.with_columns(diff.alias(out), (diff >= -tolerance).alias(f"{out}_ok"))
+    allow = pl.max_horizontal(pl.col(market_col) * rel_tolerance,
+                              pl.lit(tolerance))
+    return df.with_columns(diff.alias(out), (diff >= -allow).alias(f"{out}_ok"))

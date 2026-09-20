@@ -25,8 +25,17 @@ from dataclasses import dataclass
 
 import polars as pl
 
-_MAX_ITER = 50
+_MAX_ITER = 1_000
 _TOL = 1e-10
+"""交替投影的收斂上限與容差。
+
+上限訂 1,000 是實測值:2026 全市場面板(139k 列 × 879 席位 × 170 日)需
+**約 345 次**才收斂。首版訂 50 次且未收斂仍靜默回傳,使 α 的變異占比少算
+6-7 個百分點(top5_share 71.9% vs 收斂值 78.3%)。f 與 α 高度共線時,
+交替投影是在兩者之間慢慢重分配,收斂特別慢——**殘差 ε 很早就穩定
+(50 次與 345 次相同到小數點後一位),但 f/α 的切分不然**。
+未收斂一律 raise,不得靜默回傳(家法:不得靜默丟棄/降級)。
+"""
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,7 +75,7 @@ def add_conditioning_bins(
 def decompose(
     df: pl.DataFrame, *, y: str, branch_col: str = "broker",
     date_col: str = "date", cell_col: str = "_cell",
-    max_iter: int = _MAX_ITER, tol: float = _TOL,
+    max_iter: int = _MAX_ITER, tol: float = _TOL, strict: bool = True,
 ) -> Decomposition:
     """交替投影聯合估計 μ + f(cell) + α_b + γ_t。
 
@@ -98,6 +107,13 @@ def decompose(
                                      (pl.col("_r") - adj).alias("_r"))
         if _max_group_mean(work) < tol:
             break
+    else:
+        gap = _max_group_mean(work)
+        msg = (f"交替投影未收斂:{max_iter} 次後最大群均值 {gap:.2e} > 容差 {tol:.0e}"
+               f"(y={y})。f/α 共線時收斂慢,提高 max_iter;未收斂的結果會低估 α。")
+        if strict:
+            raise RuntimeError(msg)
+        print(f"  ⚠ {msg}")
     # 各成分去均值,常數併入 mu
     for comp in ("_f", "_a", "_g"):
         work = work.with_columns((pl.col(comp) - work[comp].mean()).alias(comp))

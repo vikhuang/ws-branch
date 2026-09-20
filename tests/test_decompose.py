@@ -100,3 +100,28 @@ def test_binning_puts_out_of_range_into_end_bins_not_null() -> None:
         breadth_edges=[10.0])
     assert out["_sbin"].to_list() == [0, 0, 1, 2, 2]
     assert out["_cell"].null_count() == 0
+
+
+def test_raises_when_not_converged() -> None:
+    """2026-09-20 實付事故的回歸測試。
+
+    首版上限 50 次,真實面板需 ~345 次,未收斂仍靜默回傳 → α 的變異占比
+    少算 6-7 個百分點(top5_share 71.9% vs 收斂值 78.3%)。**不平衡面板**
+    才是收斂慢的真實情境(平衡面板一輪去中心化就收斂),故此處刻意挖洞。
+    """
+    alpha = {b: 0.1 * b for b in range(8)}
+    df = _panel(8, 20, alpha, {t: 0.02 * t for t in range(20)},
+                cell_of=lambda b: b % 4, f_of={i: 0.3 * i for i in range(4)},
+                noise=0.3)
+    # 挖成不平衡:每個席位隨機缺不同天數
+    df = df.with_columns(
+        ((pl.col("broker").str.slice(1).cast(pl.Int32) * 3
+          + pl.col("date").dt.day()) % 7).alias("_k")).filter(pl.col("_k") > 0).drop("_k")
+    with pytest.raises(RuntimeError, match="未收斂"):
+        decompose.decompose(df, y="y", max_iter=2)
+    # strict=False 時降為警示並回傳(研究階段探路用)
+    out = decompose.decompose(df, y="y", max_iter=2, strict=False)
+    assert out.iterations == 2
+    # 給足迭代就要收斂,且與上限無關
+    conv = decompose.decompose(df, y="y")
+    assert conv.iterations < 1_000

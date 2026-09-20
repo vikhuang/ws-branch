@@ -104,9 +104,22 @@ def build_year(year: int) -> pl.LazyFrame:
             # 07-17 兩天全市場性地 T1 > TEJ vol(見 audit_ledger A6),那種
             # 日子的 V 偏低會讓 L=max(0,S+F−V) 虛高。三個旗標合成一欄,
             # 下游不必自己記得要 AND。
+            # 輸入有 null(T3 該股日有列但值缺)時,三個旗標都會是 null。
+            # **旗標不得為 null**——下游用 `~flag` 篩選會靜默漏掉這些列
+            # (2026-09-20 查到 112 列)。缺值一律視為不可發布,並另立
+            # `input_complete` 欄區分「輸入缺值」與「輸入互相矛盾」。
+            inputs = ["market_total_sh", "observed_total_sh", "cohort_sh",
+                      "official_foreign_sh", "official_fund_sh",
+                      "official_prop_self_sh", "official_prop_hedge_sh"]
             df = df.with_columns(
-                (pl.col("foreign_bounds_ok") & pl.col("unobserved_sh_ok")
-                 & pl.col("other_actor_sh_ok")).alias("bounds_publishable"))
+                pl.all_horizontal([pl.col(c).is_not_null() for c in inputs])
+                .alias("input_complete"))
+            df = df.with_columns(
+                (pl.col("input_complete")
+                 & pl.col("foreign_bounds_ok").fill_null(False)
+                 & pl.col("unobserved_sh_ok").fill_null(False)
+                 & pl.col("other_actor_sh_ok").fill_null(False))
+                .alias("bounds_publishable"))
             rows.append(df.select(
                 "symbol_id", "date", "side", "market_total_sh", "observed_total_sh",
                 "unobserved_sh", "unobserved_sh_ok", "n_brokers", "cohort_sh",
@@ -115,7 +128,7 @@ def build_year(year: int) -> pl.LazyFrame:
                 "foreign_x_lo", "foreign_x_hi", "foreign_x_width",
                 "foreign_y_lo", "foreign_y_hi",
                 "foreign_cov_lo", "foreign_cov_hi", "foreign_bounds_ok",
-                "bounds_publishable"))
+                "input_complete", "bounds_publishable"))
         parts.append(pl.concat(rows))
     if not parts:
         raise ValueError(f"t3b_accounting_bounds {year}: 無任何月份有資料")

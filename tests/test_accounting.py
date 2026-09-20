@@ -205,3 +205,23 @@ def test_unobserved_tolerance_is_relative_for_large_stocks() -> None:
         pl.DataFrame({"V": [75_000_000.0], "obs": [75_600_000.0]}),
         market_col="V", observed_col="obs", out="u").row(0, named=True)
     assert not bad["u_ok"]
+
+
+def test_publishable_flag_is_never_null_on_missing_inputs() -> None:
+    """旗標不得為 null:下游用 `~flag` 篩選會靜默漏掉這些列。
+
+    2026-09-20 查到 t3b 有 112 列因 T3 值缺而讓三個旗標皆為 null。
+    """
+    df = pl.DataFrame({"cohort_sh": [100.0], "official_foreign_sh": [None],
+                       "market_total_sh": [1000.0]},
+                      schema={"cohort_sh": pl.Float64,
+                              "official_foreign_sh": pl.Float64,
+                              "market_total_sh": pl.Float64})
+    out = accounting.flow_bounds(df, cohort_col="cohort_sh",
+                                 official_col="official_foreign_sh",
+                                 market_col="market_total_sh", prefix="f")
+    # flow_bounds 本身會回傳 null(輸入是 null),故建表端必須 fill_null(False)
+    assert out.row(0, named=True)["f_bounds_ok"] is None
+    combined = out.with_columns(
+        pl.col("f_bounds_ok").fill_null(False).alias("publishable"))
+    assert combined.row(0, named=True)["publishable"] is False

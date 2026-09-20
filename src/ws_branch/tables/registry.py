@@ -196,6 +196,11 @@ def _verify_t3b(n_samples: int, seed: int) -> None:
             n_dup = day.height - day.select(keys).unique().height
             if n_dup:
                 raise SystemExit(f"FAIL: {d} 有 {n_dup} 列重複鍵 {keys}")
+            n_null_flag = day.filter(pl.col("bounds_publishable").is_null()).height
+            if n_null_flag:
+                raise SystemExit(
+                    f"FAIL: {d} 有 {n_null_flag} 列 bounds_publishable 為 null"
+                    f"——旗標不得為 null,下游 `~flag` 會靜默漏列")
             # 界限的數學不變量只在輸入自洽的列上成立;輸入不自洽的列(官方桶
             # 超過 V)照 §5.1 以旗標擋下發布,不 clip 也不在此當硬錯誤
             ok = day.filter(pl.col("bounds_publishable"))

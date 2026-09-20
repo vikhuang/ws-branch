@@ -89,3 +89,19 @@
 - **conviction 等 11 策略(Sharpe 5-8)**:無 IS/OOS 分段、60d 未拆 beta。
   隨 PNL 層封存;復用前必補。
 - **FIFO PNL 對 HQ 席位**:混合通道的「單席位損益」語意存疑;封存註記。
+
+### A7|資料可用時點與缺值規則盤點(2026-09-20,Step A 收尾)
+
+- **available_at(交易日 ≠ 可用時間,§4.5)**:
+  - `fugle/broker_tx`:T 日檔案於 **T 日 21:35** 落地(實測連續三日 mtime
+    皆 21:35)→ T 日分點資料最早只能供 T+1 使用。
+  - `tej/shareholding`:_imported_at 為當日 13:43 UTC(= 台北 21:43)。
+  - `tej/prices`:_imported_at 當日 08:16 UTC(= 台北 16:16)。
+  - 含意:以 T 日收盤價進場的回測一律有前視;可交易時點最早為 T+1 開盤。
+- **t3b 缺值規則(逐欄)**:32 欄中 23 欄零 null。有 null 者兩類——
+  ①`foreign_cov_lo/hi` 8.98%:官方外資量 F=0 時 coverage 無定義(設計如此,
+  不得填 0 或 1);②四個 `official_*` 與衍生旗標 112 列(0.017%):T3 該股日
+  有列但值缺。
+- **修正**:旗標原本會跟著變 null,下游用 `~flag` 篩選會靜默漏列。已加
+  `input_complete` 欄並令 `bounds_publishable` 恆非 null(缺值一律視為
+  不可發布),verify 加「旗標不得為 null」檢查。

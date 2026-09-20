@@ -26,6 +26,11 @@ CLUSTERS_PARQUET = _REPO / "experiments" / "taxonomy" / "broker_clusters.parquet
 BrokerCohort = Literal["retail", "prop_shell", "institutional", "mixed", "unknown"]
 
 _FOREIGN_PREFIXES = ("港商", "美商", "日商", "新加坡商", "法銀")
+# ⚠ 2026-09-20 查證:本集合含 **犇亞證券,但它是本土券商**——開業日民國 78 年、
+# 地址為一般辦公室、擁有兩家零售分行(犇亞-網路、犇亞-鑫豐,後者係 2018 併購
+# 本土券商鑫豐而來)。外國證券商在台分支機構無分行。此錯誤自 ws-quant 凍結
+# 規則繼承,因本檔為多個下游共用故不逕行修改;**需要純外資名單者請改用
+# `measure/universe.py` 的 FOREIGN_BROKER_CODES(11 家,經官方登記檔驗證)**。
 _FOREIGN_EXACT = frozenset({
     "摩根大通", "美林", "花旗環球", "台灣摩根士丹利", "香港上海匯豐",
     "犇亞證券", "大和國泰",

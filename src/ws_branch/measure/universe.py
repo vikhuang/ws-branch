@@ -35,17 +35,35 @@ UNIVERSE_VERSION: Final = "stock_v1"
 
 STOCK_TYPES: Final[frozenset[str]] = frozenset({"普通股", "普通股-海外"})
 
-FOREIGN_BROKER_COHORT_VERSION: Final = "foreign_seat_v1"
-"""外資券商席位名單 v1(2026-09-18,以 broker **代號**宣告)。
+FOREIGN_BROKER_COHORT_VERSION: Final = "foreign_seat_v2"
+"""外資券商席位名單 v2(2026-09-20,以 broker **代號**宣告)。
 
-12 家外資券商在台分點,代號與名稱 2026 年內一對一穩定(已查證)。
+11 家外國證券商在台分支機構。名單經**三方對照 + 官方登記檔**驗證:
+repo `broker_names.json`(981 筆代號→名稱)、T1 實際資料、TWSE
+`證券商基本資料.xls`(838 家在營)與 `證券商結束營業資料.xls`(400 家)。
 
-與 `identity.classify_broker_cohort` 的 `institutional` 桶**不同**:後者的
-規則含「名字帶法人」,會把本土券商的法人部席位(國票-敦北法人,代號 7790)
-一起算進來——做外資覆蓋率會高估,故本名單獨立宣告,不從名字規則推導。
+與 `identity.classify_broker_cohort` 的 `institutional` 桶**不同**,兩處差異:
+1. 後者規則含「名字帶法人」,會把本土券商法人部(國票-敦北法人 7790)算進來。
+2. 後者的 `_FOREIGN_EXACT` 含**犇亞證券(6010),但它是本土券商**——見下。
 
-有效期:2026(建立時的觀測窗)。跨年使用前須重新查證代號是否易主/更名——
-2026 年已有台新/元富合併造成 51 個代號換名的先例(本名單 12 家不受影響)。
+**v1 → v2 的兩處修正**:
+- 移除犇亞證券(6010)。證據:開業日民國 78 年(1989,早於絕大多數外資
+  來台);登記地址台北市復興北路 99 號 3-4 樓(一般辦公室,非金融大樓);
+  **擁有兩家零售分行**(犇亞-網路 6012 線上下單、犇亞-鑫豐 601d),且
+  601d 係 2018-12-28 併購本土券商鑫豐(8850)而來——外國證券商在台分支
+  機構不會併購本土零售券商並當分行經營。對照:其餘 11 家全部零分行,
+  地址集中於台北 101(信義路五段 7 號 48/54/72/83 樓)、松智路、敦化南路
+  等金融大樓。犇亞僅佔 cohort 量 0.11%,但定義錯誤會污染個股層級讀數。
+  **`identity.py` 的 `_FOREIGN_EXACT` 有同一錯誤**(自 ws-quant 凍結規則
+  繼承),該檔為多個下游共用,本輪不動,僅在其 docstring 立牌。
+- 修正 v1 憑印象填錯的兩碼:9200/9100 實為凱基/群益金鼎(本土券商總公司),
+  真代號為 1560(港商野村)、1360(港商麥格理)。
+
+**有效期 = 2026**。跨年重建前必須重查,已知兩筆歷史變動:
+- 瑞士信貸(1520)2023 併入新加坡商瑞銀(1650):建 2023 前的表時 1520 要入名單。
+- 港商法國興業(1570)已合併退出:早年資料中存在,2026 已無。
+- 2026 年另有台新/元富合併造成 51 個代號換名(本名單不受影響)。
+建表入口以 `assert_cohort_names` 對當期資料強制驗證,不符即 raise。
 """
 
 FOREIGN_BROKER_NAMES: Final[dict[str, str]] = {
@@ -58,7 +76,6 @@ FOREIGN_BROKER_NAMES: Final[dict[str, str]] = {
     "8960": "香港上海匯豐",
     "8900": "法銀巴黎",
     "8890": "大和國泰",
-    "6010": "犇亞證券",
     "1560": "港商野村",
     "1360": "港商麥格理",
 }
@@ -71,6 +88,15 @@ FOREIGN_BROKER_NAMES: Final[dict[str, str]] = {
 """
 
 FOREIGN_BROKER_CODES: Final[frozenset[str]] = frozenset(FOREIGN_BROKER_NAMES)
+
+HISTORICAL_FOREIGN_CODES: Final[dict[str, str]] = {
+    "1520": "瑞士信貸(2023 併入 1650 新加坡商瑞銀)",
+    "1570": "港商法國興業(已合併退出)",
+}
+"""2026 已不存在、但建早年表時必須納入 cohort 的外資代號。
+
+出處:`證券商結束營業資料.xls`、`data/derived/broker_merge_map.json`。
+本版只建 2026 故未納入;跨年重建時須按年份有效期展開,不可沿用本名單。"""
 
 
 def assert_cohort_names(broker_name_map: pl.DataFrame) -> None:

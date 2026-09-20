@@ -6,7 +6,7 @@
 
 粒度:symbol_id × date × side(buy/sell 長表,不用寬表塞雙側)。
 universe:僅普通股(measure.universe;T3 的指數彙總列會讓外資買入虛增 4.7 倍)。
-cohort:外資券商席位 12 家,以**代號**宣告(measure.universe.FOREIGN_BROKER_CODES);
+cohort:外資券商席位 11 家,以**代號**宣告(measure.universe.FOREIGN_BROKER_CODES);
         不用 classify_broker_cohort 的 institutional 桶——它含本土法人席位。
 
 三個口徑刻意分開存,不能互相取代:

@@ -138,7 +138,7 @@ def test_universe_exclusion_report_surfaces_dropped_amount() -> None:
 def test_foreign_cohort_excludes_local_institutional_seat() -> None:
     # 國票-敦北法人(7790)是本土法人部,不得進外資 cohort
     assert "7790" not in universe.FOREIGN_BROKER_CODES
-    assert len(universe.FOREIGN_BROKER_CODES) == 12
+    assert len(universe.FOREIGN_BROKER_CODES) == 11
     assert "8440" in universe.FOREIGN_BROKER_CODES  # 摩根大通
 
 
@@ -184,3 +184,11 @@ def test_foreign_cohort_has_no_local_hq_seats() -> None:
         assert code not in universe.FOREIGN_BROKER_CODES
     assert universe.FOREIGN_BROKER_NAMES["1560"] == "港商野村"
     assert universe.FOREIGN_BROKER_NAMES["1360"] == "港商麥格理"
+
+
+def test_foreign_cohort_excludes_domestic_broker_with_retail_branches() -> None:
+    # 犇亞證券(6010)是本土券商:開業 1989、有零售分行(網路/鑫豐)、
+    # 鑫豐係 2018 併購本土券商而來。identity.py 的 _FOREIGN_EXACT 仍含它,
+    # 但本 cohort 不得含(2026-09-20 官方登記檔查證)
+    assert "6010" not in universe.FOREIGN_BROKER_CODES
+    assert "1520" in universe.HISTORICAL_FOREIGN_CODES  # 瑞士信貸,建早年表要用

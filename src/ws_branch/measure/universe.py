@@ -99,22 +99,23 @@ HISTORICAL_FOREIGN_CODES: Final[dict[str, str]] = {
 本版只建 2026 故未納入;跨年重建時須按年份有效期展開,不可沿用本名單。"""
 
 
-def assert_cohort_names(broker_name_map: pl.DataFrame) -> None:
+def assert_cohort_names(broker_name_map: pl.DataFrame) -> list[str]:
     """用實際資料的 (broker, broker_name) 驗證 cohort 名單,不符即 raise。
 
     broker_name_map 需含 `broker`, `broker_name`。建表入口必須呼叫——宣告的
     代號與資料對不上時要當場炸掉,不能讓錯誤的 cohort 靜默產出一整年的表。
+
+    回傳「本期資料中未出現的代號」清單(可能該席位當期未交易,或名單過期)
+    交由呼叫端決定如何揭露——**本模組為純函數,不印 stdout**(§3.2)。
     """
     actual = dict(broker_name_map.select("broker", "broker_name").unique().iter_rows())
     wrong = {c: (n, actual.get(c)) for c, n in FOREIGN_BROKER_NAMES.items()
              if actual.get(c) not in (None, n)}
-    missing = [c for c in FOREIGN_BROKER_NAMES if c not in actual]
     if wrong:
         raise ValueError(
             f"外資 cohort 代號與資料不符({FOREIGN_BROKER_COHORT_VERSION}):"
             + "; ".join(f"{c} 宣告={exp} 實際={got}" for c, (exp, got) in wrong.items()))
-    if missing:
-        print(f"  警告:cohort 代號 {missing} 在本期資料中未出現(可能未交易)")
+    return [c for c in FOREIGN_BROKER_NAMES if c not in actual]
 
 
 def stock_universe(stock_attr_slice: pl.DataFrame) -> pl.DataFrame:

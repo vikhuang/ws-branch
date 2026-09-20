@@ -49,6 +49,7 @@ class Decomposition:
     n_branch: int
     n_day: int
     iterations: int
+    converged: bool
 
 
 def _bin_expr(col: str, edges: list[float], alias: str) -> pl.Expr:
@@ -99,6 +100,7 @@ def decompose(
             w.group_by(k).agg(pl.col("_r").mean().alias("m"))["m"].abs().max()
             for k in (cell_col, branch_col, date_col))
 
+    converged = True
     it = 0
     for it in range(1, max_iter + 1):
         for key, comp in ((cell_col, "_f"), (branch_col, "_a"), (date_col, "_g")):
@@ -113,7 +115,7 @@ def decompose(
                f"(y={y})。f/α 共線時收斂慢,提高 max_iter;未收斂的結果會低估 α。")
         if strict:
             raise RuntimeError(msg)
-        print(f"  ⚠ {msg}")
+        converged = False  # 研究階段探路用;呼叫端須自 Decomposition.converged 揭露
     # 各成分去均值,常數併入 mu
     for comp in ("_f", "_a", "_g"):
         work = work.with_columns((pl.col(comp) - work[comp].mean()).alias(comp))
@@ -126,7 +128,7 @@ def decompose(
     return Decomposition(
         frame=frame, var_total=var_total, var_shares=shares,
         n_obs=work.height, n_branch=work[branch_col].n_unique(),
-        n_day=work[date_col].n_unique(), iterations=it)
+        n_day=work[date_col].n_unique(), iterations=it, converged=converged)
 
 
 def sequential_r2(

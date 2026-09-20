@@ -15,7 +15,8 @@ from ws_branch.measure import decompose
 PRIM = Path("/tmp/v3_phase1_primitives.parquet")
 SIZE_EDGES = [8.0, 8.5, 9.0, 9.3, 9.7]          # log10(gross_amt),6 箱
 BREADTH_EDGES = [100, 300, 500, 700, 900, 1200]  # n_symbols,7 箱
-TARGETS = ["top5_share", "directional_ratio", "cos_market_buy", "cos_market_sell"]
+TARGETS = ["top5_share", "directional_ratio", "cos_market_buy", "cos_market_sell",
+           "basket_self_sim"]
 
 
 def _corr(a: pl.Series, b: pl.Series) -> float:

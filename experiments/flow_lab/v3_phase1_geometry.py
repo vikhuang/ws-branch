@@ -16,43 +16,58 @@ from __future__ import annotations
 import datetime
 
 import polars as pl
-from ws_core import stock_attr
+from ws_core import stock_attr, tradedays
 
-from ws_branch.measure import universe
+from ws_branch.measure import allocation, universe
 from ws_branch.tables import io
 
 YEAR = 2026
 
 
 def _gated_primitives(year: int) -> pl.DataFrame:
-    """從 T1 逐月重算分點日 primitives(套 universe gate)+ 全 universe cos_market。"""
+    """從 T1 逐月重算分點日 primitives(套 universe gate),含:
+
+    - 規模/廣度:gross_amt、n_symbols(**僅計 gross>0 的股票**,§4.2 定義)
+    - 形狀:top1/top5_share、directional_ratio
+    - 配置:cos_market_buy/sell(全 universe 定義,measure.allocation)
+    - 延續:basket_self_sim(前一**交易日**,用 ws-core 交易日曆而非固定曆日
+      緩衝——2026 農曆年連休 12 個曆日)
+
+    逐月切塊;每月多取前一交易日供 basket_self_sim 用。
+    """
     uni = universe.stock_universe(
         stock_attr(start=f"{year}-01-01", end=f"{year}-12-31",
                    columns=["coid", "mdate", "stktp_c"]))
+    cal_raw = tradedays(start=f"{year - 1}-12-01", end=f"{year}-12-31")
+    cal = allocation.prev_trading_day_map(
+        cal_raw.filter(pl.col("is_trading_day"))["zdate"].to_list())
     parts, excl = [], []
     for m in range(1, 13):
-        start = datetime.date(year, m, 1)
-        end = (datetime.date(year + 1, 1, 1) if m == 12
-               else datetime.date(year, m + 1, 1)) - datetime.timedelta(days=1)
-        raw = (io.scan("t1_broker_daily", start=str(start), end=str(end))
+        month_start = datetime.date(year, m, 1)
+        month_end = (datetime.date(year + 1, 1, 1) if m == 12
+                     else datetime.date(year, m + 1, 1)) - datetime.timedelta(days=1)
+        # 多取前一交易日(由日曆決定,不是固定天數)
+        prior = cal.filter(pl.col("date") >= month_start)["prev_date"].min()
+        read_from = min(prior, month_start) if prior is not None else month_start
+        raw = (io.scan("t1_broker_daily", start=str(read_from), end=str(month_end))
                .select("broker", "symbol_id", "date", "buy_dollar", "sell_dollar")
                .collect())
         if raw.height == 0:
             continue
-        excl.append(universe.universe_exclusion_report(
-            raw.with_columns((pl.col("buy_dollar") + pl.col("sell_dollar")).alias("g")),
-            uni, "g"))
         sl = universe.apply_universe(raw, uni).with_columns(
             (pl.col("buy_dollar") + pl.col("sell_dollar")).alias("gross"))
-        # 市場向量(同一 universe 內的每股 gross)與其全域 norm(每日一個數)
-        mkt = sl.group_by("symbol_id", "date").agg(pl.col("gross").sum().alias("m"))
-        mkt_norm = mkt.group_by("date").agg(
-            (pl.col("m") ** 2).sum().sqrt().alias("m_norm"))
-        base = (sl.group_by("broker", "date").agg(
+        in_month = sl.filter(pl.col("date") >= month_start)
+        excl.append(universe.universe_exclusion_report(
+            raw.filter(pl.col("date") >= month_start).with_columns(
+                (pl.col("buy_dollar") + pl.col("sell_dollar")).alias("g")), uni, "g"))
+
+        # §4.2:n_symbols = 當日 gross>0 的不重複股票數(dash-only 列不算)
+        traded = in_month.filter(pl.col("gross") > 0)
+        base = (traded.group_by("broker", "date").agg(
             pl.col("buy_dollar").sum().alias("gross_buy_amt"),
             pl.col("sell_dollar").sum().alias("gross_sell_amt"),
             pl.col("gross").sum().alias("gross_amt"),
-            pl.len().alias("n_symbols"),
+            pl.col("symbol_id").n_unique().alias("n_symbols"),
             pl.col("gross").max().alias("_t1"),
             pl.col("gross").sort(descending=True).head(5).sum().alias("_t5"))
             .with_columns(
@@ -61,20 +76,19 @@ def _gated_primitives(year: int) -> pl.DataFrame:
                 (pl.col("_t1") / pl.col("gross_amt")).fill_nan(None).alias("top1_share"),
                 (pl.col("_t5") / pl.col("gross_amt")).fill_nan(None).alias("top5_share"))
             .drop("_t1", "_t5"))
-        # 全 universe cos_market:dot 只在分點碰過的股票上非零,但市場 norm 用全域
-        cos = []
+
+        mkt = (traded.group_by("symbol_id", "date")
+               .agg(pl.col("gross").sum().alias("m")))
+        part = base
         for side, col in (("buy", "buy_dollar"), ("sell", "sell_dollar")):
-            c = (sl.filter(pl.col(col) > 0).join(mkt, on=["symbol_id", "date"])
-                 .group_by("broker", "date").agg(
-                     (pl.col(col) * pl.col("m")).sum().alias("dot"),
-                     (pl.col(col) ** 2).sum().sqrt().alias("b_norm"))
-                 .join(mkt_norm, on="date")
-                 .with_columns((pl.col("dot") / (pl.col("b_norm") * pl.col("m_norm")))
-                               .alias(f"cos_market_{side}"))
-                 .select("broker", "date", f"cos_market_{side}"))
-            cos.append(c)
-        part = base.join(cos[0], on=["broker", "date"], how="left").join(
-            cos[1], on=["broker", "date"], how="left")
+            part = part.join(
+                allocation.amount_cosine(in_month, mkt, amount_col=col,
+                                         ref_col="m", out=f"cos_market_{side}"),
+                on=["broker", "date"], how="left")
+        part = part.join(
+            allocation.basket_self_similarity(sl, cal).filter(
+                pl.col("date") >= month_start),
+            on=["broker", "date"], how="left")
         parts.append(part)
         print(f"  {year}-{m:02d}: {part.height:,} 分點日", flush=True)
     rep = pl.concat(excl).select(pl.col("excluded_rows").sum(),
@@ -109,7 +123,8 @@ def main() -> None:
 
     print("\n" + "=" * 70 + "\n[1] primitive 分布\n" + "=" * 70)
     for c in ["gross_amt", "n_symbols", "top1_share", "top5_share",
-              "directional_ratio", "cos_market_buy", "cos_market_sell"]:
+              "directional_ratio", "cos_market_buy", "cos_market_sell",
+              "basket_self_sim"]:
         s = df[c].drop_nulls()
         qs = [round(s.quantile(q), 4) for q in (.05, .25, .5, .75, .95)]
         print(f"  {c:<18} n={s.len():>7,} p05/p25/p50/p75/p95 = {qs}")

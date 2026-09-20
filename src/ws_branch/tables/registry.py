@@ -191,6 +191,11 @@ def _verify_t3b(n_samples: int, seed: int) -> None:
         dates = ylf.select("date").unique().collect()["date"].to_list()
         for d in rng.sample(dates, min(max(n_samples // 20, 2), len(dates))):
             day = ylf.filter(pl.col("date") == d).collect()
+            # §5.3:鍵唯一性是第一道檢查——長表擴充 cohort/actor 時最容易破
+            keys = ["symbol_id", "date", "side", "cohort_id", "actor_bucket"]
+            n_dup = day.height - day.select(keys).unique().height
+            if n_dup:
+                raise SystemExit(f"FAIL: {d} 有 {n_dup} 列重複鍵 {keys}")
             # 界限的數學不變量只在輸入自洽的列上成立;輸入不自洽的列(官方桶
             # 超過 V)照 §5.1 以旗標擋下發布,不 clip 也不在此當硬錯誤
             ok = day.filter(pl.col("bounds_publishable"))

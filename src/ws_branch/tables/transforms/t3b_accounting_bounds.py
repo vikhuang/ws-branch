@@ -53,9 +53,11 @@ def _t1_stock_day(year: int, month: int) -> pl.DataFrame:
 def build_year(year: int) -> pl.LazyFrame:
     # cohort 代號必須與當期資料的名稱對得上,對不上當場炸掉(2026-09-18
     # 實付教訓:誤填 9200/9100 使本土 HQ 混入 cohort,整年表失真)
-    universe.assert_cohort_names(
+    absent = universe.assert_cohort_names(
         io.scan("t1_broker_daily", start=f"{year}-01-01", end=f"{year}-12-31")
         .select("broker", "broker_name").unique().collect())
+    if absent:
+        print(f"  cohort 代號 {absent} 於 {year} 未出現(未交易或名單過期)")
     uni = universe.stock_universe(
         stock_attr(start=f"{year}-01-01", end=f"{year}-12-31",
                    columns=["coid", "mdate", "stktp_c"]))
@@ -117,7 +119,13 @@ def build_year(year: int) -> pl.LazyFrame:
         parts.append(pl.concat(rows))
     if not parts:
         raise ValueError(f"t3b_accounting_bounds {year}: 無任何月份有資料")
+    # cohort_id / actor_bucket 現為常數,但必須是欄位:§4.4 的長表契約要求
+    # 擴充多 cohort／多 actor 桶時「不悄悄增加重複列」——鍵欄先在位,
+    # 之後加列才不會破壞既有消費端對唯一鍵的假設。
     return (pl.concat(parts)
-            .with_columns(pl.lit(universe.UNIVERSE_VERSION).alias("universe_version"),
-                          pl.lit(universe.FOREIGN_BROKER_COHORT_VERSION).alias("cohort_version"))
+            .with_columns(
+                pl.lit("foreign_seat").alias("cohort_id"),
+                pl.lit("foreign").alias("actor_bucket"),
+                pl.lit(universe.UNIVERSE_VERSION).alias("universe_version"),
+                pl.lit(universe.FOREIGN_BROKER_COHORT_VERSION).alias("cohort_version"))
             .lazy())

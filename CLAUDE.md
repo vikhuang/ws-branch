@@ -7,25 +7,29 @@
 > 手前先讀)**。**行動者層 v3(2026-09-18 起)現行規格在 ws-quant**:
 > `docs/actor_layer_v3_reframed_2026-09-18.md`(量測先行,官方三大法人降為
 > 校準錨)+ `docs/actor_layer_v3_architecture_alignment_2026-09-18.md`
-> (工程契約、Phase 1-5)。Phase 1-2 已完成,findings 在 `experiments/flow_lab/
-> findings/v3_phase{1,2}_*.md`。新核心:
+> (工程契約、Phase 1-5)。**Phase 1-4 已完成並納入 2025**,findings 在
+> `experiments/flow_lab/findings/v3_phase{1,2,3,4}_*.md` + `v3_crossyear_2025.md`
+> (研究腳本共用 `v3_common.py` 逐年快取;年份/as-of 為參數)。新核心:
 > - CLI:`uv run python -m ws_branch build|verify [--table t1_broker_daily|
 >   t3_official_daily|t3b_accounting_bounds|t4_broker_features] [--year Y]`
 >   (factory.py=相容薄殼);讀本 `scripts/observatory/v3_readbook.py <股票> <日期>`
 > - `src/ws_branch/` 三色分層:tables(registry/runner/io/transforms/checks)
 >   / measure(identity+taxonomy+**universe/accounting/decompose/allocation/
->   baseline**,全純函數)/ products(**stock_readbook**);表:T1 物化、
+>   baseline/salience/calibration/guards**,全純函數)/ products(**stock_readbook**);表:T1 物化、
 >   T2=ws-core lazy 視圖、T3 官方對齊(v2 含自營金額)、**T3b 會計硬界限**
 >   (股票×日×側)、T4 分點日特徵(v2,v3 schema 待 Phase 4 定稿)
 > - **Universe gate 是第一道聚合關卡**(`measure/universe.py`,普通股 v1,
 >   逐日 stock_attr):T3 的指數彙總列一天帶 12,765 億外資買入,不套 gate
->   任何 T3-only 加總失真 4.7 倍。外資 cohort 以代號宣告(11 家,建表時對
->   資料強制驗證)。
+>   任何 T3-only 加總失真 4.7 倍。外資 cohort **v3 時變**(`FOREIGN_COHORT`
+>   代號+有效期,1520/1570/1380 退出日自 raw 查得;`cohort_expr()` 逐列解析;
+>   建表 `assert_cohort_names(year=)` 強制驗證)。**9A81 永豐金-匯立不入 cohort**
+>   (user 2026-09-21 拍板,`KNOWN_HIDDEN_FOREIGN`,讀本標「外資客戶*」)。
 > - 記憶體條文(runner/io docstring):序列執行、一年一子程序、逐月切塊、
->   verify 謂詞下推——壓縮區才是真水位
+>   verify 謂詞下推——壓縮區才是真水位;**key 含分片鍵的聚合一律逐分片做**
+>   (事故 ④:T1 整年 group_by 8GB/月 → 逐 raw 日聚合 34 秒/4.5GB)
 > - `experiments/flow_lab/` — 研究區(家法:預期先行/紅隊/體檢先於使用)
-> - 體檢帳本 `docs/audit_ledger.md`(A1-A7 結案;A6=TEJ vol 兩日偏低、
->   A7=各源 available_at:broker_tx T 日 21:35 落地→最早 T+1 可用)
+> - 體檢帳本 `docs/audit_ledger.md`(A1-A6 結案;A7 available_at、A8 未觀測
+>   交易 2025 達 0.3-1.7%/2026-05 起歸零 未結)
 > - **PNL/FIFO 層(etl.py、pnl_engine.py、聰明錢/conviction)封存**:
 >   不維護不重建;復用前置條件見 audit_ledger。以下舊文件僅供考古。
 

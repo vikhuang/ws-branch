@@ -1128,7 +1128,7 @@ dependencies = [
 
 [[package]]
 name = "ws-branch"
-version = "1.0.0.dev0"
+version = "1.0.0"
 source = { editable = "." }
 dependencies = [
     { name = "gcsfs" },

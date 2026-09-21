@@ -65,7 +65,8 @@ def render(
     lines: list[str] = []
     w = 76
     lines.append("=" * w)
-    lines.append(f"{symbol_id} — {date} 一頁讀本 v1(raw + 會計界限)")
+    lines.append(f"{symbol_id} — {date} 一頁讀本 v1(raw + 會計界限"
+                 + (" + salience 三問)" if salience_day is not None and salience_day.height else ")"))
     lines.append("=" * w)
 
     if t1_day.height == 0:

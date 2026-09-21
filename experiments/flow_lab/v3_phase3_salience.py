@@ -14,6 +14,8 @@ import random
 
 import polars as pl
 
+from ws_core import stock_attr
+
 from ws_branch.measure import salience, universe
 from ws_branch.tables import io
 
@@ -53,8 +55,14 @@ def _pairs_for(symbols: list[str], bd: pl.DataFrame, start: str,
 
 def main() -> None:
     bd = _branch_day()
-    uni_syms = (io.scan("t1_broker_daily", start=str(AS_OF), end=str(AS_OF))
-                .select("symbol_id").unique().collect()["symbol_id"].to_list())
+    # 抽樣母體必須套 universe gate(2026-09-21 複查抓到:首版從 T1 原始代號抽,
+    # 40 檔混入 12 檔 ETF/特別股/興櫃——分子未 gate、分母已 gate,salience 定義
+    # 不一致,E1-E4 全污染)
+    uni = universe.stock_universe(stock_attr(
+        start=str(AS_OF), end=str(AS_OF), columns=["coid", "mdate", "stktp_c"]))
+    traded_today = (io.scan("t1_broker_daily", start=str(AS_OF), end=str(AS_OF))
+                    .select("symbol_id", "date").unique().collect())
+    uni_syms = sorted(universe.apply_universe(traded_today, uni)["symbol_id"].to_list())
     rng = random.Random(SEED)
     sample = sorted(rng.sample(uni_syms, SAMPLE_N))
     start = str(AS_OF - datetime.timedelta(days=150))
@@ -74,6 +82,19 @@ def main() -> None:
     pr = traded.filter(pl.col("participation_rate").is_not_null())
     print(f"  參與率(有交易 pair 的落後 60 日)p25/p50/p75 = "
           f"{[round(pr['participation_rate'].quantile(q), 3) for q in (.25, .5, .75)]}")
+
+    print("\n  [補零機制在真資料上的驗證] 挑一個稀疏 pair:")
+    sparse = (traded.filter(pl.col("participation_rate").is_between(0.05, 0.3))
+              .sort("date").head(1))
+    if sparse.height:
+        r = sparse.row(0, named=True)
+        win = df.filter((pl.col("broker") == r["broker"]) & (pl.col("symbol_id") == r["symbol_id"])
+                        & (pl.col("date") < r["date"])).sort("date").tail(WINDOW)
+        print(f"    {r['broker']}/{r['symbol_id']}:前 {win.height} 活躍日中有交易 "
+              f"{win['traded'].sum()} 天、補零 {(~win['traded']).sum()} 天;"
+              f"含零均值 {win['salience'].mean()*100:.4f}% = 模組 sal_mean "
+              f"{r['sal_mean']*100:.4f}% {'✓' if abs(win['salience'].mean()-r['sal_mean'])<1e-9 else '✗'};"
+              f"只算有交易日的均值 {win.filter(pl.col('traded'))['salience'].mean()*100:.4f}%(倖存者偏誤版)")
 
     print("\n" + "=" * 70 + "\n[E2] 三個量的獨立性\n" + "=" * 70)
     both = traded.filter(pl.col("salience_z").is_not_null()
@@ -95,6 +116,9 @@ def main() -> None:
     zero_sd = traded.filter((pl.col("history_n") >= MIN_PERIODS)
                             & (pl.col("sal_sd") <= 1e-12)).height
     print(f"    其中歷史筆數不足 {short:,};歷史無變異(sd=0){zero_sd:,}")
+    zs = traded.filter((pl.col("history_n") >= MIN_PERIODS) & (pl.col("sal_sd") <= 1e-12))
+    print(f"    sd=0 者的參與率 = 0(窗內從沒碰過)的比例:"
+          f"{(zs['participation_rate'] == 0).mean():.1%}")
     print(f"  history_n p10/p50 = "
           f"{[int(traded['history_n'].quantile(q)) for q in (.1, .5)]}")
 

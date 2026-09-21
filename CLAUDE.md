@@ -10,8 +10,9 @@
 > (工程契約、Phase 1-5)。**Phase 1-4 已完成並納入 2025**,findings 在
 > `experiments/flow_lab/findings/v3_phase{1,2,3,4}_*.md` + `v3_crossyear_2025.md`
 > (研究腳本共用 `v3_common.py` 逐年快取;年份/as-of 為參數)。**Step E 進行中**:
-> T4 v3 物化 ✅、as-of 測試 ✅、讀本 trait/市況/state ✅;分點 profile 與 Step F
-> 消費端遷移未做。新核心:
+> T4 v3 物化 ✅、as-of 測試 ✅、讀本 trait/規模/市況/state ✅(`measure/state.py`
+> 是讀時代理,非 §6 全樣本分解;席位特有 z 已扣規模/廣度變化);分點 profile 與
+> Step F 消費端遷移未做。校準 AUC 讀成「很可能低估」不說「下界」。新核心:
 > - CLI:`uv run python -m ws_branch build|verify [--table t1_broker_daily|
 >   t3_official_daily|t3b_accounting_bounds|t4_broker_features] [--year Y]`
 >   (factory.py=相容薄殼);讀本 `scripts/observatory/v3_readbook.py <股票> <日期>`
@@ -22,7 +23,8 @@
 >   (股票×日×側)、T4 v2 分點日特徵(rank 版,凍結)、**T4 v3 `t4_broker_measure`**
 >   (§4.2 最小量測表 + `year=Y.manifest.json`;`available_at` = date 21:45 台北;
 >   官方 cosine 在 T3 觀測支撐上算、`official_missing_share`;讀本與 salience 分母
->   都讀它,不再依賴 /tmp 快取)
+>   都讀它,不再依賴 /tmp 快取);**t3b 母體 = universe ∩ 有分點成交**,缺 T3/行情
+>   以 `t3_present/vol_present`=False 進表、不發布(inner join 曾讓 167 檔無聲消失)
 > - **Universe gate 是第一道聚合關卡**(`measure/universe.py`,普通股 v1,
 >   逐日 stock_attr):T3 的指數彙總列一天帶 12,765 億外資買入,不套 gate
 >   任何 T3-only 加總失真 4.7 倍。外資 cohort **v3 時變**(`FOREIGN_COHORT`

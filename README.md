@@ -12,7 +12,7 @@
 > - CLI:`uv run python -m ws_branch build|verify --table <t> [--year Y]`;
 >   個股讀本 `uv run python scripts/observatory/v3_readbook.py 3450 2026-09-14`
 > - 架構:`src/ws_branch/` 三色分層(純轉換/IO 殼/宣告);測試金字塔
->   (單元+e2e 合成小宇宙+真資料對帳),`uv run pytest`(207 tests)
+>   (單元+e2e 合成小宇宙+真資料對帳),`uv run pytest`(210 tests)
 > - **v1.1.0(2026-09-21)行動者層 v3 Phase 1-2**:universe gate、會計硬界限、
 >   trait/日效應/席位異常分解;規格在 ws-quant `docs/actor_layer_v3_*_2026-09-18.md`,
 >   結果在 `experiments/flow_lab/findings/v3_phase{1,2}_*.md`
@@ -25,6 +25,11 @@
 >   `official_missing_share`)、as-of 契約測試(追加未來日既有列凍結)、讀本改讀
 >   T4 v3 並補席位性格/市況/狀態(`measure/state.py`);audit A9 = TEJ shareholding
 >   168 檔 2025 整年缺列(上游待查)
+> - **v1.3.1(2026-09-21)外部審查四點修正**:t3b 缺 T3/行情的股票日改進表並標
+>   不可發布(母體口徑可發布率 2025 91.2% / 2026 96.8%,verify 加母體覆蓋檢查);
+>   state 加規模/廣度條件化(讀本「規模」欄);校準撤回「下界」措辭、加 refit
+>   leave-one-out(逐席位 AUC:大五家 0.93-0.98、大和國泰 0.27)、Phase 4 以 m2
+>   物化表重跑(年內 0.823/0.789、跨年 0.737/0.814);manifest 標 available_at 依據
 > - **以下舊 README 描述的 PNL/FIFO 系統已整包封存於 `pnl/`**,主線不維護;
 >   復用前置條件見 audit_ledger。
 

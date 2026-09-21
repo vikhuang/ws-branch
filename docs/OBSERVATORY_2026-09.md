@@ -169,3 +169,48 @@ user 指定的 5 項任務(schema/驗證錨/3450 讀本/測試),沒有動 P4 的
 w_{b,k,t,s}(辨識性)、技巧曲面當每日產品(先研究)、GBM 自由挖掘(閘住)。
 **資料缺**:被動 ETF PCF(待 user 拍板採購)。**延後**:指數調整流
 (index/rebalance character,需指數事件日曆,stock_attr 成分旗標可推,等案例)。
+
+---
+
+## 10. v3 骨架重整與研究暫停(2026-09-21)
+
+**O1 的「改定義待 user 決策」已決**(見 §5 的 O1 但書尾句)。user 2026-09-18
+拍板的方向不是「把 foreign_sim 換成 amount cosine」這種欄位級修補,而是整層重定位:
+
+> **行動者層 v3 = Broker-flow Measurement Layer**。首要目標不是分類「誰是誰」,
+> 而是先建立券商席位資金流的最小、可解釋、可校準的行為座標系。
+> 外資/投信/自營官方桶降為 **calibration anchor**,不是研究主題;
+> 「從公開分點反推外資實際下在哪些席位」拆成獨立的 **v3.5 inverse-attribution**。
+
+**現行規格(兩份,都在 ws-quant)**:
+
+- 研究骨架:`~/r20/wp/ws-quant/docs/actor_layer_v3_reframed_2026-09-18.md`
+  ——五 phase 順序(geometry → trait/state → salience → actor calibration →
+  accounting bounds),Phase 1 明令不碰 alpha;T4 v3 收薄至八個 primitive,
+  multiplicity / rolling / rank 版 foreign_sim / sector_hhi 退場,residual 讀時算;
+  新增 stock salience 取代 presence;buy/sell 不預設對稱;結論須標
+  observed / identified / bounded / inferred / unidentifiable 五級。
+- 工程銜接與資料契約:`~/r20/wp/ws-quant/docs/actor_layer_v3_architecture_alignment_2026-09-18.md`
+  ——三色分層落位、T4 v3 最小 schema、硬會計界限**雙側區間**(不只 HiddenForeign_min)、
+  對 O1-O6 的逐期影響(**§10 對本檔**)、A-F 遷移順序。
+  另含兩處對 09-17 原提案的語意補正:①`Other = total − 官方四桶` 不是
+  「外資券商 cohort 以外的席位」②T3 尚未納入自營兩桶的**金額**欄,
+  故原提案的八個 actor amount cosine 尚未具備完整輸入(須標 `unanchored`,
+  不得以收盤價 × 股數假裝 amount)。
+
+**對本檔分期的直接影響**(細節見銜接文 §10):
+O2 拆成 O2a 流量軌跡(可獨立推進)與 O2b 模型成本狀態(不作 v3 前置——
+舊設計「低 multiplicity → 客戶穩定 → 可讀 FIFO 成本」這條依賴已取消);
+O4 先交行為 profile 與讀本,labels 另做相容遷移,**不承諾身份機率**;
+O3 可沿 T2 推進,不等 actor 身份辨識。
+
+**狀態:規格已凍結,Phase 1 尚未開工**(user 2026-09-21 轉去新專案)。
+09-17 原提案已加「已被取代」橫幅,保留為討論紀錄。施工時正式契約與架構文件
+回歸本 repo 維護(銜接文 §3.1),屆時該兩份文件在 ws-quant 側只保留引用與
+消費端遷移紀錄。
+
+**ws-quant 側同期發生的事**(影響本層的取用端):處置線的 `dispo-rightarm-v2`
+與 `sr-v2-10d` 已於 2026-09-21 retired(非證偽,user 決定暫停),
+slots 4/6 → 2/6;`src/broker_taxonomy` 維持凍結。因此 O4 的
+「ws-quant 處置線改讀 labels」在重啟前沒有急迫的下游需求,
+可按 v3 的 measurement-first 順序慢慢來。

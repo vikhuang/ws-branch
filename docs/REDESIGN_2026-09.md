@@ -126,6 +126,12 @@ user 審 v2 → 核准後 P1 開工(ws-core 另開 worktree/PR)。
   polars 不還記憶體堆 94GB 壓縮頁→一年一子程序;③verify 全史 unique
   30GB→逐年抽日+謂詞下推。教訓:36GB 機器上 RSS 是假象,**壓縮區才是
   真水位**,任何億級查詢先按壓縮區預算設計。
+  **④(2026-09-21)T1 整年 group_by**:group key 含 date = raw 分片,聚合從不
+  跨檔,但整年 scan 成一條鏈再 group_by,polars 要維持整年 1.5 億 group 的
+  雜湊表——1 月 8.2GB、1 年 7.6GB RSS + 7GB swap(2025 建表中止)。修法:
+  逐 raw 日 collect → 逐月 part → 串流串接;2025 全年 **34 秒、峰值 4.5GB**,
+  2026-07 逐列比對與舊法 exact equal。「一年一子程序」只是把爆點推遲,
+  **key 含分片鍵的聚合一律逐分片做**。
 - T4 建表逐月切塊(group 鍵含 date,月切無損)。
 - 四張表落地:T1 8.5GB/6.8 億列、T3 91MB/470 萬列(2016+)、
   T4 61MB/120 萬分點日;T2=ws-core lazy 視圖。

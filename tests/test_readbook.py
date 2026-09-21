@@ -128,3 +128,14 @@ def test_missing_salience_history_shows_dash_not_blank() -> None:
         cohort_codes=COHORT, salience_day=sal)
     jpm = next(l for l in out.splitlines() if l.startswith("摩根大通"))
     assert "—" in jpm and "1.00" in jpm      # z 為破折號,參與率仍在
+
+
+def test_known_hidden_foreign_seat_is_marked_not_as_domestic_hq() -> None:
+    """9A81 永豐金-匯立:不在 cohort,但不得被標成「總公司/分行」——user 2026-09-21
+    決定不入 cohort 的代價(其量落在下界內)必須在讀本上看得見。"""
+    t1 = pl.DataFrame({
+        "broker": ["8440", "9A81"], "broker_name": ["摩根大通", "永豐金-匯立"],
+        "buy_sh": [400_000.0, 100_000.0], "sell_sh": [0.0, 0.0]})
+    out = _render(t1=t1)
+    assert "外資客戶*" in out and "*外資客戶:" in out
+    assert "*外資客戶:" not in _render()   # 沒有這類席位時不印註腳

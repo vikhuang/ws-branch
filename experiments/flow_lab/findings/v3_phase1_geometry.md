@@ -142,7 +142,9 @@ Spearman 0.79;log-log 斜率 0.320 → **gross 每漲 10 倍,碰股數只 ×2.1*
 
 ## 4. 但書
 
-- 單年(2026 前 170 日),未做跨年穩定性。
+- ~~單年(2026 前 170 日),未做跨年穩定性。~~ **09-21 已納入 2025**:Other/X 區間/L=U
+  兩年同形;HiddenForeign 下界 37.6% → 30.7%(cohort 成員差);未觀測 2025 達
+  0.3-1.7%(A8)。見 `v3_crossyear_2025.md` §1。
 - between/within 未拆日效應;§6 的 \(X=\mu+f(\log G,B)+\alpha_b+\gamma_t+\epsilon\)
   尚未估。
 - cos_market 已用全 universe 定義,但 actor cosine(對四官方桶)尚未重算——

@@ -212,10 +212,11 @@ O3 可沿 T2 推進,不等 actor 身份辨識。
 
 | Phase | 狀態 | 交付 | 頭條結果 |
 |---|---|---|---|
-| 1 geometry + 硬會計界限 | ✅ 2026-09-18 | `v3_phase1_geometry.py`、`t3b_accounting_bounds`、`findings/v3_phase1_geometry.md` | universe gate 擋掉 T1 的 297,673 億(ETF/權證/特別股/TDR/REIT/興櫃);T3 側不套 gate 時「指數」型代號帶的外資買入是普通股的 **4.7 倍** → 任何 T3-only 加總不套 gate 皆失真。界限表 646,924 列、可發布 99.15%。**Other = 62.8%**(量加權)為 `identified` 總量但內部種類與席位配置皆未識別,**不得叫散戶**;cohort 內外資量 X 區間 **[6.7%, 62.5%]** = `bounded` 但幾乎無資訊,唯一識別僅 8.0% 且多為 F=0 退化 |
+| 1 geometry + 硬會計界限 | ✅ 2026-09-18 | `v3_phase1_geometry.py`、`t3b_accounting_bounds`、`findings/v3_phase1_geometry.md` | universe gate 擋掉 T1 的 297,673 億(ETF/權證/特別股/TDR/REIT/興櫃);T3 側不套 gate 時「指數」型代號帶的外資買入是普通股的 **4.7 倍** → 任何 T3-only 加總不套 gate 皆失真。界限表 646,924 列、可發布 99.15%。**Other = 62.8%**(量加權)為 `identified` 總量但內部種類與席位配置皆未識別,**不得叫散戶**;cohort 內外資量 X/S 區間 **[10.7%, 99.8%]** = `bounded` 但幾乎無資訊(09-21 腳本化後修正口徑;首版引的 [6.7%, 62.5%] 是 X/F);唯一識別 16.7% 且**全部**為 S=0 或 F=0 退化 |
 | 2 trait / 日效應 / 席位異常 | ✅ 2026-09-20 | `measure/decompose.py`、`findings/v3_phase2_trait_state.md` | 模型與估計順序**先宣告不得事後改**;α_b 與 γ_t 用交替投影**聯合估計**(非各自估一次相減);變異占比不強制加總 100%,主順序 A 與敏感度順序 B 兩者都報 |
 | 3 stock salience | ✅ 2026-09-21 | `measure/salience.py`、`findings/v3_phase3_salience.md`、讀本接上 | **零不是缺值**:未交易日是真實的零、必須入 baseline(只用有交易日會有 pair 內倖存者偏誤,實測某 pair 高 20 倍);salience 拆成**參與率 × 條件規模**兩個可讀量,相乘還原無條件均值 |
-| 4 actor calibration | ⏸ 未開始 | — | 官方桶只是校準器;驗收對象是配置關聯與 cohort 區分力,不是投資人身份正確率 |
+| 4 actor calibration | ✅ 2026-09-21 | `measure/calibration.py`、`findings/v3_phase4_calibration.md`(+robustness/rank_align 腳本) | 外資桶殘差 AUC 年內 **0.828/0.795**(11/11 留一、剔 2330/前五、逐月皆成立);fund/prop_self 殘差 ≈0.5 無區分力;prop_hedge 發行商證據控規模後僅 +0.05-0.08(三分之二是規模);`log_gross+log_n` 單獨 AUC 0.993 = 外資席位就是最大席位,所有 AUC 只讀成「線性控規模後的行政 cohort 區分力」 |
+| 跨年(納入 2025) | ✅ 2026-09-21 | cohort v3 時變、T1 逐日建表、`findings/v3_crossyear_2025.md` | 外資殘差 AUC 跨年 **0.747/0.823**(係數 2025→2026;CI 下界 0.61/0.71),買側比年內掉 0.08,截距隨市況移;α_b 跨年穩、γ_t 吸收年份;暖機讓年初 pair 的 z 為 null 64%→25%;HiddenForeign 下界 37.6%→30.7%(**9A81 永豐金-匯立不入 cohort,user 拍板**);未觀測 2025 達 0.3-1.7%(A8) |
 | v3.5 inverse attribution | ⏸ 未開始 | — | 輸入 = Phase 1 的 feasible set;不以官方總量閉環宣稱席位歸因正確 |
 
 **複查文化有效的證據**(Phase 3,`3170025`):複查用模組外方法手算後抓到真 bug

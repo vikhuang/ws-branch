@@ -25,6 +25,8 @@ import datetime
 
 import polars as pl
 
+from ws_branch.measure import universe
+
 FOOTER = "本頁為描述性觀測,非交易訊號。(docs/OBSERVATORY_2026-09.md §6)"
 
 
@@ -116,7 +118,12 @@ def render(
         (pl.col("buy_sh") + pl.col("sell_sh")).alias("_g"),
         (pl.col("buy_sh") - pl.col("sell_sh")).alias("_net"),
         pl.when(pl.col("broker").is_in(list(cohort_codes)))
-        .then(pl.lit("外資席位")).otherwise(
+        .then(pl.lit("外資席位"))
+        # 明知客戶以外資為主但不在 cohort 的席位(9A81 永豐金-匯立):其量在
+        # 「必須在外資席位之外」的下界裡,讀本要讓人看得出來,不能混進總公司/分行
+        .when(pl.col("broker").is_in(list(universe.KNOWN_HIDDEN_FOREIGN)))
+        .then(pl.lit("外資客戶*"))
+        .otherwise(
             pl.when(pl.col("broker_name").str.contains("-"))
             .then(pl.lit("分行")).otherwise(pl.lit("總公司")))
         .alias("_cohort"))
@@ -160,6 +167,9 @@ def render(
     lines.append("      『來回率』= min(買,賣)/max(買,賣),描述雙邊流量,"
                  "**不等於當沖**——同一席位的")
     lines.append("      買方與賣方可能是不同客戶;cohort 為行政分類,不是投資人身分。")
+    if d.filter(pl.col("_cohort") == "外資客戶*").height:
+        lines.append("      *外資客戶:原獨立外資券商併入本土券商後的席位(如永豐金-匯立),"
+                     "依「券商執照」規則不入 cohort,其量計入上述下界。")
     lines.append("=" * w)
     lines.append(FOOTER)
     return "\n".join(lines)

@@ -47,6 +47,15 @@ def _pairs_for(symbols: list[str], bd: pl.DataFrame, start: str,
           .filter(pl.col("symbol_id").is_in(symbols))
           .select("broker", "symbol_id", "date", "buy_dollar", "sell_dollar")
           .collect())
+    if uni is not None:
+        # 分子與分母同一個 gate:該股不在 universe 的日子(中途上市/類型變更)
+        # 不是「未交易」,是無定義——先排除並揭露,再交給 build_pair_panel 留 null
+        gated = universe.apply_universe(t1, uni)
+        if gated.height != t1.height:
+            ex = t1.join(uni, on=["symbol_id", "date"], how="anti")
+            print(f"  [gate] 排除 {t1.height - gated.height:,} 列 T1(不在 universe 的股票日):"
+                  f"{ex.group_by('symbol_id').agg(pl.col('date').min().alias('from'), pl.col('date').max().alias('to'), pl.len()).rows()}")
+        t1 = gated
     daily = salience.daily_salience(t1, bd, universe=uni)
     out = []
     for s in symbols:

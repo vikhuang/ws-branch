@@ -112,14 +112,9 @@ def evaluate(df: pl.DataFrame, bucket: str, side: str) -> dict:
 
 
 def main() -> None:
-    import os
-    if os.path.exists(CACHE):
-        df = pl.read_parquet(CACHE)
-        print(f"讀快取 {CACHE}:{df.height:,} 席位日")
-    else:
-        df = build_cosines(YEAR)
-        df.write_parquet(CACHE)
-        print(f"→ {CACHE}:{df.height:,} 席位日")
+    from v3_common import cosines
+    df = cosines([YEAR])
+    print(f"cosines {YEAR}:{df.height:,} 席位日")
     df = _labelled(df)
     print(f"席位 {df['broker'].n_unique()};外資席位 "
           f"{df.filter(pl.col('is_foreign'))['broker'].n_unique()};"

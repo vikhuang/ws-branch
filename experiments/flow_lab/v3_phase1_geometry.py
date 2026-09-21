@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import datetime
+import sys
 
 import polars as pl
 from ws_core import stock_attr, tradedays
@@ -21,7 +22,7 @@ from ws_core import stock_attr, tradedays
 from ws_branch.measure import allocation, universe
 from ws_branch.tables import io
 
-YEAR = 2026
+YEAR = int(sys.argv[1]) if len(sys.argv) > 1 else 2026   # `python v3_phase1_geometry.py 2025`
 
 
 def _gated_primitives(year: int) -> pl.DataFrame:
@@ -162,8 +163,9 @@ def main() -> None:
         within = (w["v"] * w["n"]).sum() / w["n"].sum()
         print(f"  {c:<18} between {1 - within / s[c].var():.0%}  within {within / s[c].var():.0%}")
 
-    df.write_parquet("/tmp/v3_phase1_primitives.parquet")
-    print("\nprimitives → /tmp/v3_phase1_primitives.parquet")
+    out = f"/tmp/v3_phase1_primitives_{YEAR}.parquet"
+    df.write_parquet(out)
+    print(f"\nprimitives → {out}")
 
 
 if __name__ == "__main__":

@@ -1,18 +1,21 @@
 """v3 Phase 2:trait / 共同日狀態 / 席位特有異常(架構文件 §6)。
 
 預期見 findings/v3_phase2_trait_state.md(已凍結)。輸入 = Phase 1 產出的
-gated primitives(/tmp/v3_phase1_primitives.parquet),沒有就自動重算。
+gated primitives(v3_common.primitives,逐年快取),沒有就自動重算。
+用法:`python v3_phase2_trait_state.py 2025` / `2026` / `2025,2026`(多年並估時
+γ_t 跨年,α_b 假設席位性格跨年不變——這是可檢的假設,見 crossyear 段)。
 """
 
 from __future__ import annotations
 
-from pathlib import Path
+import sys
 
 import polars as pl
 
 from ws_branch.measure import decompose
+from v3_common import primitives, years_arg
 
-PRIM = Path("/tmp/v3_phase1_primitives.parquet")
+YEARS = years_arg(sys.argv)
 SIZE_EDGES = [8.0, 8.5, 9.0, 9.3, 9.7]          # log10(gross_amt),6 箱
 BREADTH_EDGES = [100, 300, 500, 700, 900, 1200]  # n_symbols,7 箱
 TARGETS = ["top5_share", "directional_ratio", "cos_market_buy", "cos_market_sell",
@@ -24,13 +27,7 @@ def _corr(a: pl.Series, b: pl.Series) -> float:
 
 
 def _load() -> pl.DataFrame:
-    if not PRIM.exists():
-        from v3_phase1_geometry import _gated_primitives
-        df = _gated_primitives(2026)
-        df = df.with_columns(pl.col("gross_amt").log10().alias("log_gross"),
-                             pl.col("n_symbols").log10().alias("log_n"))
-        df.write_parquet(PRIM)
-    return pl.read_parquet(PRIM)
+    return primitives(YEARS)
 
 
 def main() -> None:
@@ -38,7 +35,7 @@ def main() -> None:
     df = decompose.add_conditioning_bins(
         df, size_col="log_gross", breadth_col="n_symbols",
         size_edges=SIZE_EDGES, breadth_edges=BREADTH_EDGES)
-    print(f"分點日 {df.height:,};分點 {df['broker'].n_unique()};"
+    print(f"年份 {YEARS}:分點日 {df.height:,};分點 {df['broker'].n_unique()};"
           f"交易日 {df['date'].n_unique()};條件化格數 {df['_cell'].n_unique()}")
     cell_n = df.group_by("_cell").len()["len"]
     print(f"  每格樣本數 min/median/max = {cell_n.min()}/{int(cell_n.median())}/{cell_n.max()}")
@@ -104,8 +101,9 @@ def main() -> None:
         "broker", "date", pl.lit(y).alias("primitive"),
         pl.col(y).alias("raw"), "f_hat", "alpha", "gamma", "resid")
         for y in TARGETS])
-    out.write_parquet("/tmp/v3_phase2_components.parquet")
-    print(f"\n成分表 → /tmp/v3_phase2_components.parquet ({out.height:,} 列)")
+    tag = "_".join(map(str, YEARS))
+    out.write_parquet(f"/tmp/v3_phase2_components_{tag}.parquet")
+    print(f"\n成分表 → /tmp/v3_phase2_components_{tag}.parquet ({out.height:,} 列)")
 
 
 if __name__ == "__main__":

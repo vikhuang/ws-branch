@@ -17,13 +17,14 @@
 from __future__ import annotations
 
 import datetime
+import sys
 
 import polars as pl
 
 from ws_branch.tables import io
 
-YEAR = 2026
-DEMO = ("3450", datetime.date(2026, 9, 14))
+YEAR = int(sys.argv[1]) if len(sys.argv) > 1 else 2026
+DEMO = ("3450", datetime.date(2026, 9, 14) if YEAR == 2026 else datetime.date(YEAR, 12, 30))
 
 
 def readout(t3b: pl.DataFrame, side: str) -> dict[str, float]:

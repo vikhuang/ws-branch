@@ -38,9 +38,9 @@ def main() -> None:
 def _salience(symbol_id: str, d: datetime.date) -> pl.DataFrame | None:
     """單股查詢算 salience 三問(§7:首版不物化 branch×stock×day)。"""
     start = str(d - datetime.timedelta(days=LOOKBACK_DAYS))
-    prim = Path("/tmp/v3_phase1_primitives.parquet")
-    if not prim.exists():
-        print("  (salience 略:找不到 Phase 1 primitives,請先跑 v3_phase1_geometry.py)")
+    prims = sorted(Path("/tmp").glob("v3_phase1_primitives_*.parquet"))   # 逐年快取
+    if not prims:
+        print("  (salience 略:找不到 Phase 1 primitives,請先跑 v3_phase1_geometry.py <year>)")
         return None
     # 分母(席位日總額)已套普通股 gate;分子若是 ETF/興櫃等 universe 外標的,
     # salience 定義不一致——寧可不算,不能靜默給錯數
@@ -50,7 +50,8 @@ def _salience(symbol_id: str, d: datetime.date) -> pl.DataFrame | None:
                   & (pl.col("date") == d)).height == 0:
         print(f"  (salience 略:{symbol_id} 於 {d} 不在普通股 universe,分子/分母口徑不一致)")
         return None
-    branch_day = pl.read_parquet(prim).select("broker", "date", "gross_amt")
+    branch_day = (pl.concat([pl.read_parquet(p) for p in prims])
+                  .select("broker", "date", "gross_amt").unique(["broker", "date"]))
     t1 = (io.scan("t1_broker_daily", start=start, end=str(d))
           .filter(pl.col("symbol_id") == symbol_id)
           .select("broker", "symbol_id", "date", "buy_dollar", "sell_dollar")

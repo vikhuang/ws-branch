@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import datetime
 import random
+import sys
 
 import polars as pl
 
@@ -19,8 +20,10 @@ from ws_core import stock_attr
 from ws_branch.measure import salience, universe
 from ws_branch.tables import io
 
-YEAR = 2026
-AS_OF = datetime.date(2026, 9, 14)
+AS_OF = datetime.date.fromisoformat(sys.argv[1]) if len(sys.argv) > 1 else datetime.date(2026, 9, 14)
+# 暖機:分母(席位日總額)與 T1 視窗預設跨年取 150 日曆天;`--no-warmup` 把兩者
+# 截在 AS_OF 當年 1/1,用來量「單年建表時年初 baseline 全 null」的實際損失
+WARMUP = "--no-warmup" not in sys.argv
 WINDOW, MIN_PERIODS = 60, 20
 SAMPLE_N, SEED = 40, 20260921
 
@@ -31,8 +34,10 @@ def _corr(a: pl.Series, b: pl.Series) -> float:
 
 def _branch_day() -> pl.DataFrame:
     """席位日總額(salience 的分母)——Phase 1 的 gated primitives。"""
-    return pl.read_parquet("/tmp/v3_phase1_primitives.parquet").select(
-        "broker", "date", "gross_amt")
+    from v3_common import primitives
+    yrs = [AS_OF.year - 1, AS_OF.year] if WARMUP else [AS_OF.year]
+    bd = primitives(yrs).select("broker", "date", "gross_amt")
+    return bd if WARMUP else bd.filter(pl.col("date") >= datetime.date(AS_OF.year, 1, 1))
 
 
 def _pairs_for(symbols: list[str], bd: pl.DataFrame, start: str,
@@ -65,9 +70,13 @@ def main() -> None:
     uni_syms = sorted(universe.apply_universe(traded_today, uni)["symbol_id"].to_list())
     rng = random.Random(SEED)
     sample = sorted(rng.sample(uni_syms, SAMPLE_N))
-    start = str(AS_OF - datetime.timedelta(days=150))
+    start = AS_OF - datetime.timedelta(days=150)
+    if not WARMUP:
+        start = max(start, datetime.date(AS_OF.year, 1, 1))
+    start = str(start)
     print(f"抽樣 {SAMPLE_N} 檔(seed={SEED}),窗 {WINDOW} 活躍日 / "
-          f"min_periods={MIN_PERIODS},as-of {AS_OF}")
+          f"min_periods={MIN_PERIODS},as-of {AS_OF},視窗起點 {start}"
+          f"{'' if WARMUP else '(--no-warmup,截在當年 1/1)'}")
 
     uni_window = universe.stock_universe(stock_attr(
         start=start, end=str(AS_OF), columns=["coid", "mdate", "stktp_c"]))

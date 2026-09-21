@@ -1,5 +1,17 @@
 # 行動者層 v3 提案:問題先行的基礎欄位與聚合(2026-09-17,待 user 審)
 
+> **狀態(2026-09-18 更新):本提案已被取代,保留為討論紀錄,勿據此施工。**
+> 現行規格在 ws-quant:
+> - 研究骨架:`~/r20/wp/ws-quant/docs/actor_layer_v3_reframed_2026-09-18.md`
+>   ——v3 重新定義為 Broker-flow Measurement Layer(量測先行,官方三大法人降為
+>   calibration anchor,反推席位歸因拆出 v3.5)。
+> - 工程銜接與資料契約:`~/r20/wp/ws-quant/docs/actor_layer_v3_architecture_alignment_2026-09-18.md`
+>   ——含三色分層落位、T4 v3 最小 schema、硬會計界限雙側區間、O1-O6 影響、
+>   A-F 遷移順序,以及對本提案的兩處語意補正(Other 的定義;自營兩桶缺金額欄
+>   故八個 actor amount cosine 尚未具備完整輸入)。
+>
+> 施工時正式契約與架構文件回歸本 repo 維護(見銜接文 §3.1);屆時本檔退役。
+
 > 起點 = O1 解讀(`experiments/flow_lab/findings/o1_fingerprint_read.md`)。
 > 結論:O1 的欄位是從 schema 長出來的,不是從問題長出來的——這輪真正產生
 > 理解的三個量(碰幾檔的分佈、外資席位對官方外資的覆蓋率、金額 cosine 殘差)

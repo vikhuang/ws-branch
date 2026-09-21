@@ -4,16 +4,28 @@
 > 清洗聚合與歸因量測」——藍圖 `docs/REDESIGN_2026-09.md`、體檢帳本
 > `docs/audit_ledger.md`。**P4-P6 重心已轉移至觀測站架構
 > `docs/OBSERVATORY_2026-09.md`(2026-09-16;四層維度+O1-O6 分期,動
-> 手前先讀)**。新核心:
+> 手前先讀)**。**行動者層 v3(2026-09-18 起)現行規格在 ws-quant**:
+> `docs/actor_layer_v3_reframed_2026-09-18.md`(量測先行,官方三大法人降為
+> 校準錨)+ `docs/actor_layer_v3_architecture_alignment_2026-09-18.md`
+> (工程契約、Phase 1-5)。Phase 1-2 已完成,findings 在 `experiments/flow_lab/
+> findings/v3_phase{1,2}_*.md`。新核心:
 > - CLI:`uv run python -m ws_branch build|verify [--table t1_broker_daily|
->   t3_official_daily|t4_broker_features] [--year Y]`(factory.py=相容薄殼)
+>   t3_official_daily|t3b_accounting_bounds|t4_broker_features] [--year Y]`
+>   (factory.py=相容薄殼);讀本 `scripts/observatory/v3_readbook.py <股票> <日期>`
 > - `src/ws_branch/` 三色分層:tables(registry/runner/io/transforms/checks)
->   / measure(identity+taxonomy) / products;四張表:T1 物化 8.5GB、
->   T2=ws-core lazy 視圖、T3 官方對齊(2016+)、T4 分點日特徵
+>   / measure(identity+taxonomy+**universe/accounting/decompose/allocation/
+>   baseline**,全純函數)/ products(**stock_readbook**);表:T1 物化、
+>   T2=ws-core lazy 視圖、T3 官方對齊(v2 含自營金額)、**T3b 會計硬界限**
+>   (股票×日×側)、T4 分點日特徵(v2,v3 schema 待 Phase 4 定稿)
+> - **Universe gate 是第一道聚合關卡**(`measure/universe.py`,普通股 v1,
+>   逐日 stock_attr):T3 的指數彙總列一天帶 12,765 億外資買入,不套 gate
+>   任何 T3-only 加總失真 4.7 倍。外資 cohort 以代號宣告(11 家,建表時對
+>   資料強制驗證)。
 > - 記憶體條文(runner/io docstring):序列執行、一年一子程序、逐月切塊、
 >   verify 謂詞下推——壓縮區才是真水位
 > - `experiments/flow_lab/` — 研究區(家法:預期先行/紅隊/體檢先於使用)
-> - 體檢帳本 `docs/audit_ledger.md`(A1-A5 結案)
+> - 體檢帳本 `docs/audit_ledger.md`(A1-A7 結案;A6=TEJ vol 兩日偏低、
+>   A7=各源 available_at:broker_tx T 日 21:35 落地→最早 T+1 可用)
 > - **PNL/FIFO 層(etl.py、pnl_engine.py、聰明錢/conviction)封存**:
 >   不維護不重建;復用前置條件見 audit_ledger。以下舊文件僅供考古。
 

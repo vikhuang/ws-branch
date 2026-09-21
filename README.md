@@ -5,11 +5,16 @@
 > P4-P6 重心已轉移至觀測站架構 `docs/OBSERVATORY_2026-09.md`
 > (四層維度:行動者/部位/執行/關係,O1-O6 分期)。
 >
-> - 四張表:T1 分點×股票×日(2021+ 物化)/T2 價位表(ws-core lazy 視圖)/
->   T3 官方法人流(2016+,單位=股/元)/T4 分點日行為特徵
-> - CLI:`uv run python -m ws_branch build|verify --table <t> [--year Y]`
+> - 表:T1 分點×股票×日(2021+ 物化)/T2 價位表(ws-core lazy 視圖)/
+>   T3 官方法人流(2016+,單位=股/元;v2 含自營金額)/**T3b 會計硬界限**
+>   (v1.1.0,股票×日×側:官方外資量有多少必須在外資席位之外)/T4 分點日行為特徵
+> - CLI:`uv run python -m ws_branch build|verify --table <t> [--year Y]`;
+>   個股讀本 `uv run python scripts/observatory/v3_readbook.py 3450 2026-09-14`
 > - 架構:`src/ws_branch/` 三色分層(純轉換/IO 殼/宣告);測試金字塔
->   (單元+e2e 合成小宇宙+真資料對帳),`uv run pytest`
+>   (單元+e2e 合成小宇宙+真資料對帳),`uv run pytest`(154 tests)
+> - **v1.1.0(2026-09-21)行動者層 v3 Phase 1-2**:universe gate、會計硬界限、
+>   trait/日效應/席位異常分解;規格在 ws-quant `docs/actor_layer_v3_*_2026-09-18.md`,
+>   結果在 `experiments/flow_lab/findings/v3_phase{1,2}_*.md`
 > - **以下舊 README 描述的 PNL/FIFO 系統已整包封存於 `pnl/`**,主線不維護;
 >   復用前置條件見 audit_ledger。
 

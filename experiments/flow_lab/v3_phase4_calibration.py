@@ -79,7 +79,7 @@ def build_cosines(year: int) -> pl.DataFrame:
 
 def _labelled(df: pl.DataFrame) -> pl.DataFrame:
     return df.with_columns(
-        pl.col("broker").is_in(list(universe.FOREIGN_BROKER_CODES)).alias("is_foreign"),
+        universe.cohort_expr().alias("is_foreign"),   # 時變 cohort(1570/1380 在 2025 內退出)
         pl.col("gross_amt").log10().alias("log_gross"),
         pl.col("n_symbols").log10().alias("log_n"))
 

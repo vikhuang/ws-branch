@@ -194,6 +194,37 @@ def test_foreign_cohort_excludes_domestic_broker_with_retail_branches() -> None:
     assert "1520" in universe.HISTORICAL_FOREIGN_CODES  # 瑞士信貸,建早年表要用
 
 
+def test_cohort_is_time_varying_by_last_trading_day() -> None:
+    """1570 法興到 2025-07-31、1380 匯立到 2025-10-17(自 broker_tx 逐日查得);
+    9A81 永豐金-匯立(匯立併入後)依 user 2026-09-21 決定不入 cohort。"""
+    import datetime as dt
+    assert "1570" in universe.cohort_codes(dt.date(2025, 7, 31))
+    assert "1570" not in universe.cohort_codes(dt.date(2025, 8, 1))
+    assert "1380" in universe.cohort_codes(dt.date(2025, 10, 17))
+    assert "1380" not in universe.cohort_codes(dt.date(2025, 10, 20))
+    assert "9A81" not in universe.cohort_codes(dt.date(2026, 9, 1))
+    assert "9A81" in universe.KNOWN_HIDDEN_FOREIGN
+    assert universe.cohort_codes(dt.date(2026, 9, 1)) == universe.FOREIGN_BROKER_CODES
+    df = pl.DataFrame({"broker": ["1380", "1380", "8440"],
+                       "date": [dt.date(2025, 10, 17), dt.date(2025, 10, 20), dt.date(2025, 1, 2)]})
+    assert df.select(universe.cohort_expr())["in_cohort"].to_list() == [True, False, True]
+
+
+def test_assert_cohort_names_validates_year_members_only() -> None:
+    """建 2025 表要驗 1570/1380 的名字;建 2026 表不得因它們缺席而報錯。"""
+    rows = dict(universe.FOREIGN_BROKER_NAMES)
+    rows.update({"1570": "港商法國興業", "1380": "台灣匯立"})
+    ok = pl.DataFrame({"broker": list(rows), "broker_name": list(rows.values())})
+    assert universe.assert_cohort_names(ok, year=2025) == []
+    bad = ok.with_columns(pl.when(pl.col("broker") == "1380").then(pl.lit("永豐金-匯立"))
+                          .otherwise(pl.col("broker_name")).alias("broker_name"))
+    with pytest.raises(ValueError, match="1380"):
+        universe.assert_cohort_names(bad, year=2025)
+    only_2026 = pl.DataFrame({"broker": list(universe.FOREIGN_BROKER_NAMES),
+                              "broker_name": list(universe.FOREIGN_BROKER_NAMES.values())})
+    assert universe.assert_cohort_names(only_2026, year=2026) == []
+
+
 def test_unobserved_tolerance_is_relative_for_large_stocks() -> None:
     # 大型股的零股尾差按規模放大:2330 級別(7,500 萬股)差 5 萬股仍在 0.1% 內
     ok = accounting.unobserved_flow(

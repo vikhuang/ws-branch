@@ -11,7 +11,6 @@ import polars as pl
 from ws_core import stock_attr
 
 from ws_branch.measure import salience, universe
-from ws_branch.measure.universe import FOREIGN_BROKER_CODES
 from ws_branch.products import stock_readbook
 from ws_branch.tables import io
 
@@ -32,7 +31,7 @@ def main() -> None:
     t3 = (io.scan("t3_official_daily", start=a.date, end=a.date)
           .filter(pl.col("symbol_id") == a.symbol_id).collect())
     print(stock_readbook.render(t1, bounds, t3, symbol_id=a.symbol_id, date=d,
-                                cohort_codes=FOREIGN_BROKER_CODES, top_n=a.top,
+                                cohort_codes=universe.cohort_codes(d), top_n=a.top,
                                 salience_day=_salience(a.symbol_id, d)))
 
 

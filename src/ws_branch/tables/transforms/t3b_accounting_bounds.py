@@ -6,7 +6,8 @@
 
 粒度:symbol_id × date × side(buy/sell 長表,不用寬表塞雙側)。
 universe:僅普通股(measure.universe;T3 的指數彙總列會讓外資買入虛增 4.7 倍)。
-cohort:外資券商席位 11 家,以**代號**宣告(measure.universe.FOREIGN_BROKER_CODES);
+cohort:外資券商席位,以**代號 + 有效期**宣告(measure.universe.FOREIGN_COHORT,
+        時變:1520/1570/1380 已退出,按日解析);
         不用 classify_broker_cohort 的 institutional 桶——它含本土法人席位。
 
 三個口徑刻意分開存,不能互相取代:
@@ -34,7 +35,7 @@ def _t1_stock_day(year: int, month: int) -> pl.DataFrame:
     end = (datetime.date(year + 1, 1, 1) if month == 12
            else datetime.date(year, month + 1, 1)) - datetime.timedelta(days=1)
     lf = io.scan("t1_broker_daily", start=str(start), end=str(end))
-    is_cohort = pl.col("broker").is_in(list(universe.FOREIGN_BROKER_CODES))
+    is_cohort = universe.cohort_expr()   # 時變 cohort:按 (broker, date) 解析
     return (lf.group_by("symbol_id", "date")
             .agg(pl.col("buy_sh").sum().alias("observed_total_buy_sh"),
                  pl.col("sell_sh").sum().alias("observed_total_sell_sh"),
@@ -49,7 +50,7 @@ def build_year(year: int) -> pl.LazyFrame:
     # 實付教訓:誤填 9200/9100 使本土 HQ 混入 cohort,整年表失真)
     absent = universe.assert_cohort_names(
         io.scan("t1_broker_daily", start=f"{year}-01-01", end=f"{year}-12-31")
-        .select("broker", "broker_name").unique().collect())
+        .select("broker", "broker_name").unique().collect(), year=year)
     if absent:
         print(f"  cohort 代號 {absent} 於 {year} 未出現(未交易或名單過期)")
     uni = universe.stock_universe(

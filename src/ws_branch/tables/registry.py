@@ -8,6 +8,7 @@ from typing import Callable
 import polars as pl
 
 from ws_branch.tables.transforms import (
+    t4_broker_measure,
     t1_broker_daily,
     t3_official_daily,
     t3b_accounting_bounds,
@@ -24,6 +25,7 @@ class Table:
     verify: Callable[[int, int], None]         # (n_samples, seed) → raise on FAIL
     first_year: int = FIRST_YEAR
     date_col: str = "date"
+    manifest: Callable[[int], dict] | None = None   # §4.5:年 → manifest 內容(runner 寫檔)
 
 
 def _verify_t1(n_samples: int, seed: int) -> None:
@@ -242,6 +244,60 @@ def _verify_t3b(n_samples: int, seed: int) -> None:
     print(f"PASS: T3b 界限不變量 + 閉環(抽查 {checked:,} 列)")
 
 
+def _verify_t4v3(n_samples: int, seed: int) -> None:
+    """T4 v3 對帳:鍵唯一、不變量、available_at 規則、抽一月自 T1/T3 以同一純函數重算恆等。"""
+    import random
+
+    from ws_branch.tables import io
+    from ws_branch.tables.transforms import t4_broker_measure as m
+
+    rng = random.Random(seed)
+    years = io.existing_years(m.TABLE)
+    checked = 0
+    cos_cols = [f"cos_{b}_{s}" for b in ["market", *m.OFFICIAL_BUCKETS] for s in ("buy", "sell")]
+    for y in rng.sample(years, min(2, len(years))):
+        ylf = pl.scan_parquet(io.year_path(m.TABLE, y))
+        dates = ylf.select("date").unique().collect()["date"].to_list()
+        for d in rng.sample(dates, min(max(n_samples // 20, 2), len(dates))):
+            day = ylf.filter(pl.col("date") == d).collect()
+            if day.height != day.select("broker", "date").unique().height:
+                raise SystemExit(f"FAIL: {d} 鍵 (broker, date) 重複")
+            bad = day.filter(
+                (pl.col("gross_amt") <= 0) | (pl.col("n_symbols") < 1)
+                | (pl.col("directional_ratio") < -1e-9) | (pl.col("directional_ratio") > 1 + 1e-9)
+                | (pl.col("top1_share") > pl.col("top5_share") + 1e-9) | (pl.col("top5_share") > 1 + 1e-9)
+                | (pl.col("basket_self_sim") < -1e-9) | (pl.col("basket_self_sim") > 1 + 1e-9)
+                | pl.any_horizontal([(pl.col(c) < -1 - 1e-9) | (pl.col(c) > 1 + 1e-9) for c in cos_cols])
+                | (pl.col("available_at").dt.convert_time_zone(m.TAIPEI).dt.time() != m.AVAILABLE_AT_TIME)
+                | (pl.col("available_at").dt.convert_time_zone(m.TAIPEI).dt.date() != pl.col("date")))
+            if bad.height:
+                print(bad.head(5))
+                raise SystemExit(f"FAIL: {d} 有 {bad.height} 列違反不變量/available_at 規則")
+            checked += day.height
+        # 抽一個月用同一純函數重算,必須逐列恆等(公式只有一份)
+        d = rng.choice(dates)
+        uni, t3, cal = m._inputs(y)
+        month_start, month_end = m._month_bounds(y, d.month)
+        prior = cal.filter(pl.col("date") >= month_start)["prev_date"].min()
+        read_from = min(prior, month_start) if prior is not None else month_start
+        t1 = (io.scan("t1_broker_daily", start=str(read_from), end=str(month_end))
+              .select("broker", "broker_name", "symbol_id", "date", "buy_dollar", "sell_dollar").collect())
+        recomputed = m.compute_month(t1, t3, uni, cal, month_start=month_start)
+        stored = (ylf.filter((pl.col("date") >= month_start) & (pl.col("date") <= month_end))
+                  .collect().select(recomputed.columns).sort("date", "broker"))
+        recomputed = recomputed.sort("date", "broker")
+        # 浮點欄位容忍加總順序噪音(實測 ≤ 3e-16);其餘欄位與 null 位置必須完全相等
+        if stored.height != recomputed.height:
+            raise SystemExit(f"FAIL: {y}-{d.month:02d} 重算列數 {recomputed.height} ≠ 表 {stored.height}")
+        for c in stored.columns:
+            a, b = stored[c], recomputed[c]
+            same = ((a - b).abs().fill_null(0) <= 1e-9).all() and (a.is_null() == b.is_null()).all() \
+                if a.dtype == pl.Float64 else a.equals(b)
+            if not same:
+                raise SystemExit(f"FAIL: {y}-{d.month:02d} 欄 {c} 重算與表不恆等")
+    print(f"PASS: T4 v3 不變量 + available_at + 一月重算恆等(抽查 {checked:,} 列)")
+
+
 TABLES: dict[str, Table] = {
     "t1_broker_daily": Table(
         name="t1_broker_daily",
@@ -264,6 +320,13 @@ TABLES: dict[str, Table] = {
         name="t4_broker_features",
         build_year=t4_broker_features.build_year,
         verify=_verify_t4,
+    ),
+    # T4 v3(Step E):與 v2 並存,不原地覆蓋(§11);manifest 由 runner 寫
+    "t4_broker_measure": Table(
+        name="t4_broker_measure",
+        build_year=t4_broker_measure.build_year,
+        verify=_verify_t4v3,
+        manifest=t4_broker_measure.manifest,
     ),
     # T2 價位表不物化:ws-core broker_tx_pricelevel_scan 即視圖(REDESIGN §3)
     # TDCC/主動 ETF 量小,ws-core 直讀不物化

@@ -70,7 +70,8 @@ F=4,271 → 至少 2,117 張在外,cov_hi=0.504。
 | basket_self_sim(補做,09-21 回填) | 0.330 | 0.561 | 0.680 | 0.771 | 0.872 |
 
 basket_self_sim 與其他 primitive 的 Spearman(09-21 回填,n=138,433;908 個
-分點日因交易日曆首日無前一日而為 null):gross 0.33、n_symbols 0.40、
+分點日為 null——首版歸因「日曆首日無前一日」是錯的,真因是 universe 只取當年、
+把 2025-12-31 gate 掉;T4 v3 物化時已修,研究快取未重算):gross 0.33、n_symbols 0.40、
 top1 −0.19、top5 −0.22、directional −0.10、cos_market_buy/sell 0.43/0.43。
 與 breadth/市場相關中等,不被任何一項吸收——留作 state primitive(Phase 2 定)。
 

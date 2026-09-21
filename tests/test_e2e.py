@@ -37,6 +37,13 @@ def _write_broker_shard(root: Path, d: datetime.date, rows: list[dict]) -> None:
                      / f"broker_tx_{d.strftime('%Y%m%d')}.parquet")
 
 
+def _write_tradedays(root: Path, trading: list[datetime.date]) -> None:
+    lo, hi = min(trading) - datetime.timedelta(days=40), max(trading) + datetime.timedelta(days=3)
+    days = [lo + datetime.timedelta(days=i) for i in range((hi - lo).days + 1)]
+    pl.DataFrame({"zdate": days, "is_trading_day": [d in set(trading) for d in days]}
+                 ).write_parquet(root / "tej" / "tradedays.parquet")
+
+
 def _mk_universe(root: Path) -> None:
     """2 股 × 2 日 × 3 分點;每股日 買總=賣總=TEJ vol(整張)+零股尾數。"""
     dt1, dt2 = _utc_midnight_taipei(D1), _utc_midnight_taipei(D2)
@@ -93,6 +100,11 @@ def _mk_universe(root: Path) -> None:
         "stktp_c": ["普通股", "普通股", "ETF", "指數"] * 2,
     }).write_parquet(root / "tej" / "stock_attr.parquet")
 
+    # T4 v3 的 basket 前一交易日靠交易日曆(不靠固定曆日緩衝):D1、D2 為交易日,
+    # 中間夾一個非交易日驗證「前一交易日」是 D1 而非日曆前一天
+    (root / "tej").mkdir(parents=True, exist_ok=True)
+    _write_tradedays(root, [D1, D2])
+
     # t4 v2(sector_hhi/top_sector)需要 ws-core tickers 讀取器;WS_DATA_ROOT
     # 覆寫後這個讀取器也指到合成小宇宙,故此處補一份最小 tickers fixture。
     (root / "tickers").mkdir(parents=True, exist_ok=True)
@@ -118,9 +130,9 @@ def universe(tmp_path_factory: pytest.TempPathFactory) -> dict:
     _mk_universe(src)
     env = {"WS_DATA_ROOT": str(src), "WS_BRANCH_DATA_DIR": str(tables)}
     for t in ["t1_broker_daily", "t3_official_daily", "t3b_accounting_bounds",
-              "t4_broker_features"]:
+              "t4_broker_features", "t4_broker_measure"]:
         _run(["build", "--table", t, "--year", "2026"], env)
-    return {"env": env, "tables": tables}
+    return {"env": env, "tables": tables, "src": src}
 
 
 def test_e2e_t1_hand_checked(universe: dict) -> None:
@@ -234,6 +246,8 @@ def test_e2e_verifies_pass(universe: dict) -> None:
     assert "PASS" in out3
     out4 = _run(["verify", "--table", "t4_broker_features", "--n", "10"], env)
     assert "PASS" in out4
+    out4v3 = _run(["verify", "--table", "t4_broker_measure", "--n", "10"], env)
+    assert "PASS" in out4v3
 
 
 def _tampered_copy(universe: dict, tmp_path: Path, table: str,
@@ -266,3 +280,77 @@ def test_e2e_alarm_fires_on_t3_drift(universe: dict, tmp_path: Path) -> None:
     out = _run(["verify", "--table", "t3_official_daily", "--n", "10"],
                env, expect_ok=False)
     assert "FAIL" in out
+
+# ── T4 v3(Step E):手算 + manifest + as-of 凍結 ────────────────────────
+
+
+def test_e2e_t4v3_hand_checked_and_manifest(universe: dict) -> None:
+    import json
+
+    df = pl.read_parquet(universe["tables"] / "t4_broker_measure" / "year=2026.parquet")
+    assert df.select("broker", "date").unique().height == df.height
+    f1 = df.filter((pl.col("broker") == "8440") & (pl.col("date") == D1)).row(0, named=True)
+    assert f1["gross_buy_amt"] == pytest.approx(400_000 * 1085.0)
+    assert f1["n_symbols"] == 1 and f1["top1_share"] == pytest.approx(1.0)
+    # 官方外資買向量只有 2330 有值,與摩根大通買向量共線 → cosine = 1;
+    # 投信買金額全零 → 參考向量 norm=0 → null(不得填 0)
+    assert f1["cos_foreign_buy"] == pytest.approx(1.0)
+    assert f1["cos_fund_buy"] is None
+    assert f1["basket_self_sim"] is None          # D1 無前一交易日
+    a2 = df.filter((pl.col("broker") == "A1") & (pl.col("date") == D2)).row(0, named=True)
+    assert 0.0 < a2["basket_self_sim"] < 1.0      # D2 籃子(只有 2330)vs D1(2330+1531)
+    # available_at = date 當天 21:45 台北
+    tz8 = datetime.timezone(datetime.timedelta(hours=8))
+    assert f1["available_at"].astimezone(tz8).time() == datetime.time(21, 45)
+    assert f1["available_at"].astimezone(tz8).date() == D1
+    # P1 只有 dash 列(gross=0)→ 不在表中(§4.2:列只在 gross>0 席位日)
+    assert df.filter(pl.col("broker") == "P1").height == 0
+    man = json.loads((universe["tables"] / "t4_broker_measure"
+                      / "year=2026.manifest.json").read_text())
+    for k in ["schema_version", "measurement_version", "universe_version", "cohort_version",
+              "source_snapshot", "fit_start", "fit_end", "as_of", "available_at_rule",
+              "null_rules"]:
+        assert k in man, k
+    assert man["fit_start"] == str(D1) and man["fit_end"] == str(D2)
+    assert man["source_snapshot"]["t1_broker_daily"]["bytes"] > 0
+
+
+def test_e2e_asof_append_does_not_change_frozen_rows(universe: dict, tmp_path: Path) -> None:
+    """§12:未來資料追加不改變已凍結 as-of 結果。
+
+    複製小宇宙、追加 D3(2026-01-07)一天的 raw / 官方 / universe / 日曆,整鏈
+    重建;D1、D2 的 T4 v3 列必須逐欄恆等(available_at 含),T3b 亦同。
+    """
+    src2, tables2 = tmp_path / "src2", tmp_path / "tables2"
+    shutil.copytree(universe["src"], src2)
+    tables2.mkdir()
+    D3 = datetime.date(2026, 1, 7)
+    dt3 = _utc_midnight_taipei(D3)
+    _write_broker_shard(src2, D3, [
+        dict(symbol_id="2330", date=dt3, broker="A1", broker_name="元大-台北",
+             price="102.00", buy=70_000, sell=30_000),
+        dict(symbol_id="1531", date=dt3, broker="8440", broker_name="摩根大通",
+             price="36.00", buy=5_000, sell=0),
+    ])
+    for f, key, extra in (("prices.parquet", "mdate", {"coid": ["2330", "1531"], "vol": [100, 5]}),):
+        old = pl.read_parquet(src2 / "tej" / f)
+        add = pl.DataFrame({**extra, key: [D3, D3]}).select(old.columns)
+        pl.concat([old, add.cast(old.schema)]).write_parquet(src2 / "tej" / f)
+    sh = pl.read_parquet(src2 / "tej" / "shareholding.parquet")
+    add = sh.filter(pl.col("mdate") == D2).with_columns(pl.lit(D3).alias("mdate"))
+    pl.concat([sh, add]).write_parquet(src2 / "tej" / "shareholding.parquet")
+    sa = pl.read_parquet(src2 / "tej" / "stock_attr.parquet")
+    pl.concat([sa, sa.filter(pl.col("mdate") == D2).with_columns(pl.lit(D3).alias("mdate"))]
+              ).write_parquet(src2 / "tej" / "stock_attr.parquet")
+    _write_tradedays(src2, [D1, D2, D3])
+    env = {"WS_DATA_ROOT": str(src2), "WS_BRANCH_DATA_DIR": str(tables2)}
+    for t in ["t1_broker_daily", "t3_official_daily", "t3b_accounting_bounds",
+              "t4_broker_measure"]:
+        _run(["build", "--table", t, "--year", "2026"], env)
+    for t in ["t4_broker_measure", "t3b_accounting_bounds"]:
+        before = pl.read_parquet(universe["tables"] / t / "year=2026.parquet")
+        after = pl.read_parquet(tables2 / t / "year=2026.parquet")
+        assert after["date"].max() == D3                       # 新一天真的進來了
+        keys = [c for c in ("symbol_id", "broker", "date", "side") if c in before.columns]
+        frozen = after.filter(pl.col("date") <= D2).sort(keys)
+        assert frozen.equals(before.sort(keys)), f"{t}:追加 D3 後既有列改變"

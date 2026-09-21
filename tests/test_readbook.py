@@ -87,3 +87,44 @@ def test_cohort_size_in_text_follows_declared_cohort() -> None:
 def test_buy_side_listed_before_sell_side() -> None:
     out = _render()
     assert out.index("買方:") < out.index("賣方:")
+
+
+def _salience_day() -> pl.DataFrame:
+    return pl.DataFrame({
+        "broker": ["8440", "9200"],
+        "salience": [0.0146, 0.0064], "sal_mean": [0.0031, 0.0045],
+        "salience_z": [3.1, 0.5], "stock_gross_z": [2.4, -0.02],
+        "participation_rate": [1.0, 1.0],
+        "denominator_effect": [False, True]})
+
+
+def test_salience_columns_appear_only_when_supplied() -> None:
+    plain = _render()
+    assert "佔席位本子" not in plain
+    withsal = stock_readbook.render(
+        _t1(), _bounds(), pl.DataFrame([]), symbol_id="3450", date=D,
+        cohort_codes=COHORT, salience_day=_salience_day())
+    assert "佔席位本子" in withsal and "相對z" in withsal and "金額z" in withsal
+
+
+def test_denominator_effect_is_called_out_inline() -> None:
+    """§7:salience 上升不得直接稱為新增資金;分母效應必須就地標註。"""
+    out = stock_readbook.render(
+        _t1(), _bounds(), pl.DataFrame([]), symbol_id="3450", date=D,
+        cohort_codes=COHORT, salience_day=_salience_day())
+    kaiji = next(l for l in out.splitlines() if l.startswith("凱基"))
+    assert "席位本子縮水" in kaiji
+    jpm = next(l for l in out.splitlines() if l.startswith("摩根大通"))
+    assert "席位本子縮水" not in jpm
+
+
+def test_missing_salience_history_shows_dash_not_blank() -> None:
+    """z 為 null = 過去沒碰過,顯示『—』並保留參與率,不留空白。"""
+    sal = _salience_day().with_columns(
+        pl.lit(None, dtype=pl.Float64).alias("salience_z"),
+        pl.lit(None, dtype=pl.Float64).alias("stock_gross_z"))
+    out = stock_readbook.render(
+        _t1(), _bounds(), pl.DataFrame([]), symbol_id="3450", date=D,
+        cohort_codes=COHORT, salience_day=sal)
+    jpm = next(l for l in out.splitlines() if l.startswith("摩根大通"))
+    assert "—" in jpm and "1.00" in jpm      # z 為破折號,參與率仍在

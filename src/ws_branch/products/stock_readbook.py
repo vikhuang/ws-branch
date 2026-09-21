@@ -10,8 +10,11 @@ Phase 1-2 實證逼出來的:
 2. **顯示會計界限**:官方外資量有多少**必須**在外資席位之外(model-free
    下界),以及未屬四官方桶的餘額。這是目前唯一 identified/bounded 等級的
    actor 資訊。
-3. **席位層級只顯示 raw 與佔比**,不顯示 trait/state——Phase 2 證明 state
-   需要滾動 baseline(ε 自相關 0.16-0.27),滾動版尚未進表。
+3. **席位層級顯示 raw + salience 三問**(Phase 3 起)。§7 明令三個問題分開:
+   持續參與(參與率)/ 相對重要性上升(salience 對自身基線)/ 絕對流量增加
+   (該股金額對自身基線)。**salience 永不單獨呈現**——Phase 3 實證
+   salience_z ∈ [0, 0.5) 的「微幅變重要」有 18.1% 純粹是席位自己縮量
+   (分母效應),z ≥ 1 才幾乎總有真實金額撐起。
 
 頁尾固定註腳:描述性觀測,非交易訊號(觀測站家法 §6)。
 """
@@ -23,6 +26,14 @@ import datetime
 import polars as pl
 
 FOOTER = "本頁為描述性觀測,非交易訊號。(docs/OBSERVATORY_2026-09.md §6)"
+
+
+def _pct(x: float | None) -> str:
+    return "—" if x is None else f"{x * 100:.2f}%"
+
+
+def _num(x: float | None, fmt: str = "+.1f") -> str:
+    return "—" if x is None else format(x, fmt)
 
 
 def _lots(sh: float | None, signed: bool = False) -> str:
@@ -40,12 +51,16 @@ def render(
     date: datetime.date,
     cohort_codes: frozenset[str],
     top_n: int = 12,
+    salience_day: pl.DataFrame | None = None,
 ) -> str:
     """組一頁讀本(純函數:資料由呼叫端載入,回傳字串不印)。
 
     t1_day:該股該日的 broker/broker_name/buy_sh/sell_sh/buy_dollar/sell_dollar
     bounds_day:t3b 該股該日兩側
     t3_day:T3 該股該日一列
+    salience_day:`measure.salience` 的當日輸出(broker + salience/sal_mean/
+    salience_z/stock_gross_z/participation_rate/denominator_effect);None 時
+    只顯示 raw 欄位。
     """
     lines: list[str] = []
     w = 76
@@ -89,8 +104,12 @@ def render(
 
     # ── 席位 raw(不含 trait/state,不含 actor 相似度)──
     lines.append("-" * w)
-    lines.append(f"{'席位':<16}{'cohort':<10}{'買(張)':>10}{'賣(張)':>10}"
-                 f"{'淨(張)':>10}{'佔此股':>8}{'來回率':>8}")
+    has_sal = salience_day is not None and salience_day.height > 0
+    head = (f"{'席位':<16}{'cohort':<10}{'買(張)':>10}{'賣(張)':>10}"
+            f"{'淨(張)':>10}{'佔此股':>8}{'來回率':>8}")
+    if has_sal:
+        head += f"{'佔席位本子':>11}{'(平常)':>9}{'相對z':>7}{'金額z':>7}{'參與率':>7}"
+    lines.append(head)
     lines.append("-" * w)
     d = (t1_day.with_columns(
         (pl.col("buy_sh") + pl.col("sell_sh")).alias("_g"),
@@ -106,16 +125,35 @@ def render(
                   / pl.max_horizontal("buy_sh", "sell_sh"))
             .otherwise(None).alias("_two"))  # 兩側皆零 → null,不是 nan(§7)
         .sort("_g", descending=True))
+    if has_sal:
+        d = d.join(salience_day, on="broker", how="left")
     gross_all = d["_g"].sum()
     for row in d.head(top_n).iter_rows(named=True):
         two = "—" if row["_two"] is None else f"{row['_two']:.2f}"
-        lines.append(
-            f"{row['broker_name']:<16}{row['_cohort']:<10}"
-            f"{_lots(row['buy_sh']):>10}{_lots(row['sell_sh']):>10}"
-            f"{_lots(row['_net'], signed=True):>10}"
-            f"{row['_g'] / gross_all * 100:>7.1f}%{two:>8}")
+        line = (f"{row['broker_name']:<16}{row['_cohort']:<10}"
+                f"{_lots(row['buy_sh']):>10}{_lots(row['sell_sh']):>10}"
+                f"{_lots(row['_net'], signed=True):>10}"
+                f"{row['_g'] / gross_all * 100:>7.1f}%{two:>8}")
+        if has_sal:
+            line += (f"{_pct(row.get('salience')):>11}"
+                     f"{_pct(row.get('sal_mean')):>9}"
+                     f"{_num(row.get('salience_z')):>7}"
+                     f"{_num(row.get('stock_gross_z')):>7}"
+                     f"{_num(row.get('participation_rate'), '.2f'):>7}")
+            if row.get("denominator_effect"):
+                line += "  ← 佔比升但金額未增(席位本子縮水)"
+        lines.append(line)
 
     lines.append("-" * w)
+    if has_sal:
+        lines.append("salience 三問(§7 明令分開讀):『佔席位本子』= 這檔佔該席位"
+                     "當日全市場金額的比例;")
+        lines.append("      『相對z』= 佔比對自身 60 活躍日基線的偏離;"
+                     "『金額z』= 該股絕對金額對自身基線的偏離。")
+        lines.append("      **兩者分歧才是重點**:相對高而金額不高 = 這檔在它"
+                     "本子裡變重要,但錢沒真的變多;")
+        lines.append("      z 為『—』= 過去 60 個活躍日從沒碰過,無從比較"
+                     "(不是資料缺失,看參與率)。")
     lines.append("讀法:『必須在外資席位之外』為非負性推得的**硬下界**,"
                  "不依賴任何行為模型;")
     lines.append("      『來回率』= min(買,賣)/max(買,賣),描述雙邊流量,"

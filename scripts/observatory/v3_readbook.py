@@ -4,13 +4,12 @@ from __future__ import annotations
 
 import argparse
 import datetime
-from pathlib import Path
 
 import polars as pl
 
 from ws_core import stock_attr
 
-from ws_branch.measure import salience, universe
+from ws_branch.measure import salience, state, universe
 from ws_branch.products import stock_readbook
 from ws_branch.tables import io
 
@@ -32,15 +31,31 @@ def main() -> None:
           .filter(pl.col("symbol_id") == a.symbol_id).collect())
     print(stock_readbook.render(t1, bounds, t3, symbol_id=a.symbol_id, date=d,
                                 cohort_codes=universe.cohort_codes(d), top_n=a.top,
-                                salience_day=_salience(a.symbol_id, d)))
+                                salience_day=_salience(a.symbol_id, d),
+                                seat_state_day=_seat_state(d)))
+
+
+def _t4_history(d: datetime.date) -> pl.DataFrame:
+    """T4 v3 到 d 為止的歷史切片(as-of:只取 date ≤ d;d 的列 available_at = d 21:45)。"""
+    start = str(d - datetime.timedelta(days=LOOKBACK_DAYS))
+    return io.scan("t4_broker_measure", start=start, end=str(d)).collect()
+
+
+def _seat_state(d: datetime.date) -> pl.DataFrame | None:
+    hist = _t4_history(d)
+    if hist.filter(pl.col("date") == d).height == 0:
+        print(f"  (性格/狀態略:t4_broker_measure 無 {d} 的列)")
+        return None
+    return state.seat_state(hist, date=d, primitives=("top5_share", "directional_ratio"),
+                            window=WINDOW, min_periods=MIN_PERIODS)
 
 
 def _salience(symbol_id: str, d: datetime.date) -> pl.DataFrame | None:
     """單股查詢算 salience 三問(§7:首版不物化 branch×stock×day)。"""
     start = str(d - datetime.timedelta(days=LOOKBACK_DAYS))
-    prims = sorted(Path("/tmp").glob("v3_phase1_primitives_*.parquet"))   # 逐年快取
-    if not prims:
-        print("  (salience 略:找不到 Phase 1 primitives,請先跑 v3_phase1_geometry.py <year>)")
+    hist = _t4_history(d)
+    if hist.height == 0:
+        print("  (salience 略:t4_broker_measure 無資料,請先 build --table t4_broker_measure)")
         return None
     # 分母(席位日總額)已套普通股 gate;分子若是 ETF/興櫃等 universe 外標的,
     # salience 定義不一致——寧可不算,不能靜默給錯數
@@ -50,8 +65,7 @@ def _salience(symbol_id: str, d: datetime.date) -> pl.DataFrame | None:
                   & (pl.col("date") == d)).height == 0:
         print(f"  (salience 略:{symbol_id} 於 {d} 不在普通股 universe,分子/分母口徑不一致)")
         return None
-    branch_day = (pl.concat([pl.read_parquet(p) for p in prims])
-                  .select("broker", "date", "gross_amt").unique(["broker", "date"]))
+    branch_day = hist.select("broker", "date", "gross_amt")   # 分母:席位日總額(已 gate)
     t1 = (io.scan("t1_broker_daily", start=start, end=str(d))
           .filter(pl.col("symbol_id") == symbol_id)
           .select("broker", "symbol_id", "date", "buy_dollar", "sell_dollar")

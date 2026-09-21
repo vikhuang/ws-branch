@@ -1,12 +1,12 @@
-"""個股一頁讀本 v1:raw + 會計界限(架構文件 §11 步驟 B 的交付物)。
+"""個股一頁讀本:raw + 會計界限 + salience 三問 + 席位性格/市況/狀態(§11 B→E)。
 
 與 O1 原型(`scripts/observatory/o1_stock_readout.py`)的三處差別,每處都是
 Phase 1-2 實證逼出來的:
 
-1. **不顯示排名版指紋**。O1 的 foreign_sim 扣掉「像市場」後對外資 cohort
-   的區分力剩 AUC 0.53(findings/o1_fingerprint_read.md),它量的是廣度不是
-   身分。v3 的金額 cosine 尚未進表(Phase 4 定稿),故本版**不顯示任何
-   actor 相似度**——寧可少一欄,不放一個會被讀成身分的數字。
+1. **不顯示 actor 相似度**。O1 的 rank 版指紋量的是廣度不是身分(AUC 0.53);
+   v3 的金額 cosine 已進 `t4_broker_measure`,但 Phase 4 證它只是「線性控規模後
+   的行政 cohort 區分力」,不是身分——個股讀本裡任何一個「像外資 0.83」的數字
+   都會被讀成身分,故**仍不顯示**;席位層的 cosine 留給分點 profile 並附校準卡。
 2. **顯示會計界限**:官方外資量有多少**必須**在外資席位之外(model-free
    下界),以及未屬四官方桶的餘額。這是目前唯一 identified/bounded 等級的
    actor 資訊。
@@ -15,6 +15,11 @@ Phase 1-2 實證逼出來的:
    (該股金額對自身基線)。**salience 永不單獨呈現**——Phase 3 實證
    salience_z ∈ [0, 0.5) 的「微幅變重要」有 18.1% 純粹是席位自己縮量
    (分母效應),z ≥ 1 才幾乎總有真實金額撐起。
+
+4. **席位性格 / 市況 / 狀態分開讀**(Step E,`measure.state`):對集中度與方向性
+   兩個 primitive,並列 今日 raw / 平常(自身 60 活躍日落後均值)/ 市況(當日所有
+   席位偏離的中位數)/ 席位特有 z(扣掉市況後對自身 sd)。§12 完成標準 3:讀本
+   要能區分 raw、trait、day effect、state。
 
 頁尾固定註腳:描述性觀測,非交易訊號(觀測站家法 §6)。
 """
@@ -54,6 +59,7 @@ def render(
     cohort_codes: frozenset[str],
     top_n: int = 12,
     salience_day: pl.DataFrame | None = None,
+    seat_state_day: pl.DataFrame | None = None,
 ) -> str:
     """組一頁讀本(純函數:資料由呼叫端載入,回傳字串不印)。
 
@@ -63,12 +69,16 @@ def render(
     salience_day:`measure.salience` 的當日輸出(broker + salience/sal_mean/
     salience_z/stock_gross_z/participation_rate/denominator_effect);None 時
     只顯示 raw 欄位。
+    seat_state_day:`measure.state.seat_state` 的當日輸出(broker + 每個 primitive
+    的 raw/_trait/_day/_state/_n);None 時不顯示性格/狀態區塊。
     """
     lines: list[str] = []
     w = 76
     lines.append("=" * w)
-    lines.append(f"{symbol_id} — {date} 一頁讀本 v1(raw + 會計界限"
-                 + (" + salience 三問)" if salience_day is not None and salience_day.height else ")"))
+    has_state = seat_state_day is not None and seat_state_day.height > 0
+    lines.append(f"{symbol_id} — {date} 一頁讀本(raw + 會計界限"
+                 + (" + salience 三問" if salience_day is not None and salience_day.height else "")
+                 + (" + 席位性格/市況/狀態" if has_state else "") + ")")
     lines.append("=" * w)
 
     if t1_day.height == 0:
@@ -151,6 +161,26 @@ def render(
             if row.get("denominator_effect"):
                 line += "  ← 佔比升但金額未增(席位本子縮水)"
         lines.append(line)
+
+    if has_state:
+        lines.append("-" * w)
+        lines.append("席位性格 / 市況 / 狀態(§6;只用 ≤ 當日資料)"
+                     "         集中度 top5_share            方向性 directional_ratio")
+        lines.append(f"{'席位':<16}{'今日':>8}{'平常':>8}{'市況':>8}{'特有z':>7}"
+                     f"   {'今日':>8}{'平常':>8}{'市況':>8}{'特有z':>7}{'歷史n':>6}")
+        st = d.head(top_n).select("broker", "broker_name").join(seat_state_day, on="broker", how="left")
+        for row in st.iter_rows(named=True):
+            line = f"{row['broker_name']:<16}"
+            for p in ("top5_share", "directional_ratio"):
+                line += (f"{_num(row.get(p), '.3f'):>8}{_num(row.get(f'{p}_trait'), '.3f'):>8}"
+                         f"{_num(row.get(f'{p}_day'), '+.3f'):>8}{_num(row.get(f'{p}_state')):>7}   ")
+            line += f"{_num(row.get('top5_share_n'), '.0f'):>4}"
+            lines.append(line)
+        lines.append("      『平常』= 該席位自身最近 60 個活躍日的落後均值(不含今日);"
+                     "『市況』= 今日所有席位『今日−平常』的中位數,")
+        lines.append("      是全市場共同的偏移;『特有z』= (今日−平常−市況)/自身 sd,"
+                     "扣掉市況後才是這個席位自己的事。")
+        lines.append("      『—』= 歷史不足 20 個活躍日或自身無變異,無從比較(不是最高異常)。")
 
     lines.append("-" * w)
     if has_sal:

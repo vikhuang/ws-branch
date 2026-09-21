@@ -139,3 +139,38 @@ def test_known_hidden_foreign_seat_is_marked_not_as_domestic_hq() -> None:
     out = _render(t1=t1)
     assert "外資客戶*" in out and "*外資客戶:" in out
     assert "*外資客戶:" not in _render()   # 沒有這類席位時不印註腳
+
+
+def _state_day() -> pl.DataFrame:
+    return pl.DataFrame({
+        "broker": ["8440", "9200"],
+        "top5_share": [0.213, 0.270], "top5_share_trait": [0.289, None],
+        "top5_share_day": [-0.002, -0.002], "top5_share_state": [-1.4, None],
+        "top5_share_n": [60, 5],
+        "directional_ratio": [0.139, 0.068], "directional_ratio_trait": [0.072, None],
+        "directional_ratio_day": [0.002, 0.002], "directional_ratio_state": [1.0, None],
+        "directional_ratio_n": [60, 5]})
+
+
+def _state_block(out: str) -> list[str]:
+    lines = out.splitlines()
+    start = next(i for i, l in enumerate(lines) if l.startswith("席位性格"))
+    return lines[start:]
+
+
+def test_seat_state_block_appears_only_when_supplied() -> None:
+    assert "席位性格" not in _render()
+    out = stock_readbook.render(_t1(), _bounds(), pl.DataFrame([]), symbol_id="3450",
+                                date=D, cohort_codes=COHORT, seat_state_day=_state_day())
+    assert "席位性格 / 市況 / 狀態" in out and "只用 ≤ 當日資料" in out
+    row = next(l for l in _state_block(out) if l.startswith("摩根大通"))
+    assert "0.213" in row and "0.289" in row and "-1.4" in row and "+1.0" in row
+
+
+def test_seat_state_missing_history_shows_dash_not_extreme() -> None:
+    """歷史不足的席位:平常/特有z 顯示『—』,不能出現數字或空白。"""
+    out = stock_readbook.render(_t1(), _bounds(), pl.DataFrame([]), symbol_id="3450",
+                                date=D, cohort_codes=COHORT, seat_state_day=_state_day())
+    row = next(l for l in _state_block(out) if l.startswith("凱基"))
+    assert row.count("—") >= 4 and "0.270" in row
+    assert "『—』= 歷史不足" in out

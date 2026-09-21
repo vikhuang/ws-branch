@@ -132,3 +132,50 @@ def test_state_anomaly_hand_computed() -> None:
     mean, sd = 3.0, pl.Series([1.0, 3.0, 5.0]).std()   # 樣本標準差 = 2.0
     assert out["x_mean"] == pytest.approx(mean) and out["x_sd"] == pytest.approx(sd)
     assert out["x_z"] == pytest.approx((11.0 - mean) / sd)
+
+
+# ── 2026-09-21 複查補測:多分點交錯、靜默丟棄路徑 ─────────────────
+
+
+def test_baseline_isolates_interleaved_groups() -> None:
+    """巢狀 .over() 在多分點交錯、輸入亂序時仍須各算各的(首版只測單一分點)。"""
+    d0 = datetime.date(2026, 1, 5)
+    df = pl.DataFrame({
+        "broker": ["B", "A", "B", "A", "B", "A", "B", "A"],
+        "date": [d0 + datetime.timedelta(days=i // 2) for i in range(8)],
+        "x": [100.0, 1.0, 100.0, 2.0, 100.0, 3.0, 100.0, 4.0]})
+    out = baseline.rolling_baseline(df, value_col="x", window=3, min_periods=1)
+    a = out.filter(pl.col("broker") == "A").sort("date")
+    assert a["x_mean"].to_list() == [None, 1.0, 1.5, 2.0]   # 絕不混到 B 的 100
+    b = out.filter(pl.col("broker") == "B").sort("date")
+    assert b["x_mean"].drop_nulls().to_list() == [100.0] * 3
+
+
+def test_baseline_raises_on_duplicate_keys() -> None:
+    """重複 (broker, date) 會讓 row-based 窗把同一天數兩次且不報錯(家法#3)。"""
+    df = _series([1.0, 2.0, 3.0])
+    dup = pl.concat([df, df.head(1)])
+    with pytest.raises(ValueError, match="重複"):
+        baseline.rolling_baseline(dup, value_col="x", window=3, min_periods=1)
+
+
+def test_basket_raises_when_calendar_does_not_cover_flow_dates() -> None:
+    """flow 有日曆外的日期 = 日曆涵蓋不足;首版會靜默 inner-join 丟掉(家法#3)。"""
+    cal = allocation.prev_trading_day_map([D1, D2])
+    flow = _flow([("A", "s1", D2, 1.0), ("A", "s1", D3, 1.0)])   # D3 不在日曆
+    with pytest.raises(ValueError, match="不在交易日曆"):
+        allocation.basket_self_similarity(flow, cal)
+
+
+def test_cosine_is_deflated_by_out_of_universe_reference_rows() -> None:
+    """記錄危害:reference 混入 universe 外的列會壓低所有 cosine 且不報錯——
+    本函數無法自行辨識,呼叫端必須先 gate。此測試把危害寫成可執行的事實。"""
+    flow = _flow([("A", "s1", D1, 3.0)])
+    clean = pl.DataFrame({"symbol_id": ["s1", "s2"], "date": [D1, D1], "ref": [4.0, 3.0]})
+    polluted = pl.concat([clean, pl.DataFrame(
+        {"symbol_id": ["IX0001"], "date": [D1], "ref": [1_000.0]})])
+    c = allocation.amount_cosine(flow, clean, amount_col="gross", ref_col="ref",
+                                 out="c").row(0, named=True)["c"]
+    d = allocation.amount_cosine(flow, polluted, amount_col="gross", ref_col="ref",
+                                 out="c").row(0, named=True)["c"]
+    assert c == pytest.approx(0.8) and d < 0.02

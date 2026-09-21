@@ -53,6 +53,11 @@ def amount_cosine(
 
     cos = Σ_s a_s·r_s / (‖a‖ · ‖r_full‖),其中 ‖r_full‖ 在**整個 universe**
     上計算(每日一個純量),不只分點碰過的部分。
+
+    **reference 必須先套同一個 universe gate**:‖r_full‖ 是對 reference 全部
+    列算的,若混入 universe 外的列(T3 的指數彙總列 IX0001 單日即帶 12,765 億),
+    norm 會被灌大,所有分點的 cosine 一起被壓低——而且不會報錯。本函數無法
+    自行辨識這種污染(它不知道 universe 是什麼),由呼叫端負責。
     """
     ref_norm = (reference.group_by("date")
                 .agg((pl.col(ref_col) ** 2).sum().sqrt().alias("_rnorm")))
@@ -89,6 +94,13 @@ def basket_self_similarity(
     basket = (flow.filter(pl.col(amount_col) > 0)
               .select("broker", "symbol_id", "date",
                       pl.col(amount_col).alias("_v")))
+    # flow 裡有日曆沒有的日期 = 日曆涵蓋不足,inner join 會把那些日子靜默丟掉
+    # (家法#3)。當場 raise,不讓「前一交易日」悄悄算錯。
+    uncovered = basket.select("date").unique().join(date_map, on="date", how="anti")
+    if uncovered.height:
+        raise ValueError(
+            f"basket_self_similarity:{uncovered.height} 個日期不在交易日曆中"
+            f"(例 {sorted(uncovered['date'].to_list())[:3]}),日曆涵蓋不足")
     norms = basket.group_by("broker", "date").agg(
         (pl.col("_v") ** 2).sum().sqrt().alias("_norm"))
     prev = basket.rename({"date": "prev_date", "_v": "_v_prev"})

@@ -28,12 +28,6 @@ from ws_core import prices, stock_attr
 from ws_branch.measure import accounting, universe
 from ws_branch.tables import io
 
-_OFFICIAL_BUCKETS = {
-    "buy": ["foreign_buy_sh", "fund_buy_sh", "prop_self_buy_sh", "prop_hedge_buy_sh"],
-    "sell": ["foreign_sell_sh", "fund_sell_sh", "prop_self_sell_sh", "prop_hedge_sell_sh"],
-}
-
-
 def _t1_stock_day(year: int, month: int) -> pl.DataFrame:
     """T1 逐月 → 股票日 × (全市場, 外資 cohort) 的買賣股數。"""
     start = datetime.date(year, month, 1)

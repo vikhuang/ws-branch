@@ -40,7 +40,7 @@ def _render(**kw) -> str:
 
 def test_shows_hard_lower_bound_in_lots() -> None:
     out = _render()
-    assert "至少 2,060 張必須在 11 家外資席位之外" in out
+    assert "至少 2,060 張必須在 1 家外資席位之外" in out   # 測試 cohort 只有 8440
     assert "至少 2,117 張" in out          # 賣方
     assert "0~1,082 張" in out             # 席位內界限
 
@@ -66,11 +66,24 @@ def test_unpublishable_bounds_say_so_rather_than_showing_numbers() -> None:
     assert "2,060" not in out and "2,117" not in out
 
 
-def test_zero_gross_seat_two_sidedness_is_dash_not_zero() -> None:
-    # 只賣不買的席位:min/max = 0/50,000 = 0.0 → 顯示 0.00(真的單邊)
+def test_one_sided_seat_shows_zero_two_sidedness() -> None:
+    # 只賣不買:min/max = 0/50,000 = 0.00(真的單邊),不是 null
     out = _render()
-    assert "元大-民雄" in out and FOOTER_OK(out)
+    row = next(l for l in out.splitlines() if l.startswith("元大-民雄"))
+    assert row.rstrip().endswith("0.00")
 
 
-def FOOTER_OK(out: str) -> bool:
-    return out.rstrip().endswith(stock_readbook.FOOTER)
+def test_footer_is_always_last_line() -> None:
+    assert _render().rstrip().endswith(stock_readbook.FOOTER)
+
+
+def test_cohort_size_in_text_follows_declared_cohort() -> None:
+    # 寫死「11 家」會在名單改版時失真;必須跟 cohort_codes 走
+    out = stock_readbook.render(_t1(), _bounds(), pl.DataFrame([]), symbol_id="3450",
+                                date=D, cohort_codes=frozenset({"8440", "1480", "1440"}))
+    assert "3 家外資席位之外" in out
+
+
+def test_buy_side_listed_before_sell_side() -> None:
+    out = _render()
+    assert out.index("買方:") < out.index("賣方:")

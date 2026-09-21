@@ -214,11 +214,14 @@ def _verify_t3b(n_samples: int, seed: int) -> None:
             if bad.height:
                 print(bad.head(5))
                 raise SystemExit(f"FAIL: {d} 有 {bad.height} 列界限自相矛盾")
-            n_bad_input = day.height - ok.height
-            n_bad_resid = day.filter(~pl.col("other_actor_sh_ok")).height
-            n_bad_unobs = day.filter(~pl.col("unobserved_sh_ok")).height
-            print(f"  {d}: {day.height:,} 列(可發布 {ok.height:,});輸入不自洽 "
-                  f"{n_bad_input}、餘額為負 {n_bad_resid}、閉環破裂 {n_bad_unobs}")
+            n_missing = day.filter(~pl.col("input_complete")).height
+            n_bad_input = day.filter(pl.col("input_complete")
+                                     & ~pl.col("foreign_bounds_ok")).height
+            n_bad_resid = day.filter(~pl.col("other_actor_sh_ok").fill_null(False)).height
+            n_bad_unobs = day.filter(~pl.col("unobserved_sh_ok").fill_null(False)).height
+            print(f"  {d}: {day.height:,} 列(可發布 {ok.height:,});輸入缺值 "
+                  f"{n_missing}、輸入不自洽 {n_bad_input}、餘額為負 {n_bad_resid}、"
+                  f"閉環破裂 {n_bad_unobs}")
             if n_bad_input > day.height * 0.01:
                 raise SystemExit(
                     f"FAIL: {d} 輸入不自洽 {n_bad_input}/{day.height} 超過 1%——"

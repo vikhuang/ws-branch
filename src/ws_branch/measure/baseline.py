@@ -39,7 +39,14 @@ def rolling_baseline(
     value_col)。**不含當日**——`closed="left"` 由 shift(1) 實現。
     """
     p = prefix or value_col
-    ordered = df.sort(group_col, order_col)
+    # row-based 滾動窗把每一列當一個活躍日:重複的 (group, order) 會讓同一天
+    # 被數兩次、窗長度悄悄縮短,且不報錯——當場擋下(家法#3)。
+    n_dup = df.height - df.select(group_col, order_col).unique().height
+    if n_dup:
+        raise ValueError(
+            f"rolling_baseline:{n_dup} 列重複 ({group_col}, {order_col}) 鍵,"
+            f"row-based 窗會算錯;呼叫端須先去重或改鍵")
+    ordered = df.sort(group_col, order_col)  # 回傳已排序,原順序不保留
     lagged = pl.col(value_col).shift(1).over(group_col)
     return ordered.with_columns(
         lagged.rolling_mean(window_size=window, min_samples=min_periods)

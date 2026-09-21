@@ -1,4 +1,9 @@
-"""O1「一頁讀本」原型(docs/OBSERVATORY_2026-09.md §2 products/stock_reader.py
+"""⚠ 已被取代(2026-09-20):本腳本顯示的 foreign_sim/multiplicity 經 Phase 1-2
+實證為廣度/集中度的代理,不是身分——扣掉「像市場」後對外資 cohort 的區分力
+僅 AUC 0.53。請改用 `scripts/observatory/v3_readbook.py`(raw + 會計界限)。
+保留僅供歷史重現。
+
+O1「一頁讀本」原型(docs/OBSERVATORY_2026-09.md §2 products/stock_reader.py
 的前身;O1 只驗證「user 讀得出東西」,尚未做成正式 parquet 產品)。
 
 給一檔股票、一個交易日,把 T1(誰在買賣)接 T4 v2(這個分點今天像什麼)

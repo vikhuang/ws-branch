@@ -76,13 +76,13 @@ def render(
     if pub.height == 0:
         lines.append("會計界限:本日不可發布(輸入缺值/不自洽/TEJ vol 異常,見 audit_ledger A6)")
     else:
-        for row in pub.sort("side", descending=True).iter_rows(named=True):
+        for row in pub.sort("side").iter_rows(named=True):  # buy 先於 sell
             side = "買方" if row["side"] == "buy" else "賣方"
             other_pct = (row["other_actor_sh"] / row["market_total_sh"] * 100
                          if row["market_total_sh"] else float("nan"))
             lines.append(
                 f"{side}:官方外資 {_lots(row['official_foreign_sh'])} 張,其中"
-                f"**至少 {_lots(row['foreign_y_lo'])} 張必須在 11 家外資席位之外**"
+                f"**至少 {_lots(row['foreign_y_lo'])} 張必須在 {len(cohort_codes)} 家外資席位之外**"
                 f"(席位內外資量界限 {_lots(row['foreign_x_lo'])}~"
                 f"{_lots(row['foreign_x_hi'])} 張);"
                 f"未屬四官方桶的餘額 {other_pct:.0f}%")
@@ -101,8 +101,10 @@ def render(
             .then(pl.lit("分行")).otherwise(pl.lit("總公司")))
         .alias("_cohort"))
         .with_columns(
-            (pl.min_horizontal("buy_sh", "sell_sh")
-             / pl.max_horizontal("buy_sh", "sell_sh")).alias("_two"))
+            pl.when(pl.max_horizontal("buy_sh", "sell_sh") > 0)
+            .then(pl.min_horizontal("buy_sh", "sell_sh")
+                  / pl.max_horizontal("buy_sh", "sell_sh"))
+            .otherwise(None).alias("_two"))  # 兩側皆零 → null,不是 nan(§7)
         .sort("_g", descending=True))
     gross_all = d["_g"].sum()
     for row in d.head(top_n).iter_rows(named=True):

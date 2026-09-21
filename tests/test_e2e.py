@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import datetime
+import json
 import os
 import shutil
 import subprocess
@@ -354,3 +355,39 @@ def test_e2e_asof_append_does_not_change_frozen_rows(universe: dict, tmp_path: P
         keys = [c for c in ("symbol_id", "broker", "date", "side") if c in before.columns]
         frozen = after.filter(pl.col("date") <= D2).sort(keys)
         assert frozen.equals(before.sort(keys)), f"{t}:追加 D3 後既有列改變"
+
+
+def test_e2e_cross_year_first_day_basket_uses_prior_year(universe: dict, tmp_path: Path) -> None:
+    """§12 跨年窗口:1 月首個交易日的 basket 要看前一年最後交易日。
+
+    2026-09-21 抓到的缺口:universe 只取當年,前一年最後交易日被 gate 掉,首日
+    basket 全 null。複製小宇宙、加 2025-12-31 一天(年檔 2025),建 T1 2025 +
+    T4 v3 2026,D1 的 basket 必須非 null。
+    """
+    src2, tables2 = tmp_path / "src2", tmp_path / "tables2"
+    shutil.copytree(universe["src"], src2)
+    tables2.mkdir()
+    D0 = datetime.date(2025, 12, 31)
+    dt0 = _utc_midnight_taipei(D0)
+    _write_broker_shard(src2, D0, [
+        dict(symbol_id="2330", date=dt0, broker="A1", broker_name="元大-台北",
+             price="99.00", buy=100_000, sell=0),
+        dict(symbol_id="1531", date=dt0, broker="A1", broker_name="元大-台北",
+             price="35.00", buy=1_000, sell=0),
+    ])
+    sa = pl.read_parquet(src2 / "tej" / "stock_attr.parquet")
+    pl.concat([sa.filter(pl.col("mdate") == D1).with_columns(pl.lit(D0).alias("mdate")), sa]
+              ).write_parquet(src2 / "tej" / "stock_attr.parquet")
+    _write_tradedays(src2, [D0, D1, D2])
+    env = {"WS_DATA_ROOT": str(src2), "WS_BRANCH_DATA_DIR": str(tables2)}
+    _run(["build", "--table", "t1_broker_daily", "--year", "2025"], env)
+    # T3 2026 沿用既有小宇宙的年檔(T4 v3 只讀當年 T3)
+    shutil.copytree(universe["tables"] / "t3_official_daily", tables2 / "t3_official_daily")
+    _run(["build", "--table", "t1_broker_daily", "--year", "2026"], env)
+    _run(["build", "--table", "t4_broker_measure", "--year", "2026"], env)
+    df = pl.read_parquet(tables2 / "t4_broker_measure" / "year=2026.parquet")
+    a1 = df.filter((pl.col("broker") == "A1") & (pl.col("date") == D1)).row(0, named=True)
+    assert a1["basket_self_sim"] is not None and 0.0 < a1["basket_self_sim"] <= 1.0
+    assert df["date"].min() == D1                       # 2025-12-31 只作前一日,不進 2026 表
+    man = json.loads((tables2 / "t4_broker_measure" / "year=2026.manifest.json").read_text())
+    assert man["source_snapshot"]["t1_broker_daily_prev_year"]["bytes"] > 0

@@ -103,3 +103,53 @@ def test_basket_self_sim_uses_only_previous_trading_day() -> None:
     assert d3["basket_self_sim"].is_not_null().all()
     assert base.filter(pl.col("date") == D[0])["basket_self_sim"].is_null().all()  # 無前一日
     assert pytest.approx(d3.filter(pl.col("broker") == "B")[0, "basket_self_sim"]) == 1.0
+
+
+def test_official_cosine_uses_observed_support_not_zero_fill() -> None:
+    """§4.2「來源缺值不能填成零」:某股當日無 T3 列 → 從官方 cosine 的支撐移除
+    (席位向量與 norm 同支撐),並記錄 official_missing_share;超過門檻 → null。"""
+    cal = allocation.prev_trading_day_map(D[:1])
+    t1 = _t1(D[:1])                      # A:2330 買 100 / 1531 買 10;B:2330 買 300
+    t3 = _t3(D[:1]).filter(pl.col("symbol_id") == "2330")   # 1531 當日無 T3 列
+    out = m.compute_month(t1, t3, _uni(D[:1]), cal, month_start=D[0])
+    a = out.filter(pl.col("broker") == "A").row(0, named=True)
+    b = out.filter(pl.col("broker") == "B").row(0, named=True)
+    # A 的 gross:2330 150、1531 30 → 缺列比例 30/180
+    assert a["official_missing_share"] == pytest.approx(30 / 180)
+    assert b["official_missing_share"] == pytest.approx(0.0)
+    # 支撐只剩 2330:A 買向量 (100) vs 官方 (1) → cosine 1(若把 1531 填 0 進參考向量
+    # 而席位向量保留 1531,會得到 100/sqrt(100²+10²) ≈ 0.995,即被錯當「不像」)
+    assert a["cos_foreign_buy"] == pytest.approx(1.0)
+    # 缺列比例超過門檻 → null,不給數字
+    t1_heavy = _t1(D[:1]).with_columns(
+        pl.when(pl.col("symbol_id") == "1531").then(pl.col("buy_dollar") * 100)
+        .otherwise(pl.col("buy_dollar")).alias("buy_dollar"))
+    heavy = m.compute_month(t1_heavy, t3, _uni(D[:1]), cal, month_start=D[0])
+    ha = heavy.filter(pl.col("broker") == "A").row(0, named=True)
+    assert ha["official_missing_share"] > m.OFFICIAL_MAX_MISSING_SHARE
+    assert ha["cos_foreign_buy"] is None and ha["cos_market_buy"] is not None
+
+
+def test_t4v3_excludes_out_of_universe_symbols_from_all_measures() -> None:
+    """F9/universe gate(§5.3):ETF 0050 不在 universe → gross、n_symbols、cosine 全不計。"""
+    cal = allocation.prev_trading_day_map(D[:1])
+    t1 = pl.concat([_t1(D[:1]), pl.DataFrame(
+        [("A", "元大-台北", "0050", D[0], 10_000.0, 0.0)],
+        schema=["broker", "broker_name", "symbol_id", "date", "buy_dollar", "sell_dollar"],
+        orient="row")])
+    out = m.compute_month(t1, _t3(D[:1]), _uni(D[:1]), cal, month_start=D[0])
+    a = out.filter(pl.col("broker") == "A").row(0, named=True)
+    assert a["n_symbols"] == 2 and a["gross_amt"] == pytest.approx(180.0)
+    assert a["official_missing_share"] == pytest.approx(0.0)   # 0050 不在 universe,不算缺 T3
+
+
+def test_t3_null_value_counts_as_missing_not_zero() -> None:
+    """T3 有列但金額欄 null(2026 有 260 列)→ 與缺列同視為來源缺值,不填 0。"""
+    cal = allocation.prev_trading_day_map(D[:1])
+    t3 = _t3(D[:1]).with_columns(
+        pl.when(pl.col("symbol_id") == "1531").then(None).otherwise(pl.col("fund_buy_amt"))
+        .alias("fund_buy_amt"))
+    out = m.compute_month(_t1(D[:1]), t3, _uni(D[:1]), cal, month_start=D[0])
+    a = out.filter(pl.col("broker") == "A").row(0, named=True)
+    assert a["official_missing_share"] == pytest.approx(30 / 180)
+    assert a["cos_foreign_buy"] == pytest.approx(1.0)   # 支撐只剩 2330

@@ -11,14 +11,16 @@
 > `experiments/flow_lab/findings/v3_phase{1,2,3,4}_*.md` + `v3_crossyear_2025.md`
 > (研究腳本共用 `v3_common.py` 逐年快取;年份/as-of 為參數)。**Step E 進行中**:
 > T4 v3 物化 ✅、as-of 測試 ✅、讀本 trait/規模/市況/state ✅(`measure/state.py`
-> 是讀時代理,非 §6 全樣本分解;席位特有 z 已扣規模/廣度變化);分點 profile 與
-> Step F 消費端遷移未做。校準 AUC 讀成「很可能低估」不說「下界」。新核心:
+> 是讀時代理,非 §6 全樣本分解;席位特有 z 已扣規模/廣度變化)、分點 profile ✅
+> (`products/broker_profile.py`,唯一顯示 cosine 的產品,綁校準卡);Step F
+> 消費端遷移與 `--incr` 未做。校準 AUC 讀成「很可能低估」不說「下界」。新核心:
 > - CLI:`uv run python -m ws_branch build|verify [--table t1_broker_daily|
 >   t3_official_daily|t3b_accounting_bounds|t4_broker_features] [--year Y]`
->   (factory.py=相容薄殼);讀本 `scripts/observatory/v3_readbook.py <股票> <日期>`
+>   (factory.py=相容薄殼);讀本 `scripts/observatory/v3_readbook.py <股票> <日期>`、
+>   profile `scripts/observatory/v3_broker_profile.py <席位> <日期>`
 > - `src/ws_branch/` 三色分層:tables(registry/runner/io/transforms/checks)
 >   / measure(identity+taxonomy+**universe/accounting/decompose/allocation/
->   baseline/salience/calibration/guards/state**,全純函數)/ products(**stock_readbook**);表:T1 物化、
+>   baseline/salience/calibration/guards/state**,全純函數)/ products(**stock_readbook / broker_profile**);表:T1 物化、
 >   T2=ws-core lazy 視圖、T3 官方對齊(v2 含自營金額)、**T3b 會計硬界限**
 >   (股票×日×側)、T4 v2 分點日特徵(rank 版,凍結)、**T4 v3 `t4_broker_measure`**
 >   (§4.2 最小量測表 + `year=Y.manifest.json`;`available_at` = date 21:45 台北;

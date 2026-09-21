@@ -10,9 +10,10 @@
 >   (v1.1.0,股票×日×側:官方外資量有多少必須在外資席位之外)/T4 分點日行為特徵
 >   (v2 rank 版)/**T4 v3 `t4_broker_measure`**(v1.3.0,分點×日最小量測表 + manifest)
 > - CLI:`uv run python -m ws_branch build|verify --table <t> [--year Y]`;
->   個股讀本 `uv run python scripts/observatory/v3_readbook.py 3450 2026-09-14`
+>   個股讀本 `uv run python scripts/observatory/v3_readbook.py 3450 2026-09-14`;
+>   分點 profile `uv run python scripts/observatory/v3_broker_profile.py 8440 2026-09-14`
 > - 架構:`src/ws_branch/` 三色分層(純轉換/IO 殼/宣告);測試金字塔
->   (單元+e2e 合成小宇宙+真資料對帳),`uv run pytest`(210 tests)
+>   (單元+e2e 合成小宇宙+真資料對帳),`uv run pytest`(216 tests)
 > - **v1.1.0(2026-09-21)行動者層 v3 Phase 1-2**:universe gate、會計硬界限、
 >   trait/日效應/席位異常分解;規格在 ws-quant `docs/actor_layer_v3_*_2026-09-18.md`,
 >   結果在 `experiments/flow_lab/findings/v3_phase{1,2}_*.md`
@@ -30,6 +31,10 @@
 >   state 加規模/廣度條件化(讀本「規模」欄);校準撤回「下界」措辭、加 refit
 >   leave-one-out(逐席位 AUC:大五家 0.93-0.98、大和國泰 0.27)、Phase 4 以 m2
 >   物化表重跑(年內 0.823/0.789、跨年 0.737/0.814);manifest 標 available_at 依據
+> - **v1.4.0(2026-09-21)分點 profile**:席位頁四區塊(raw / 性格·規模·市況·特有 /
+>   官方配置關聯 + 校準卡 + 殘差百分位 / 本子裡最重的股票),每欄標認識論等級;
+>   唯一顯示 cosine 的產品,永遠綁校準卡與「不是身份機率」。§12 完成標準 3
+>   (讀本 + profile)到位;剩 Step F、`--incr`、A9 上游
 > - **以下舊 README 描述的 PNL/FIFO 系統已整包封存於 `pnl/`**,主線不維護;
 >   復用前置條件見 audit_ledger。
 

@@ -60,7 +60,7 @@ def _salience(symbol_id: str, d: datetime.date) -> pl.DataFrame | None:
         return None
     panel = salience.build_pair_panel(
         salience.daily_salience(t1, branch_day, universe=uni),
-        branch_day, symbol_id=symbol_id)
+        branch_day, symbol_id=symbol_id, universe=uni)
     hist = salience.pair_history(panel, window=WINDOW, min_periods=MIN_PERIODS)
     return (salience.pair_anomaly(hist).filter(pl.col("date") == d)
             .select("broker", "salience", "sal_mean", "salience_z",

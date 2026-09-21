@@ -88,11 +88,18 @@ def daily_salience(
 
 def build_pair_panel(
     daily: pl.DataFrame, branch_day: pl.DataFrame, *, symbol_id: str,
+    universe: pl.DataFrame | None = None,
 ) -> pl.DataFrame:
     """把單一股票的 pair panel 補成「席位活躍日 × 該股」的完整交叉。
 
     未交易日補 0(真實的零);席位當天完全沒活動的日子不在 branch_day 裡,
     自然不出現(無定義)。這是 baseline 正確的前提——見模組 docstring。
+
+    universe:(symbol_id, date) 逐日普通股清單。**給了才分得出「該股當天
+    不在 universe(未上市/已下市/暫停)」**——那種日子是無定義,必須留 null,
+    不得補成 0(2026-09-21 複查抓到:首版把所有席位活躍日一律補零,中途
+    上市/下市的股票會被灌進假的零,拉低 baseline)。不給 = 呼叫端保證該股
+    在 branch_day 的全部日期都在 universe 內。
 
     只處理單一股票:讀本與 pair 層研究都是單股查詢,全市場交叉會是
     879 席位 × 1,975 檔 × 170 日 ≈ 2.95 億列(規格 §7:首版不物化)。
@@ -105,19 +112,37 @@ def build_pair_panel(
     # 只對「曾經碰過這檔」的席位補零:從未碰過的席位補零無資訊且會灌爆列數
     grid = branch_day.join(brokers, on="broker", how="semi").select(
         "broker", "date", pl.col("gross_amt").alias("branch_gross"))
+    if universe is None:
+        grid = grid.with_columns(pl.lit(True).alias("in_universe"))
+    else:
+        guards.require_columns(universe, ["symbol_id", "date"],
+                               who="build_pair_panel(universe)")
+        listed = (universe.filter(pl.col("symbol_id") == symbol_id)
+                  .select("date").unique().with_columns(pl.lit(True).alias("in_universe")))
+        grid = grid.join(listed, on="date", how="left").with_columns(
+            pl.col("in_universe").fill_null(False))
+        # 有交易卻不在 universe = 分子沒套 gate,和 daily_salience 的檢查同一件事
+        guards.require_covered(traded.select("symbol_id", "date"), universe,
+                               ["symbol_id", "date"],
+                               who=f"build_pair_panel({symbol_id})",
+                               hint=";該股有成交但不在 universe,分子未套 gate")
     joined = grid.join(
         traded.select("broker", "date", "stock_gross", "stock_net",
                       "salience", "signed_contrib", "two_sidedness"),
         on=["broker", "date"], how="left")
-    # traded 必須在 fill_null 之前判定:補零後就分不出「未交易」與「交易 0 元」
+    # traded 必須在補零之前判定:補零後就分不出「未交易」與「交易 0 元」。
+    # 補零只在 universe 內的日子做;universe 外的日子整列留 null(無定義)。
+    zero_if_listed = {
+        c: pl.when(pl.col("in_universe")).then(pl.col(c).fill_null(0.0)).otherwise(None)
+        for c in ("stock_gross", "stock_net", "salience", "signed_contrib")}
     return (joined
-            .with_columns(pl.col("stock_gross").is_not_null().alias("traded"))
             .with_columns(
-                pl.col("stock_gross").fill_null(0.0),
-                pl.col("stock_net").fill_null(0.0),
-                pl.col("salience").fill_null(0.0),
-                pl.col("signed_contrib").fill_null(0.0),
-                pl.lit(symbol_id).alias("symbol_id")))
+                pl.when(pl.col("in_universe"))
+                .then(pl.col("stock_gross").is_not_null()).otherwise(None)
+                .alias("traded"))
+            .with_columns(**zero_if_listed)
+            .with_columns(pl.lit(symbol_id).alias("symbol_id"))
+            .drop("in_universe"))
 
 
 def pair_history(

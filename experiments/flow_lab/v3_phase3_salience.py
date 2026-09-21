@@ -45,7 +45,7 @@ def _pairs_for(symbols: list[str], bd: pl.DataFrame, start: str,
     daily = salience.daily_salience(t1, bd, universe=uni)
     out = []
     for s in symbols:
-        panel = salience.build_pair_panel(daily, bd, symbol_id=s)
+        panel = salience.build_pair_panel(daily, bd, symbol_id=s, universe=uni)
         if panel.height == 0:
             continue
         h = salience.pair_history(panel, window=WINDOW, min_periods=MIN_PERIODS)

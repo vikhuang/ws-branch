@@ -93,6 +93,37 @@ def test_panel_only_covers_brokers_that_touched_the_stock() -> None:
     assert set(panel["broker"]) == {"A"}
 
 
+def test_panel_leaves_days_outside_universe_null_not_zero() -> None:
+    """該股不在 universe 的日子(未上市/已下市)= 無定義 → null,不得補零。
+
+    2026-09-21 複查:首版對席位活躍日一律補零,中途上市的股票會被灌進
+    上市前的假零,拉低 baseline。
+    """
+    t1 = _t1([("A", "3450", 2, 100.0, 0.0)])
+    bd = _branch_day([("A", i, 1_000.0) for i in range(4)])
+    uni = pl.DataFrame({"symbol_id": ["3450"] * 2,
+                        "date": [D0 + datetime.timedelta(days=i) for i in (2, 3)]})
+    panel = (salience.build_pair_panel(salience.daily_salience(t1, bd), bd,
+                                       symbol_id="3450", universe=uni)
+             .sort("date"))
+    assert panel.height == 4
+    assert panel["salience"].to_list() == [None, None, 0.1, 0.0]
+    assert panel["traded"].to_list() == [None, None, True, False]
+    # 無定義日不得進 baseline:第 3 天的落後歷史只有第 2 天一筆
+    hist = salience.pair_history(panel, window=60, min_periods=1)
+    assert hist.sort("date")["history_n"].to_list() == [0, 0, 0, 1]
+
+
+def test_panel_rejects_trade_outside_universe() -> None:
+    """有成交卻不在 universe = 分子沒套 gate,要當場 raise(B 類 → A 類)。"""
+    t1 = _t1([("A", "0050", 0, 100.0, 0.0)])
+    bd = _branch_day([("A", 0, 1_000.0)])
+    uni = pl.DataFrame({"symbol_id": ["3450"], "date": [D0]})
+    with pytest.raises(ValueError, match="未套 gate"):
+        salience.build_pair_panel(salience.daily_salience(t1, bd), bd,
+                                  symbol_id="0050", universe=uni)
+
+
 # ── pair_history / pair_anomaly ───────────────────────────────────
 
 

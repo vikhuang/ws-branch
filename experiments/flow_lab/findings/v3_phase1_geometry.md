@@ -1,9 +1,11 @@
 # v3 Phase 1:Measurement geometry 與硬會計界限(2026-09-18)
 
 依 ws-quant `docs/actor_layer_v3_architecture_alignment_2026-09-18.md` §5。
-腳本:`v3_phase1_geometry.py`(geometry,七項)、表 `t3b_accounting_bounds`(界限)。
+腳本:`v3_phase1_geometry.py`(geometry,七項)、表 `t3b_accounting_bounds`(界限)、
+`v3_phase1_bounds_readout.py`(§1 表的讀數;09-21 複查補,首版 §1 是 REPL 手算無程式)。
 資料:2026-01-05~09-15,170 交易日。**universe = 普通股 v1**(`measure/universe.py`
-`stock_v1`);cohort = 外資券商 12 家代號(`foreign_seat_v1`)。無 alpha、無
+`stock_v1`);cohort = 外資券商 **11 家**代號(`foreign_seat_v2`;首版 12 家含犇亞
+證券,09-20 複查移除,§1 數字已用 v2 重算)。無 alpha、無
 soft allocation、無 actor 校準。
 
 ## 0. universe gate 的實際效果
@@ -16,7 +18,7 @@ soft allocation、無 actor 校準。
 ## 1. 硬會計界限:公開資料最多能說到什麼程度(§5.1/§5.2)
 
 `t3b_accounting_bounds` 2026:646,924 列(股票×日×側),建表 3.7 秒。
-可發布列 99.15%(`bounds_publishable` = 輸入自洽 ∧ 閉環成立 ∧ 餘額非負)。
+可發布列 99.14%/99.15%(買/賣;`bounds_publishable` = 輸入自洽 ∧ 閉環成立 ∧ 餘額非負)。
 擋下的兩類:①官方桶 > TEJ vol 的 274 列(0.042%,集中在零成交量小股);
 ②**2026-05-05 與 07-17 兩天的全市場性閉環破裂**(見下方「兩個施工期錯誤」
 與 audit_ledger A6)。照 §5.1 以旗標擋下、不 clip。
@@ -24,17 +26,19 @@ soft allocation、無 actor 校準。
 | 量 | 結果(買方,2026 全年,僅可發布列) | 語意 |
 |---|---|---|
 | **Other = V − 四官方桶** | 量加權 **62.8%**;逐股票日 p25/p50/p75 = 0.60/0.74/0.87 | `identified`(總量);**內部種類與席位配置皆未識別,不得叫散戶** |
-| **cohort 內外資量 X** | 量加權區間 **[6.7%, 62.5%]**;逐股票日 cov_hi 中位 0.597、cov_lo 中位 0 | `bounded`,且**幾乎無資訊** |
-| 唯一識別(L=U)的股票日 | **8.0%** | 多為 F=0 的退化情形 |
-| **HiddenForeign 下界 Y_lo** | 量加權 **37.5%**;逐股票日中位 **40.3%** | `identified`(下界) |
+| **cohort 內外資量 X,佔 cohort S** | 量加權區間 **[10.7%, 99.8%]** | `bounded`,且**幾乎無資訊**(這才是「cohort 裡有多少是外資」的答案) |
+| **X 佔官方外資 F(= coverage)** | 量加權區間 **[6.7%, 62.5%]**;逐股票日 cov_hi 中位 0.596、cov_lo 中位 0 | `bounded`;上界 ≈ S/F,因為多數股票日 F ≥ S |
+| 唯一識別(L=U)的股票日 | **16.7%**,**全部**是 S=0 或 F=0 的退化情形;非退化 0.0% | 首版寫 8.0%,口徑不明,09-21 以腳本口徑取代 |
+| **HiddenForeign 下界 Y_lo** | 量加權 **37.6%**;逐股票日中位 **40.4%** | `identified`(下界) |
 | S/F(舊寫法) | 量加權 0.626 | **不是 coverage** |
 | 未觀測交易(V − T1) | 量加權 0.11% | 閉環實質成立(但見 A6) |
 | 可發布率 | **99.15%**(`bounds_publishable`) | 不可發布 = 輸入不自洽或當日 V 不可信 |
 
 **三個結論**:
 
-1. **會計約束對「cohort 裡有多少是外資」幾乎沒有識別力**(量加權區間
-   [6.7%, 62.5%],寬 56 個百分點)。原因是 Other 太大:L_X = max(0, S+F−V)
+1. **會計約束對「cohort 裡有多少是外資」幾乎沒有識別力**(X/S 量加權區間
+   [10.7%, 99.8%],寬 89 個百分點;首版誤引 coverage 區間 [6.7%, 62.5%],那是
+   X/F,分母不同,09-21 修正)。原因是 Other 太大:L_X = max(0, S+F−V)
    只有在 S+F 逼近 V 時才咬得住,而四個官方桶只佔市場量的 37%。
    → §9 的 v3.5 若要縮窄,**必須靠行為 likelihood**,硬約束只提供可行集。
 2. **會計約束對「有多少外資必須在 cohort 外」有實質識別力**:37.5%(量加權
@@ -45,7 +49,7 @@ soft allocation、無 actor 校準。
    可見席位時不需要額外的「未觀測桶」;但仍照 §5.1 顯式存欄,不靠假設。
 
 聯鈞 3450 @ 2026-09-14(修正 cohort 後):買方 S=1,082 張 / F=3,142 張 →
-至少 2,060 張外資買盤必在 12 家外資席位之外,cov_hi=0.344;賣方 S=2,154 /
+至少 2,060 張外資買盤必在 11 家外資席位之外,cov_hi=0.344;賣方 S=2,154 /
 F=4,271 → 至少 2,117 張在外,cov_hi=0.504。
 
 ## 2. Geometry:哪些是 scale、哪些是 shape(§5.4 前七項)
@@ -63,6 +67,12 @@ F=4,271 → 至少 2,117 張在外,cov_hi=0.504。
 | directional_ratio | 0.005 | 0.027 | **0.059** | 0.107 | 0.226 |
 | cos_market_buy | 0.361 | 0.577 | 0.702 | 0.798 | 0.897 |
 | cos_market_sell | 0.326 | 0.535 | 0.662 | 0.766 | 0.873 |
+| basket_self_sim(補做,09-21 回填) | 0.330 | 0.561 | 0.680 | 0.771 | 0.872 |
+
+basket_self_sim 與其他 primitive 的 Spearman(09-21 回填,n=138,433;908 個
+分點日因交易日曆首日無前一日而為 null):gross 0.33、n_symbols 0.40、
+top1 −0.19、top5 −0.22、directional −0.10、cos_market_buy/sell 0.43/0.43。
+與 breadth/市場相關中等,不被任何一項吸收——留作 state primitive(Phase 2 定)。
 
 兩個要記的量級:**方向性中位數只有 0.059**——典型分點日買賣幾乎完全相抵,
 「單邊」是極少數;**gate 後 n_symbols 中位 614**(O1 未 gate 時 735,差額是
@@ -137,7 +147,7 @@ Spearman 0.79;log-log 斜率 0.320 → **gross 每漲 10 倍,碰股數只 ×2.1*
   尚未估。
 - cos_market 已用全 universe 定義,但 actor cosine(對四官方桶)尚未重算——
   O1 的 support-restricted 數字不可直接沿用(見 `o1_fingerprint_read.md` 末節)。
-- 界限的 cohort 為 foreign_seat_v1(12 家);換 cohort 定義會改變 S,界限跟著變。
+- 界限的 cohort 為 foreign_seat_v2(11 家);換 cohort 定義會改變 S,界限跟著變。
 
 
 ## 5. 兩個施工期錯誤(2026-09-20 自我複查抓到,已修)

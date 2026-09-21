@@ -17,6 +17,12 @@
 | **未交易** | b 當天有活動但沒碰 s,且 s 在 universe 內 | **0(真實的零)** | **入 baseline** |
 | 無定義 | b 當天完全沒活動,或 s 不在 universe(未上市/已下市) | null | 不入 baseline |
 
+> 09-21 複查:上表第三列「s 不在 universe → null」首版**只有文字沒有程式**——
+> `build_pair_panel` 對席位活躍日一律補零,中途上市/下市的股票會被灌進假零。
+> 現已加 `universe=` 參數(逐日 (symbol_id, date)),universe 外的日子整列 null、
+> 不進 `history_n`;有成交卻不在 universe 則 raise。40 檔抽樣未踩到此情形,
+> 本文數字不變。
+
 **只用「有交易的日子」算 baseline 會系統性高估**——那是 pair 內的倖存者偏誤,
 會讓「今天比平常重要」永遠看起來不顯著。本期一律用含零的 panel。
 

@@ -128,16 +128,9 @@ def render(
     d = (t1_day.with_columns(
         (pl.col("buy_sh") + pl.col("sell_sh")).alias("_g"),
         (pl.col("buy_sh") - pl.col("sell_sh")).alias("_net"),
-        pl.when(pl.col("broker").is_in(list(cohort_codes)))
-        .then(pl.lit("外資席位"))
-        # 明知客戶以外資為主但不在 cohort 的席位(9A81 永豐金-匯立):其量在
-        # 「必須在外資席位之外」的下界裡,讀本要讓人看得出來,不能混進總公司/分行
-        .when(pl.col("broker").is_in(list(universe.KNOWN_HIDDEN_FOREIGN)))
-        .then(pl.lit("外資客戶*"))
-        .otherwise(
-            pl.when(pl.col("broker_name").str.contains("-"))
-            .then(pl.lit("分行")).otherwise(pl.lit("總公司")))
-        .alias("_cohort"))
+        # 外資客戶*(9A81):明知客戶以外資為主但不在 cohort,其量在「必須在外資
+        # 席位之外」的下界裡,不能混進總公司/分行(universe.seat_class 共用)
+        universe.seat_class(cohort_codes=cohort_codes).alias("_cohort"))
         .with_columns(
             pl.when(pl.max_horizontal("buy_sh", "sell_sh") > 0)
             .then(pl.min_horizontal("buy_sh", "sell_sh")

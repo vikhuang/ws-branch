@@ -226,3 +226,16 @@ def universe_exclusion_report(
         pl.col("symbol_id").n_unique().alias("excluded_symbols"),
         pl.col(amount_col).sum().alias("excluded_amount"),
     )
+
+
+def seat_class(broker_col: str = "broker", name_col: str = "broker_name", *,
+               cohort_codes: frozenset[str]) -> pl.Expr:
+    """席位的行政分類(讀本/profile 共用):外資席位 / 外資客戶* / 分行 / 總公司。
+
+    「外資客戶*」= KNOWN_HIDDEN_FOREIGN(9A81),明知客戶以外資為主但依券商執照規則
+    不入 cohort——不得混進總公司/分行。這是行政分類,**不是投資人身份**。
+    """
+    return (pl.when(pl.col(broker_col).is_in(list(cohort_codes))).then(pl.lit("外資席位"))
+            .when(pl.col(broker_col).is_in(list(KNOWN_HIDDEN_FOREIGN))).then(pl.lit("外資客戶*"))
+            .otherwise(pl.when(pl.col(name_col).str.contains("-")).then(pl.lit("分行"))
+                       .otherwise(pl.lit("總公司"))))

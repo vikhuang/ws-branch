@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import datetime
+import shutil
 import subprocess
 import sys
 
@@ -46,6 +47,8 @@ def build(name: str, year: int | None = None, force: bool = False) -> None:
             print(f"{t.name} {y}: exists, skip(--force 重建)")
             continue
         io.sink_year(t.build_year(y), t.name, y)
+        # 逐月 part(T1 逐日建表的中繼)只在年檔成功落地後清掉
+        shutil.rmtree(io.table_dir(t.name) / f"_parts_{y}", ignore_errors=True)
         stat = (pl.scan_parquet(out)
                 .select(pl.len().alias("n"),
                         pl.col(t.date_col).n_unique().alias("days"))

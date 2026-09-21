@@ -31,18 +31,37 @@ from __future__ import annotations
 
 import polars as pl
 
+from ws_branch.measure import guards
+
 
 def daily_salience(
-    t1_slice: pl.DataFrame, branch_day: pl.DataFrame,
+    t1_slice: pl.DataFrame, branch_day: pl.DataFrame, *,
+    universe: pl.DataFrame | None = None,
 ) -> pl.DataFrame:
     """T1 切片 × 席位日總額 → 當日 salience / signed contribution / two_sidedness。
 
-    t1_slice:broker, symbol_id, date, buy_dollar, sell_dollar(已套 universe gate)
+    t1_slice:broker, symbol_id, date, buy_dollar, sell_dollar
     branch_day:broker, date, gross_amt(席位當日全市場總額,來自 T4/primitives)
+    universe:(symbol_id, date) 逐日普通股清單。**給了就會檢查分子是否套了
+    同一個 gate**——分母 branch_day 必然已 gate,分子沒 gate 的話 salience
+    的分子分母口徑不一致(2026-09-21 Phase 3 實付,見 guards B 類)。
 
     回傳逐列:stock_gross(該 pair 當日金額)、branch_gross(分母)、salience、
     signed_contrib(淨額佔席位總額,帶正負)、two_sidedness。
     """
+    guards.require_columns(t1_slice, ["broker", "symbol_id", "date",
+                                      "buy_dollar", "sell_dollar"],
+                           who="daily_salience(t1_slice)")
+    guards.require_columns(branch_day, ["broker", "date", "gross_amt"],
+                           who="daily_salience(branch_day)")
+    guards.require_unique_key(t1_slice, ["broker", "symbol_id", "date"],
+                              who="daily_salience(t1_slice)")
+    guards.require_unique_key(branch_day, ["broker", "date"],
+                              who="daily_salience(branch_day)")
+    if universe is not None:
+        guards.require_same_universe(
+            t1_slice, universe, keys=["symbol_id", "date"],
+            who="daily_salience(t1_slice)")
     return (
         t1_slice.with_columns(
             (pl.col("buy_dollar") + pl.col("sell_dollar")).alias("stock_gross"),
@@ -78,7 +97,10 @@ def build_pair_panel(
     只處理單一股票:讀本與 pair 層研究都是單股查詢,全市場交叉會是
     879 席位 × 1,975 檔 × 170 日 ≈ 2.95 億列(規格 §7:首版不物化)。
     """
+    guards.require_unique_key(branch_day, ["broker", "date"],
+                              who="build_pair_panel(branch_day)")
     traded = daily.filter(pl.col("symbol_id") == symbol_id)
+    guards.require_non_empty(traded, who=f"build_pair_panel({symbol_id})")
     brokers = traded.select("broker").unique()
     # 只對「曾經碰過這檔」的席位補零:從未碰過的席位補零無資訊且會灌爆列數
     grid = branch_day.join(brokers, on="broker", how="semi").select(
@@ -111,6 +133,8 @@ def pair_history(
     salience 的無條件均值 = 參與率 × 條件規模,兩者分開讀才不會把
     「稀疏 pair 偶爾碰一次」誤讀成「異常建倉」。
     """
+    guards.require_unique_key(panel, ["broker", "date"],
+                              who="pair_history(panel)")
     p = panel.sort("broker", "date")
     lag_sal = pl.col("salience").shift(1).over("broker")
     lag_gross = pl.col("stock_gross").shift(1).over("broker")

@@ -36,13 +36,13 @@ def _branch_day() -> pl.DataFrame:
 
 
 def _pairs_for(symbols: list[str], bd: pl.DataFrame, start: str,
-               end: str) -> pl.DataFrame:
+               end: str, uni: pl.DataFrame | None = None) -> pl.DataFrame:
     """對指定股票清單建 pair panel + 歷史 + 異常(逐股,不做全交叉)。"""
     t1 = (io.scan("t1_broker_daily", start=start, end=end)
           .filter(pl.col("symbol_id").is_in(symbols))
           .select("broker", "symbol_id", "date", "buy_dollar", "sell_dollar")
           .collect())
-    daily = salience.daily_salience(t1, bd)
+    daily = salience.daily_salience(t1, bd, universe=uni)
     out = []
     for s in symbols:
         panel = salience.build_pair_panel(daily, bd, symbol_id=s)
@@ -69,7 +69,9 @@ def main() -> None:
     print(f"抽樣 {SAMPLE_N} 檔(seed={SEED}),窗 {WINDOW} 活躍日 / "
           f"min_periods={MIN_PERIODS},as-of {AS_OF}")
 
-    df = _pairs_for(sample, bd, start, str(AS_OF))
+    uni_window = universe.stock_universe(stock_attr(
+        start=start, end=str(AS_OF), columns=["coid", "mdate", "stktp_c"]))
+    df = _pairs_for(sample, bd, start, str(AS_OF), uni_window)
     print(f"pair-day 觀測 {df.height:,};席位 {df['broker'].n_unique()};"
           f"股票 {df['symbol_id'].n_unique()}")
 
@@ -133,7 +135,8 @@ def main() -> None:
               if de else "")
 
     print("\n" + "=" * 70 + f"\n[E5] 聯鈞 3450 @ {AS_OF}\n" + "=" * 70)
-    lj = _pairs_for(["3450"], bd, start, str(AS_OF)).filter(pl.col("date") == AS_OF)
+    lj = _pairs_for(["3450"], bd, start, str(AS_OF), uni_window).filter(
+        pl.col("date") == AS_OF)
     top = lj.sort("stock_gross", descending=True).head(10)
     names = (io.scan("t1_broker_daily", start=str(AS_OF), end=str(AS_OF))
              .select("broker", "broker_name").unique().collect())

@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import polars as pl
 
+from ws_branch.measure import guards
+
 
 def rolling_baseline(
     df: pl.DataFrame,
@@ -40,12 +42,8 @@ def rolling_baseline(
     """
     p = prefix or value_col
     # row-based 滾動窗把每一列當一個活躍日:重複的 (group, order) 會讓同一天
-    # 被數兩次、窗長度悄悄縮短,且不報錯——當場擋下(家法#3)。
-    n_dup = df.height - df.select(group_col, order_col).unique().height
-    if n_dup:
-        raise ValueError(
-            f"rolling_baseline:{n_dup} 列重複 ({group_col}, {order_col}) 鍵,"
-            f"row-based 窗會算錯;呼叫端須先去重或改鍵")
+    # 被數兩次、窗長度悄悄縮短,且不報錯——當場擋下(guards A 類)。
+    guards.require_unique_key(df, [group_col, order_col], who="rolling_baseline")
     ordered = df.sort(group_col, order_col)  # 回傳已排序,原順序不保留
     lagged = pl.col(value_col).shift(1).over(group_col)
     return ordered.with_columns(

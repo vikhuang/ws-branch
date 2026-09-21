@@ -163,7 +163,7 @@ def test_basket_raises_when_calendar_does_not_cover_flow_dates() -> None:
     """flow 有日曆外的日期 = 日曆涵蓋不足;首版會靜默 inner-join 丟掉(家法#3)。"""
     cal = allocation.prev_trading_day_map([D1, D2])
     flow = _flow([("A", "s1", D2, 1.0), ("A", "s1", D3, 1.0)])   # D3 不在日曆
-    with pytest.raises(ValueError, match="不在交易日曆"):
+    with pytest.raises(ValueError, match="交易日曆涵蓋不足"):
         allocation.basket_self_similarity(flow, cal)
 
 

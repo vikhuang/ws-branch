@@ -23,6 +23,8 @@ import datetime
 
 import polars as pl
 
+from ws_branch.measure import guards
+
 
 def prev_trading_day_map(trading_days: list[datetime.date]) -> pl.DataFrame:
     """交易日曆 → (date, prev_date) 對照。首日的 prev_date 為 null。
@@ -95,12 +97,10 @@ def basket_self_similarity(
               .select("broker", "symbol_id", "date",
                       pl.col(amount_col).alias("_v")))
     # flow 裡有日曆沒有的日期 = 日曆涵蓋不足,inner join 會把那些日子靜默丟掉
-    # (家法#3)。當場 raise,不讓「前一交易日」悄悄算錯。
-    uncovered = basket.select("date").unique().join(date_map, on="date", how="anti")
-    if uncovered.height:
-        raise ValueError(
-            f"basket_self_similarity:{uncovered.height} 個日期不在交易日曆中"
-            f"(例 {sorted(uncovered['date'].to_list())[:3]}),日曆涵蓋不足")
+    # (guards A 類)。當場 raise,不讓「前一交易日」悄悄算錯。
+    guards.require_covered(basket, date_map, ["date"],
+                           who="basket_self_similarity",
+                           hint=";交易日曆涵蓋不足")
     norms = basket.group_by("broker", "date").agg(
         (pl.col("_v") ** 2).sum().sqrt().alias("_norm"))
     prev = basket.rename({"date": "prev_date", "_v": "_v_prev"})

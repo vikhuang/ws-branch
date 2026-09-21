@@ -72,6 +72,14 @@ def _salience(symbol_id: str, d: datetime.date) -> pl.DataFrame | None:
           .collect())
     if t1.height == 0:
         return None
+    # 分子先套逐日 universe(中途上市/類型變更的日子是無定義,不是未交易);
+    # 8102 於 2025-12-22 上櫃,之前興櫃期間有成交但不在 universe(外部審查 09-21)
+    gated = universe.apply_universe(t1, uni)
+    if gated.height != t1.height:
+        ex = t1.join(uni, on=["symbol_id", "date"], how="anti")
+        print(f"  [gate] 排除 {t1.height - gated.height:,} 列 T1({ex['date'].min()}~{ex['date'].max()} "
+              f"不在普通股 universe,留 null 不補零)")
+    t1 = gated
     panel = salience.build_pair_panel(
         salience.daily_salience(t1, branch_day, universe=uni),
         branch_day, symbol_id=symbol_id, universe=uni)

@@ -12,9 +12,8 @@ import datetime
 import os
 
 import polars as pl
-from ws_core import stock_attr
 
-from ws_branch.measure import allocation, calibration as cal, universe
+from ws_branch.measure import calibration as cal, universe
 from ws_branch.tables import io
 from v3_phase4_calibration import BUCKETS, WARRANT_ISSUER_HQ, _labelled
 
@@ -23,48 +22,36 @@ CONTROLS = lambda side: [f"cos_market_{side}", "log_gross", "log_n"]  # noqa: E7
 
 
 def build_variant(year: int, name: str, exclude) -> pl.DataFrame:
-    """重建 cosine,對 T1 與參考向量套同一個排除規則(剔 2330 / 剔當日前五)。"""
-    cache = f"/tmp/v3_phase4_cosines_{name}.parquet"
+    """重建 cosine,對 T1 與 T3 套同一個排除規則(剔 2330 / 剔當日前五)。
+
+    m2 起呼叫 `t4_broker_measure.compute_month`——與物化表**同一份公式**(官方 cosine
+    在 T3 觀測支撐上算);快取檔名帶 MEASUREMENT_VERSION,版本一變就重算
+    (外部審查 09-21:首版變體自己算 cosine、缺 T3 當 0,與主線不同源)。
+    """
+    from ws_branch.tables.transforms import t4_broker_measure as m
+    cache = f"/tmp/v3_phase4_cosines_{name}_{m.MEASUREMENT_VERSION}.parquet"
     if os.path.exists(cache):
         return pl.read_parquet(cache)
-    uni = universe.stock_universe(stock_attr(
-        start=f"{year}-01-01", end=f"{year}-12-31", columns=["coid", "mdate", "stktp_c"]))
-    t3 = universe.apply_universe(
-        io.scan("t3_official_daily", start=f"{year}-01-01", end=f"{year}-12-31").collect(), uni)
+    uni, t3, cal_map = m._inputs(year)
     parts = []
-    for m in range(1, 13):
-        start = datetime.date(year, m, 1)
-        end = (datetime.date(year + 1, 1, 1) if m == 12
-               else datetime.date(year, m + 1, 1)) - datetime.timedelta(days=1)
-        raw = (io.scan("t1_broker_daily", start=str(start), end=str(end))
-               .select("broker", "symbol_id", "date", "buy_dollar", "sell_dollar").collect())
-        if raw.height == 0:
+    for mo in range(1, 13):
+        month_start, month_end = m._month_bounds(year, mo)
+        prior = cal_map.filter(pl.col("date") >= month_start)["prev_date"].min()
+        read_from = min(prior, month_start) if prior is not None else month_start
+        t1 = (io.scan("t1_broker_daily", start=str(read_from), end=str(month_end))
+              .select("broker", "broker_name", "symbol_id", "date", "buy_dollar", "sell_dollar").collect())
+        if t1.height == 0:
             continue
-        sl = universe.apply_universe(raw, uni)
+        sl = universe.apply_universe(t1, uni)
         mkt = (sl.with_columns((pl.col("buy_dollar") + pl.col("sell_dollar")).alias("m"))
                .group_by("symbol_id", "date").agg(pl.col("m").sum()))
-        keep = exclude(mkt)                      # (symbol_id, date) 要保留的集合
-        sl = sl.join(keep, on=["symbol_id", "date"], how="semi")
-        mkt = mkt.join(keep, on=["symbol_id", "date"], how="semi")
-        t3m = (t3.filter((pl.col("date") >= start) & (pl.col("date") <= end))
-               .join(keep, on=["symbol_id", "date"], how="semi"))
-        base = sl.group_by("broker", "date").agg(
-            (pl.col("buy_dollar") + pl.col("sell_dollar")).sum().alias("gross_amt"),
-            pl.col("symbol_id").n_unique().alias("n_symbols"))
-        out = base
-        for side, col in (("buy", "buy_dollar"), ("sell", "sell_dollar")):
-            out = out.join(allocation.amount_cosine(sl, mkt, amount_col=col, ref_col="m",
-                                                    out=f"cos_market_{side}"),
-                           on=["broker", "date"], how="left")
-            for b, (bc, sc, _) in BUCKETS.items():
-                if b not in ("foreign", "prop_hedge"):
-                    continue
-                ref = t3m.select("symbol_id", "date", pl.col(bc if side == "buy" else sc).alias("r"))
-                out = out.join(allocation.amount_cosine(sl, ref, amount_col=col, ref_col="r",
-                                                        out=f"cos_{b}_{side}"),
-                               on=["broker", "date"], how="left")
-        parts.append(out)
-        print(f"  [{name}] {year}-{m:02d}", flush=True)
+        keep = exclude(mkt)                       # (symbol_id, date) 要保留的集合
+        t1k = t1.join(keep, on=["symbol_id", "date"], how="semi")
+        t3k = t3.join(keep, on=["symbol_id", "date"], how="semi")
+        out = m.compute_month(t1k, t3k, uni, cal_map, month_start=month_start)
+        if out.height:
+            parts.append(out)
+        print(f"  [{name}] {year}-{mo:02d}", flush=True)
     df = pl.concat(parts)
     df.write_parquet(cache)
     return df
@@ -86,7 +73,8 @@ def test_auc(df: pl.DataFrame, target: str, side: str, *, subset=None) -> dict:
 
 
 def main() -> None:
-    base = _labelled(pl.read_parquet("/tmp/v3_phase4_cosines.parquet"))
+    from v3_common import cosines
+    base = _labelled(cosines([YEAR]))     # m2 物化表,不讀舊快取
     print("=" * 78 + "\n[修正] raw 與殘差在同一母體(測試期)上比較\n" + "=" * 78)
     for side in ("buy", "sell"):
         r = test_auc(base, f"cos_foreign_{side}", side)

@@ -22,7 +22,8 @@ from ws_core import stock_attr
 from ws_branch.measure import calibration as cal, universe
 from ws_branch.measure.actor import _spearman_by_broker_day
 from ws_branch.tables import io
-from v3_phase4_calibration import CACHE, _labelled
+from v3_common import cosines
+from v3_phase4_calibration import _labelled
 
 YEAR = 2026
 RANK_CACHE = "/tmp/v3_phase4_rank_align.parquet"
@@ -73,8 +74,9 @@ def linear_score_auc(train: pl.DataFrame, test: pl.DataFrame, feats: list[str],
 
 
 def main() -> None:
-    base = _labelled(pl.read_parquet(CACHE)).join(build_rank_align(YEAR),
-                                                  on=["broker", "date"], how="left")
+    # m2 起讀物化表(官方 cosine 在 T3 觀測支撐上算),不讀舊快取(外部審查 09-21)
+    base = _labelled(cosines([YEAR])).join(build_rank_align(YEAR),
+                                           on=["broker", "date"], how="left")
     print("=" * 78 + "\n[§8 E4] rank_align 增量——決定在訓練期,測試期只確認\n" + "=" * 78)
     for side in ("buy", "sell"):
         cos, rank = f"cos_foreign_{side}", f"rank_align_{side}"

@@ -199,10 +199,13 @@ COLUMN_EPISTEMICS = {   # §4.5:標籤按欄位指定,不給整個分點單一�
     "gross_buy_amt/gross_sell_amt/gross_amt/net_amt/n_symbols": "observed(T1 加總,universe gate 後)",
     "top1_share/top5_share/directional_ratio": "observed(席位當日配置的描述量)",
     "basket_self_sim/cos_market_*": "observed(描述量;不是身份)",
-    "cos_foreign_*": "observed 描述量;作為 cohort 區分力已校準(Phase 4:年內 0.83 / 跨年 0.75-0.82,"
-                     "線性控規模後),**不是**投資人身份的 posterior",
-    "cos_fund_*/cos_prop_self_*": "observed 描述量;unanchored——Phase 4 殘差 AUC ≈0.5,不得讀成投信/自營行為",
-    "cos_prop_hedge_*": "observed 描述量;unanchored——間接證據弱(控規模後 +0.05-0.08)",
+    "cos_foreign_*": "observed 描述量;作為**外資券商 cohort** 區分力已校準(Phase 4 m2:殘差 AUC 年內 "
+                     "0.823/0.789、跨年 0.737/0.814,逐席位 refit 買 0.27-0.98 / 賣 0.16-0.97,線性控規模後;"
+                     "很可能低估、非嚴格下界),**不是**投資人身份的 posterior",
+    "cos_fund_*/cos_prop_self_*": "observed 描述量;unanchored——**沒有投信/自營的席位真值**,無法校準;"
+                                  "唯一做過的檢定是「對外資券商 cohort」無區分力(殘差 AUC 0.40-0.53),"
+                                  "**不能**據此說它能或不能辨識投信/自營",
+    "cos_prop_hedge_*": "observed 描述量;unanchored——無席位真值;權證發行商間接證據控規模後僅 +0.05-0.08",
     "official_missing_share": "observed(資料品質量,非行為量)",
     "身份推論": "unidentifiable——本表不含任何 actor 歸屬;cohort 為行政分類",
 }

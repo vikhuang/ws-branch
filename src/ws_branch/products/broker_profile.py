@@ -10,8 +10,8 @@
 3. **官方配置關聯 + 校準卡**:cos_foreign 等今日值、自身平常、以及**控規模/廣度/
    市場後的殘差在全市場席位中的百分位**(殘差係數只用 ≤ 當日資料估)。旁邊
    永遠附校準卡——Phase 4 證這是「對行政 cohort 的區分力」,**不是**投資人
-   身份的 posterior;fund / prop_self 標 unanchored(無區分力,不得讀成投信/
-   自營行為)。**這是席位頁與個股讀本唯一的差別**:個股頁不顯示 cosine(會被
+   身份的 posterior;fund / prop 三桶標 unanchored——**沒有席位真值,無法校準**
+   (對外資 cohort 無區分力不等於「已證無辨識力」)。**這是席位頁與個股讀本唯一的差別**:個股頁不顯示 cosine(會被
    讀成「這檔有外資」),席位頁顯示但綁著校準卡。
 4. **本子裡最重的股票**(salience 三問,§7):佔本子 / 平常 / 相對 z / 金額 z / 參與率。
 
@@ -36,20 +36,22 @@ CONTROLS = {"buy": ["cos_market_buy", "log_gross", "log_n"],
             "sell": ["cos_market_sell", "log_gross", "log_n"]}
 
 CALIBRATION_CARD = {
-    # 來源:findings/v3_phase4_calibration.md §3.5、v3_crossyear_2025.md §4(m2 物化表重跑)
+    # 來源:findings/v3_phase4_calibration.md §3.5、v3_crossyear_2025.md §4(m2 物化表重跑)。
+    # 所有檢定的標籤都是「外資券商 cohort」——fund/prop 三桶**沒有席位真值**,unanchored 的
+    # 理由是「無法校準」,不是「已證無辨識力」(2026-09-21 外部審查指正)。
     "measurement_version": "m2-2026-09-21",
     "foreign": {"status": "anchored",
-                "text": "殘差 AUC 對外資券商 cohort:年內 0.823/0.789、跨年 0.737/0.814;"
-                        "逐席位(refit)0.27-0.98——大五家 0.93-0.98、小額台 0.75-0.79、大和國泰 0.27。"
-                        "線性控規模/廣度/市場後的**行政 cohort 區分力**,很可能低估、非嚴格下界;"
-                        "**不是投資人身份的機率**"},
+                "text": "殘差 AUC 對外資券商 cohort:年內 買 0.823 / 賣 0.789,跨年 買 0.737 / 賣 0.814;"
+                        "逐席位 refit 買 0.27-0.98 / 賣 0.16-0.98(大五家 買 0.88-0.98 / 賣 0.89-0.98,"
+                        "小額台 0.63-0.81,大和國泰 買 0.27 / 賣 0.16)。線性控規模/廣度/市場後的"
+                        "**行政 cohort 區分力**,很可能低估、非嚴格下界;**不是投資人身份的機率**"},
     "fund": {"status": "unanchored",
-             "text": "殘差 AUC ≈0.52(年內/跨年皆然)——無區分力,**不得讀成投信行為**"},
+             "text": "無投信席位真值,**無法校準**;唯一做過的檢定是對外資券商 cohort 無區分力"
+                     "(殘差 AUC ≈0.52)——不能據此說它能或不能辨識投信"},
     "prop_self": {"status": "unanchored",
-                  "text": "殘差 AUC 0.40-0.48——無區分力,僅供研究"},
+                  "text": "無自營席位真值,無法校準;對外資 cohort 殘差 AUC 0.40-0.48(不是自營辨識力)"},
     "prop_hedge": {"status": "unanchored",
-                   "text": "權證發行商間接證據控規模後僅 +0.05-0.08(AUC 0.59-0.63)——弱,"
-                           "不得讀成避險行為"},
+                   "text": "無席位真值;權證發行商間接證據控規模後僅 +0.05-0.08(AUC 0.59-0.63)——弱"},
 }
 
 
@@ -104,7 +106,7 @@ def render(
                  f"方向性 {_num(r['directional_ratio'], '.3f')};籃子延續 {_num(r['basket_self_sim'], '.3f')}")
     lines.append(f"      配置像市場 買 {_num(r['cos_market_buy'], '.3f')} / 賣 {_num(r['cos_market_sell'], '.3f')};"
                  f"官方缺列佔本子 {_pct(r.get('official_missing_share'))};"
-                 f"available_at {r['available_at']:%Y-%m-%d %H:%M %Z}")
+                 f"available_at {r['available_at']:%Y-%m-%d %H:%M %Z}(推定:依 A7 落地規則,非逐檔實測)")
 
     # ── 2. 性格 / 規模 / 市況 / 特有 ──
     lines.append("-" * w)

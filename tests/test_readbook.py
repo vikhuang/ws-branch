@@ -174,3 +174,13 @@ def test_seat_state_missing_history_shows_dash_not_extreme() -> None:
     row = next(l for l in _state_block(out) if l.startswith("凱基"))
     assert row.count("—") >= 4 and "0.270" in row
     assert "『—』= 歷史不足" in out
+
+
+def test_missing_day_trade_pct_does_not_crash_page() -> None:
+    """附帶欄位缺值只顯示「缺資料」,流量與界限照常輸出(1101@2026-04-07 曾 TypeError)。"""
+    t3 = pl.DataFrame({"foreign_buy_sh": [1.0], "foreign_sell_sh": [1.0], "fund_buy_sh": [0.0],
+                       "fund_sell_sh": [0.0], "prop_self_buy_sh": [0.0], "prop_self_sell_sh": [0.0],
+                       "prop_hedge_buy_sh": [0.0], "prop_hedge_sell_sh": [0.0],
+                       "day_trade_pct": [None]}).with_columns(pl.col("day_trade_pct").cast(pl.Float64))
+    out = stock_readbook.render(_t1(), _bounds(), t3, symbol_id="3450", date=D, cohort_codes=COHORT)
+    assert "當沖佔比 缺資料" in out and "至少 2,060 張" in out

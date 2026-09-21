@@ -134,27 +134,29 @@ def main() -> None:
                    (pl.col("ci_width_group") / pl.col("ci_width_row")).round(1)
                    .alias("倍數")))
 
-    print("\n" + "=" * 78 + "\n[E2] leave-one-family-out(cos_foreign,買側)\n" + "=" * 78)
-    target, side = "cos_foreign_buy", "buy"
-    controls = [f"cos_market_{side}", "log_gross", "log_n"]
-    sub = df.filter(pl.all_horizontal(
-        [pl.col(c).is_not_null() for c in [target, *controls]]))
-    tr, te = cal.time_split(sub, train_frac=2 / 3)
-    m = cal.fit_residual(tr, target=target, controls=controls)
-    te_r = cal.apply_residual(te, m, out="resid")
-    loo = cal.leave_one_group_out(te_r, score="resid", label="is_foreign",
-                                  group="broker")
     names = (io.scan("t1_broker_daily", start=f"{YEAR}-01-01", end=f"{YEAR}-12-31")
              .select("broker", "broker_name").unique().collect())
-    print(loo.join(names, left_on="left_out", right_on="broker", how="left")
-          .select("broker_name", pl.col("auc").round(3), "n_pos")
-          .sort("auc"))
-    print("\n[E2b] leave-one-seat-out **refit**(係數排除該席位再估;該席位 vs 全部負樣本)")
-    loo2 = cal.leave_one_group_out_refit(tr, te, target=target, controls=controls,
-                                         label="is_foreign", group="broker")
-    print(loo2.join(names, left_on="held_out", right_on="broker", how="left")
-          .select("broker_name", pl.col("auc").round(3), "n_pos",
-                  pl.col("max_coef_shift").round(5)).sort("auc"))
+    for side in ("buy", "sell"):   # 買賣分欄(§4.2)——校準卡也要分側
+        print("\n" + "=" * 78 + f"\n[E2] leave-one-seat-out(cos_foreign,{side})\n" + "=" * 78)
+        target = f"cos_foreign_{side}"
+        controls = [f"cos_market_{side}", "log_gross", "log_n"]
+        sub = df.filter(pl.all_horizontal(
+            [pl.col(c).is_not_null() for c in [target, *controls]]))
+        tr, te = cal.time_split(sub, train_frac=2 / 3)
+        m = cal.fit_residual(tr, target=target, controls=controls)
+        te_r = cal.apply_residual(te, m, out="resid")
+        loo = cal.leave_one_group_out(te_r, score="resid", label="is_foreign",
+                                      group="broker")
+        print("影響力版(拿掉它,其餘 AUC):")
+        print(loo.join(names, left_on="left_out", right_on="broker", how="left")
+              .select("broker_name", pl.col("auc").round(3), "n_pos")
+              .sort("auc"))
+        print("refit 版(係數排除該席位再估;該席位 vs 全部負樣本):")
+        loo2 = cal.leave_one_group_out_refit(tr, te, target=target, controls=controls,
+                                             label="is_foreign", group="broker")
+        print(loo2.join(names, left_on="held_out", right_on="broker", how="left")
+              .select("broker_name", pl.col("auc").round(3), "n_pos",
+                      pl.col("max_coef_shift").round(5)).sort("auc"))
 
     print("\n" + "=" * 78 + "\n[E3] 自營兩桶:無席位 anchor,只報間接證據\n" + "=" * 78)
     for side in ("buy", "sell"):

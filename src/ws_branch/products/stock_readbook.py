@@ -97,7 +97,9 @@ def render(
             f"投信 買{_lots(r['fund_buy_sh'])}/賣{_lots(r['fund_sell_sh'])} | "
             f"自營自行 買{_lots(r['prop_self_buy_sh'])}/賣{_lots(r['prop_self_sell_sh'])} | "
             f"自營避險 買{_lots(r['prop_hedge_buy_sh'])}/賣{_lots(r['prop_hedge_sell_sh'])}")
-        lines.append(f"當沖佔比 {r['day_trade_pct']:.1f}%")
+        # 附帶欄位缺值不得讓整頁崩潰(2026-09-21 外部審查:1101@2026-04-07 TypeError)
+        dt = r.get("day_trade_pct")
+        lines.append("當沖佔比 缺資料" if dt is None else f"當沖佔比 {dt:.1f}%")
 
     # ── 會計界限(唯一 identified/bounded 等級的 actor 資訊)──
     lines.append("-" * w)

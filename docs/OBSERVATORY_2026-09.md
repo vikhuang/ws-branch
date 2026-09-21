@@ -217,6 +217,7 @@ O3 可沿 T2 推進,不等 actor 身份辨識。
 | 3 stock salience | ✅ 2026-09-21 | `measure/salience.py`、`findings/v3_phase3_salience.md`、讀本接上 | **零不是缺值**:未交易日是真實的零、必須入 baseline(只用有交易日會有 pair 內倖存者偏誤,實測某 pair 高 20 倍);salience 拆成**參與率 × 條件規模**兩個可讀量,相乘還原無條件均值 |
 | 4 actor calibration | ✅ 2026-09-21 | `measure/calibration.py`、`findings/v3_phase4_calibration.md`(+robustness/rank_align 腳本) | 外資桶殘差 AUC 年內 **0.828/0.795**(11/11 留一、剔 2330/前五、逐月皆成立);fund/prop_self 殘差 ≈0.5 無區分力;prop_hedge 發行商證據控規模後僅 +0.05-0.08(三分之二是規模);`log_gross+log_n` 單獨 AUC 0.993 = 外資席位就是最大席位,所有 AUC 只讀成「線性控規模後的行政 cohort 區分力」 |
 | 跨年(納入 2025) | ✅ 2026-09-21 | cohort v3 時變、T1 逐日建表、`findings/v3_crossyear_2025.md` | 外資殘差 AUC 跨年 **0.747/0.823**(係數 2025→2026;CI 下界 0.61/0.71),買側比年內掉 0.08,截距隨市況移;α_b 跨年穩、γ_t 吸收年份;暖機讓年初 pair 的 z 為 null 64%→25%;HiddenForeign 下界 37.6%→30.7%(**9A81 永豐金-匯立不入 cohort,user 拍板**);未觀測 2025 達 0.3-1.7%(A8) |
+| E 產品遷移(T4 v3 + 讀本) | 🔧 2026-09-21 進行中 | `tables/transforms/t4_broker_measure.py`(+manifest)、`measure/state.py`、讀本 v2、`tests/test_asof.py` | T4 v3 物化(2026 139,341 / 2025 199,625 分點日,39 秒/年);as-of 契約有測試(追加未來日既有列凍結);讀本能區分 raw / trait / 市況 / state / salience / 身份界線;複查抓到 **A9**(TEJ shareholding 168 檔 2025 整年缺列)→ 官方 cosine 改在 T3 觀測支撐上算。未做:分點 profile、Step F 消費端遷移、`--incr` |
 | v3.5 inverse attribution | ⏸ 未開始 | — | 輸入 = Phase 1 的 feasible set;不以官方總量閉環宣稱席位歸因正確 |
 
 **複查文化有效的證據**(Phase 3,`3170025`):複查用模組外方法手算後抓到真 bug

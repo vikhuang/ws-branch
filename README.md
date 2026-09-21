@@ -8,10 +8,11 @@
 > - 表:T1 分點×股票×日(逐 raw 日聚合建表,2025-2026 物化)/T2 價位表(ws-core lazy 視圖)/
 >   T3 官方法人流(2016+,單位=股/元;v2 含自營金額)/**T3b 會計硬界限**
 >   (v1.1.0,股票×日×側:官方外資量有多少必須在外資席位之外)/T4 分點日行為特徵
+>   (v2 rank 版)/**T4 v3 `t4_broker_measure`**(v1.3.0,分點×日最小量測表 + manifest)
 > - CLI:`uv run python -m ws_branch build|verify --table <t> [--year Y]`;
 >   個股讀本 `uv run python scripts/observatory/v3_readbook.py 3450 2026-09-14`
 > - 架構:`src/ws_branch/` 三色分層(純轉換/IO 殼/宣告);測試金字塔
->   (單元+e2e 合成小宇宙+真資料對帳),`uv run pytest`(189 tests)
+>   (單元+e2e 合成小宇宙+真資料對帳),`uv run pytest`(207 tests)
 > - **v1.1.0(2026-09-21)行動者層 v3 Phase 1-2**:universe gate、會計硬界限、
 >   trait/日效應/席位異常分解;規格在 ws-quant `docs/actor_layer_v3_*_2026-09-18.md`,
 >   結果在 `experiments/flow_lab/findings/v3_phase{1,2}_*.md`
@@ -19,6 +20,11 @@
 >   (外資桶殘差 AUC 年內 0.83 / 跨年 0.75-0.82;fund/prop 無區分力)、cohort v3
 >   時變有效期(9A81 永豐金-匯立不入 cohort,讀本標「外資客戶*」)、T1 逐日建表
 >   (記憶體事故 ④);findings `v3_phase{3,4}_*.md`、`v3_crossyear_2025.md`
+> - **v1.3.0(2026-09-21)Step E**:`t4_broker_measure` 物化(§4.2 欄位、`available_at`、
+>   manifest 含 source_snapshot/逐欄認識論標籤;官方 cosine 在 T3 觀測支撐上算,
+>   `official_missing_share`)、as-of 契約測試(追加未來日既有列凍結)、讀本改讀
+>   T4 v3 並補席位性格/市況/狀態(`measure/state.py`);audit A9 = TEJ shareholding
+>   168 檔 2025 整年缺列(上游待查)
 > - **以下舊 README 描述的 PNL/FIFO 系統已整包封存於 `pnl/`**,主線不維護;
 >   復用前置條件見 audit_ledger。
 

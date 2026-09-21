@@ -17,9 +17,9 @@ def _hist(n_days: int, seats: dict[str, list[float]]) -> pl.DataFrame:
     rows = []
     for b, vals in seats.items():
         for i, v in enumerate(vals):
-            rows.append((b, D0 + datetime.timedelta(days=i), v, 0.1))
-    return pl.DataFrame(rows, schema=["broker", "date", "top5_share", "directional_ratio"],
-                        orient="row")
+            rows.append((b, D0 + datetime.timedelta(days=i), v, 0.1, 1e8, 500))
+    return pl.DataFrame(rows, schema=["broker", "date", "top5_share", "directional_ratio",
+                                      "gross_amt", "n_symbols"], orient="row")
 
 
 def test_trait_day_state_hand_computed() -> None:
@@ -37,6 +37,8 @@ def test_trait_day_state_hand_computed() -> None:
                            primitives=("top5_share",), window=5, min_periods=3)
     r = {row["broker"]: row for row in out.iter_rows(named=True)}
     assert r["A"]["top5_share_trait"] == pytest.approx(0.204)
+    # 規模與廣度全程不變 → Δsize=Δbreadth=0 → 規模效應 0,市況 = median(dev)
+    assert r["A"]["top5_share_size"] == pytest.approx(0.0, abs=1e-9)
     assert r["A"]["top5_share_day"] == pytest.approx(0.296, abs=1e-9)   # median(0.296, 0.296, −0.004)
     assert r["A"]["top5_share_state"] == pytest.approx(0.0, abs=1e-9)
     assert r["C"]["top5_share_state"] < 0
@@ -63,7 +65,7 @@ def test_day_effect_needs_enough_seats_with_baseline() -> None:
                            primitives=("top5_share",), window=5, min_periods=3)
     a = out.filter(pl.col("broker") == "A").row(0, named=True)
     assert a["top5_share_trait"] is not None and a["top5_share_day"] is None
-    assert a["top5_share_state"] is None
+    assert a["top5_share_state"] is None and a["top5_share_size"] is None
 
 
 def test_rejects_history_beyond_target_date() -> None:
@@ -90,3 +92,29 @@ def test_asof_truncation_invariance() -> None:
                             date=t + datetime.timedelta(days=3), primitives=("top5_share",),
                             window=5, min_periods=3)
     assert full.height == 4
+
+
+def test_size_breadth_effect_is_removed_before_state() -> None:
+    """席位縮小交易範圍造成的集中度上升,要被歸到『規模』不是『特有』。
+
+    30 家席位:今日 n_symbols 各自變動(Δbreadth ∈ [−0.5, +0.5]),集中度偏離 =
+    −0.2 × Δbreadth(碰得少 → 更集中)+ 共同 +0.01。席位 S 碰少一半:偏離 +0.07,
+    完全由規模解釋 → 特有 z ≈ 0;市況 ≈ +0.01。"""
+    n, seats = 8, {}
+    rows = []
+    for k in range(30):
+        b = f"S{k:02d}"
+        db = -0.5 + k / 29            # log10 廣度變化
+        for i in range(n):
+            today = i == n - 1
+            top5 = 0.25 + (0.002 * (i % 2)) + ((-0.2 * db + 0.01) if today else 0.0)
+            n_sym = 500 * (10 ** db) if today else 500
+            rows.append((b, D0 + datetime.timedelta(days=i), top5, 0.1, 1e8, n_sym))
+    h = pl.DataFrame(rows, schema=["broker", "date", "top5_share", "directional_ratio",
+                                   "gross_amt", "n_symbols"], orient="row")
+    out = state.seat_state(h, date=D0 + datetime.timedelta(days=n - 1),
+                           primitives=("top5_share",), window=6, min_periods=3)
+    s00 = out.filter(pl.col("broker") == "S00").row(0, named=True)   # db = −0.5,碰少
+    assert s00["top5_share_size"] == pytest.approx(0.10, abs=0.005)   # −0.2 × −0.5
+    assert abs(s00["top5_share_state"]) < 0.5                         # 規模解釋掉,非特有
+    assert s00["top5_share_day"] == pytest.approx(0.01, abs=0.005)

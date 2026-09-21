@@ -39,14 +39,15 @@ def primitives(years: list[int]) -> pl.DataFrame:
 
 
 def cosines(years: list[int]) -> pl.DataFrame:
-    """Phase 4 席位日 × 官方桶 cosine,多年 concat。"""
-    parts = []
-    for y in years:
-        p = _path(COS, y)
-        if not p.exists():
-            from v3_phase4_calibration import build_cosines
-            build_cosines(y).write_parquet(p)
-        parts.append(pl.read_parquet(p))
+    """Phase 4 席位日 × 官方桶 cosine——**改讀物化表 t4_broker_measure**(m2 起)。
+
+    首版讀 /tmp 研究快取(缺 T3 當 0 的版本);表與研究要用同一份公式,且 m2 把
+    官方 cosine 改在 T3 觀測支撐上算,快取數字已過期(2026-09-21 外部審查指正)。
+    """
+    from ws_branch.tables import io
+
+    parts = [io.scan("t4_broker_measure", start=f"{y}-01-01", end=f"{y}-12-31").collect()
+             for y in years]
     return pl.concat(parts).sort("broker", "date")
 
 

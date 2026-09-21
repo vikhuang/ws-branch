@@ -16,10 +16,11 @@ Phase 1-2 實證逼出來的:
    salience_z ∈ [0, 0.5) 的「微幅變重要」有 18.1% 純粹是席位自己縮量
    (分母效應),z ≥ 1 才幾乎總有真實金額撐起。
 
-4. **席位性格 / 市況 / 狀態分開讀**(Step E,`measure.state`):對集中度與方向性
-   兩個 primitive,並列 今日 raw / 平常(自身 60 活躍日落後均值)/ 市況(當日所有
-   席位偏離的中位數)/ 席位特有 z(扣掉市況後對自身 sd)。§12 完成標準 3:讀本
-   要能區分 raw、trait、day effect、state。
+4. **席位性格 / 規模效應 / 市況 / 狀態分開讀**(Step E,`measure.state`):對集中度
+   與方向性兩個 primitive,並列 今日 raw / 平常(自身 60 活躍日落後均值)/ 規模
+   (今日規模與廣度變化在橫斷面上「應該」帶來的偏移)/ 市況(扣掉規模後所有席位
+   偏離的中位數)/ 特有 z(殘餘偏離對自身 sd)。§12 完成標準 3:讀本要能區分
+   raw、trait、day effect、state;**這些是讀時代理,不是 §6 的全樣本分解**。
 
 頁尾固定註腳:描述性觀測,非交易訊號(觀測站家法 §6)。
 """
@@ -166,20 +167,23 @@ def render(
         lines.append("-" * w)
         lines.append("席位性格 / 市況 / 狀態(§6;只用 ≤ 當日資料)"
                      "         集中度 top5_share            方向性 directional_ratio")
-        lines.append(f"{'席位':<16}{'今日':>8}{'平常':>8}{'市況':>8}{'特有z':>7}"
-                     f"   {'今日':>8}{'平常':>8}{'市況':>8}{'特有z':>7}{'歷史n':>6}")
+        lines.append(f"{'席位':<16}{'今日':>8}{'平常':>8}{'規模':>8}{'市況':>8}{'特有z':>7}"
+                     f"   {'今日':>8}{'平常':>8}{'規模':>8}{'市況':>8}{'特有z':>7}{'歷史n':>6}")
         st = d.head(top_n).select("broker", "broker_name").join(seat_state_day, on="broker", how="left")
         for row in st.iter_rows(named=True):
             line = f"{row['broker_name']:<16}"
             for p in ("top5_share", "directional_ratio"):
                 line += (f"{_num(row.get(p), '.3f'):>8}{_num(row.get(f'{p}_trait'), '.3f'):>8}"
-                         f"{_num(row.get(f'{p}_day'), '+.3f'):>8}{_num(row.get(f'{p}_state')):>7}   ")
+                         f"{_num(row.get(f'{p}_size'), '+.3f'):>8}{_num(row.get(f'{p}_day'), '+.3f'):>8}"
+                         f"{_num(row.get(f'{p}_state')):>7}   ")
             line += f"{_num(row.get('top5_share_n'), '.0f'):>4}"
             lines.append(line)
         lines.append("      『平常』= 該席位自身最近 60 個活躍日的落後均值(不含今日);"
-                     "『市況』= 今日所有席位『今日−平常』的中位數,")
-        lines.append("      是全市場共同的偏移;『特有z』= (今日−平常−市況)/自身 sd,"
-                     "扣掉市況後才是這個席位自己的事。")
+                     "『規模』= 它今天做大/做小、碰多/碰少")
+        lines.append("      「應該」帶來的偏移(當日橫斷面對規模與廣度變化的迴歸);"
+                     "『市況』= 扣掉規模後所有席位偏離的中位數;")
+        lines.append("      『特有z』= (今日−平常−規模−市況)/自身 sd——相對自身、規模與市況的殘餘偏離,"
+                     "是讀時代理,不是 §6 的全樣本分解。")
         lines.append("      『—』= 歷史不足 20 個活躍日或自身無變異,無從比較(不是最高異常)。")
 
     lines.append("-" * w)

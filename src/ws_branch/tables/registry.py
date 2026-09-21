@@ -216,14 +216,30 @@ def _verify_t3b(n_samples: int, seed: int) -> None:
             if bad.height:
                 print(bad.head(5))
                 raise SystemExit(f"FAIL: {d} 有 {bad.height} 列界限自相矛盾")
+            # 覆蓋:母體(universe ∩ 當日有分點成交)一檔都不能少——缺 T3/行情的
+            # 股票日要在表裡以 input_complete=False 出現,不是消失(A9 複查)
+            from ws_core import stock_attr
+
+            from ws_branch.measure import universe as _uni
+            uni_d = _uni.stock_universe(stock_attr(start=str(d), end=str(d),
+                                                   columns=["coid", "mdate", "stktp_c"]))
+            pop = _uni.apply_universe(
+                io.scan("t1_broker_daily", start=str(d), end=str(d))
+                .select("symbol_id", "date").unique().collect(), uni_d)
+            got = day.filter(pl.col("side") == "buy").select("symbol_id")
+            lost = pop.join(got, on="symbol_id", how="anti").height
+            if lost:
+                raise SystemExit(f"FAIL: {d} 母體 {pop.height} 檔,表內 {got.height} 檔,"
+                                 f"{lost} 檔無聲消失(缺 T3/行情須以 input_complete=False 進表)")
             n_missing = day.filter(~pl.col("input_complete")).height
             n_bad_input = day.filter(pl.col("input_complete")
                                      & ~pl.col("foreign_bounds_ok")).height
             n_bad_resid = day.filter(~pl.col("other_actor_sh_ok").fill_null(False)).height
             n_bad_unobs = day.filter(~pl.col("unobserved_sh_ok").fill_null(False)).height
-            print(f"  {d}: {day.height:,} 列(可發布 {ok.height:,});輸入缺值 "
-                  f"{n_missing}、輸入不自洽 {n_bad_input}、餘額為負 {n_bad_resid}、"
-                  f"閉環破裂 {n_bad_unobs}")
+            n_no_t3 = day.filter(~pl.col("t3_present")).height
+            print(f"  {d}: {day.height:,} 列(可發布 {ok.height:,});母體 {pop.height} 檔全在;"
+                  f"輸入缺值 {n_missing}(其中缺 T3 列 {n_no_t3})、輸入不自洽 {n_bad_input}、"
+                  f"餘額為負 {n_bad_resid}、閉環破裂 {n_bad_unobs}")
             if n_bad_input > day.height * 0.01:
                 raise SystemExit(
                     f"FAIL: {d} 輸入不自洽 {n_bad_input}/{day.height} 超過 1%——"

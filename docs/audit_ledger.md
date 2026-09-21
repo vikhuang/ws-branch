@@ -132,6 +132,9 @@
   缺列股票、4.5% 席位日超過 10%。m2 起改在「T3 觀測支撐」上算並存
   `official_missing_share`,超過 25% → null。②Phase 4 研究快取(2025/2026)用的
   是缺列當 0 的版本:2026 中位 0%、影響可忽略;2025 有下偏,跨年結論方向不變
-  但數字未重算。③t3b:缺列股票日 `input_complete=False` 不發布(已正確處理)。
+  但數字未重算。③t3b:**首版寫「缺列股票日 input_complete=False 不發布(已正確處理)」是錯的**——
+  建表對 T3/行情用 inner join,缺列股票日直接消失(2025-07-01:母體 1,882 檔、
+  表內 1,715 檔、167 檔無聲消失,表內發布率 100% 而母體覆蓋 91.1%;外部審查
+  09-21 指出)。已改 left join + `t3_present/vol_present` 旗標,verify 加母體覆蓋檢查。
 - **待辦(上游 ws-admin)**:查 shareholding 拉取為何漏這批 coid(疑與 tej_revenue
   cursor 事故同類);補拉 2024-2025 後重建 T3/T3b/T4 v3 並重跑 Phase 4 2025。

@@ -22,7 +22,7 @@ from ws_branch.measure import allocation, calibration as cal, guards, universe
 from ws_branch.tables import io
 
 YEAR = 2026
-CACHE = "/tmp/v3_phase4_cosines.parquet"
+CACHE = "/tmp/v3_phase4_cosines.parquet"   # 舊研究快取(缺 T3 當 0);robustness/rank_align 仍讀它,主線改讀 t4_broker_measure
 BUCKETS = {  # 官方桶 → (買金額欄, 賣金額欄, 有無席位 anchor)
     "foreign": ("foreign_buy_amt", "foreign_sell_amt", True),
     "fund": ("fund_buy_amt", "fund_sell_amt", False),
@@ -149,6 +149,12 @@ def main() -> None:
     print(loo.join(names, left_on="left_out", right_on="broker", how="left")
           .select("broker_name", pl.col("auc").round(3), "n_pos")
           .sort("auc"))
+    print("\n[E2b] leave-one-seat-out **refit**(係數排除該席位再估;該席位 vs 全部負樣本)")
+    loo2 = cal.leave_one_group_out_refit(tr, te, target=target, controls=controls,
+                                         label="is_foreign", group="broker")
+    print(loo2.join(names, left_on="held_out", right_on="broker", how="left")
+          .select("broker_name", pl.col("auc").round(3), "n_pos",
+                  pl.col("max_coef_shift").round(5)).sort("auc"))
 
     print("\n" + "=" * 78 + "\n[E3] 自營兩桶:無席位 anchor,只報間接證據\n" + "=" * 78)
     for side in ("buy", "sell"):

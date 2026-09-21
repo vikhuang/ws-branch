@@ -3,7 +3,9 @@
 架構文件 §8。**驗收對象是配置關聯與既有 cohort 區分力,不是投資人身份的
 正確率**——本土席位不是已知「非外資投資人」負樣本(Phase 1 硬界限已證
 至少 37.5% 的官方外資買量必須在 11 家外資席位之外),故本模組算出來的
-AUC 一律讀成「對**行政 cohort** 的區分力」,且是**被低估**的版本。
+AUC 一律讀成「對**行政 cohort** 的區分力」。負樣本含外資流量**很可能**壓低
+AUC,但這不是數學保證(被污染的負樣本若本來就落在低分端,拿掉反而降 AUC),
+故只說「可能低估」,**不說「下界」**(2026-09-21 外部審查指正)。
 
 三條方法論紀律(§8 明令)
 ------------------------
@@ -149,4 +151,31 @@ def leave_one_group_out(
                        sub.filter(~pl.col(label))[score]),
             "n_pos": sub.filter(pl.col(label)).height,
         })
+    return pl.DataFrame(rows)
+
+
+def leave_one_group_out_refit(
+    train: pl.DataFrame, test: pl.DataFrame, *, target: str, controls: list[str],
+    label: str, group: str,
+) -> pl.DataFrame:
+    """真正的「未見群組」檢查:殘差係數在**排除該群組**的訓練期估,再看該群組
+    在測試期的殘差對負樣本分不分得開。
+
+    `leave_one_group_out` 只是把一家從評估樣本拿掉看其餘穩不穩(影響力分析);
+    規格 §8 要的 leave-one-family-out 是外推——係數不能見過它。實務上殘差係數
+    是無標籤的 3 個 OLS 係數、九萬列,少一家幾乎不動,但「幾乎」要量出來,
+    不能用講的(2026-09-21 外部審查指正)。回傳每群組:auc(該群組 vs 全部負樣本)、
+    n_pos、係數與全樣本版的最大差。
+    """
+    full = fit_residual(train, target=target, controls=controls)
+    groups = train.filter(pl.col(label))[group].unique().sort().to_list()
+    rows = []
+    for g in groups:
+        m = fit_residual(train.filter(~((pl.col(group) == g) & pl.col(label))),
+                         target=target, controls=controls)
+        te = apply_residual(test, m, out="_r")
+        pos = te.filter((pl.col(group) == g) & pl.col(label))["_r"]
+        neg = te.filter(~pl.col(label))["_r"]
+        rows.append({"held_out": g, "auc": auc(pos, neg), "n_pos": pos.len(),
+                     "max_coef_shift": max(abs(a - b) for a, b in zip(m.coefs, full.coefs))})
     return pl.DataFrame(rows)

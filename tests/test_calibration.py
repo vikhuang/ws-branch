@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import datetime
+import random
 
 import polars as pl
 import pytest
@@ -98,3 +99,27 @@ def test_leave_one_group_out_detects_single_group_driving_signal() -> None:
     dropped_b00 = out.filter(pl.col("left_out") == "B00")["auc"][0]
     dropped_b01 = out.filter(pl.col("left_out") == "B01")["auc"][0]
     assert dropped_b00 < 0.65 < dropped_b01
+
+
+def test_leave_one_group_out_refit_excludes_group_from_fit() -> None:
+    """留出的群組不得參與殘差係數擬合;該群組的測試期殘差對負樣本仍要能評分。"""
+    import datetime as dt
+
+    rng = random.Random(3)
+    rows = []
+    for i in range(400):
+        g = ["F1", "F2", "N1", "N2"][i % 4]
+        is_pos = g.startswith("F")
+        x = rng.random()
+        # 正樣本的 target 比負樣本高 0.3;F1 另帶一個極端截距,讓「有沒有見過 F1」差得出來
+        y = 0.5 * x + (0.3 if is_pos else 0.0) + (5.0 if g == "F1" else 0.0) + rng.gauss(0, 0.05)
+        rows.append({"broker": g, "is_foreign": is_pos, "x": x, "y": y,
+                     "date": dt.date(2026, 1, 1) + dt.timedelta(days=i // 4)})
+    df = pl.DataFrame(rows)
+    train, test = cal.time_split(df, train_frac=0.5)
+    out = cal.leave_one_group_out_refit(train, test, target="y", controls=["x"],
+                                        label="is_foreign", group="broker")
+    assert set(out["held_out"]) == {"F1", "F2"}
+    f1 = out.filter(pl.col("held_out") == "F1").row(0, named=True)
+    assert f1["auc"] > 0.99                     # 極端群組即使沒被擬合過也分得開
+    assert f1["max_coef_shift"] > 0.0           # 係數真的重估過(不是拿全樣本的)

@@ -69,9 +69,16 @@ def build_year(year: int) -> pl.LazyFrame:
         t1 = _t1_stock_day(year, month)
         if t1.height == 0:
             continue
+        # 母體 = universe ∩ 當日有分點成交的股票日。T3 或行情缺列的股票日**必須進表**
+        # 並以 input_complete=False 擋下發布——inner join 會讓它們無聲消失,
+        # 表內發布率 100% 而母體覆蓋只有 91%(2025-07-01 實測 167 檔;A9 複查抓到)
         wide = (universe.apply_universe(t1, uni)
-                .join(t3, on=["symbol_id", "date"], how="inner")
-                .join(px, on=["symbol_id", "date"], how="inner"))
+                .join(t3.with_columns(pl.lit(True).alias("t3_present")),
+                      on=["symbol_id", "date"], how="left")
+                .join(px.with_columns(pl.lit(True).alias("vol_present")),
+                      on=["symbol_id", "date"], how="left")
+                .with_columns(pl.col("t3_present").fill_null(False),
+                              pl.col("vol_present").fill_null(False)))
         if wide.height == 0:
             continue
         rows = []
@@ -99,7 +106,7 @@ def build_year(year: int) -> pl.LazyFrame:
             # 07-17 兩天全市場性地 T1 > TEJ vol(見 audit_ledger A6),那種
             # 日子的 V 偏低會讓 L=max(0,S+F−V) 虛高。三個旗標合成一欄,
             # 下游不必自己記得要 AND。
-            # 輸入有 null(T3 該股日有列但值缺)時,三個旗標都會是 null。
+            # 輸入有 null(T3/行情缺列,或 T3 有列但值缺)時,三個旗標都會是 null。
             # **旗標不得為 null**——下游用 `~flag` 篩選會靜默漏掉這些列
             # (2026-09-20 查到 112 列)。缺值一律視為不可發布,並另立
             # `input_complete` 欄區分「輸入缺值」與「輸入互相矛盾」。
@@ -123,7 +130,7 @@ def build_year(year: int) -> pl.LazyFrame:
                 "foreign_x_lo", "foreign_x_hi", "foreign_x_width",
                 "foreign_y_lo", "foreign_y_hi",
                 "foreign_cov_lo", "foreign_cov_hi", "foreign_bounds_ok",
-                "input_complete", "bounds_publishable"))
+                "t3_present", "vol_present", "input_complete", "bounds_publishable"))
         parts.append(pl.concat(rows))
     if not parts:
         raise ValueError(f"t3b_accounting_bounds {year}: 無任何月份有資料")

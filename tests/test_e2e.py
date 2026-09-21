@@ -63,13 +63,16 @@ def _mk_universe(root: Path) -> None:
     ])
     _write_broker_shard(root, D2, [
         R("2330", dt2, "A1", "元大-台北", "101.00", 50_000, 50_000),
+        # 1531@D2:有分點成交、有行情,但 shareholding **沒有列**(A9 那種缺口)
+        # → t3b 必須以 input_complete=False 進表,不得消失
+        R("1531", dt2, "A1", "元大-台北", "36.00", 2_000, 0),
     ])
 
     (root / "tej").mkdir(parents=True, exist_ok=True)
     pl.DataFrame({
-        "coid": ["2330", "1531", "2330"],
-        "mdate": [D1, D1, D2],
-        "vol": [1001, 21, 50],
+        "coid": ["2330", "1531", "2330", "1531"],
+        "mdate": [D1, D1, D2, D2],
+        "vol": [1001, 21, 50, 2],
     }).write_parquet(root / "tej" / "prices.parquet")
 
     base = {k: 0.0 for k in [
@@ -182,11 +185,12 @@ def test_e2e_t4_v2_hand_checked(universe: dict) -> None:
     assert a1_d1["sector_hhi"] == pytest.approx(exp_hhi)
     assert a1_d1["top_sector"] == "半導體業"
 
-    # basket_self_sim:A1 D2(僅 2330)vs D1(2330+1531)cosine
+    # basket_self_sim:A1 D2(2330 + 1531@D2 2,000 股×36)vs D1(2330+1531)cosine
     a1_d2 = df.filter((pl.col("broker") == "A1") & (pl.col("date") == D2)).row(0, named=True)
+    g1531_d2 = 2_000 * 36.0
     norm_d1 = math.sqrt(g2330_d1**2 + g1531_d1**2)
-    norm_d2 = g2330_d2
-    exp_sim = (g2330_d1 * g2330_d2) / (norm_d1 * norm_d2)
+    norm_d2 = math.sqrt(g2330_d2**2 + g1531_d2**2)
+    exp_sim = (g2330_d1 * g2330_d2 + g1531_d1 * g1531_d2) / (norm_d1 * norm_d2)
     assert a1_d2["basket_self_sim"] == pytest.approx(exp_sim)
     # A1 首個活躍日(D1)無「昨天」可比 → null,不得補 0
     assert a1_d1["basket_self_sim"] is None
@@ -232,9 +236,15 @@ def test_e2e_t3b_bounds_hand_checked(universe: dict) -> None:
     assert r["other_actor_sh"] == pytest.approx(601_000) and r["other_actor_sh_ok"]
     assert r["universe_version"] == "stock_v1"
 
+    # 1531@D2:有分點成交、有行情、無 T3 列 → 列在、不可發布、缺源旗標明確(A9)
+    m = df.filter((pl.col("symbol_id") == "1531") & (pl.col("date") == D2)
+                  & (pl.col("side") == "buy")).row(0, named=True)
+    assert m["vol_present"] and not m["t3_present"]
+    assert not m["input_complete"] and m["bounds_publishable"] is False
+    assert m["official_foreign_sh"] is None and m["market_total_sh"] == pytest.approx(2_000)
     # 1531@D1 賣方:零股尾數 21,501 股 vs vol 21 張 → 未觀測 −501 股,容差內
     r2 = df.filter((pl.col("symbol_id") == "1531") & (pl.col("side") == "sell")
-                   ).row(0, named=True)
+                   & (pl.col("date") == D1)).row(0, named=True)
     assert r2["unobserved_sh"] == pytest.approx(21_000 - 21_501)
     assert r2["unobserved_sh_ok"]
 
@@ -391,3 +401,43 @@ def test_e2e_cross_year_first_day_basket_uses_prior_year(universe: dict, tmp_pat
     assert df["date"].min() == D1                       # 2025-12-31 只作前一日,不進 2026 表
     man = json.loads((tables2 / "t4_broker_measure" / "year=2026.manifest.json").read_text())
     assert man["source_snapshot"]["t1_broker_daily_prev_year"]["bytes"] > 0
+
+
+def test_e2e_revision_changes_only_affected_rows_and_snapshot(universe: dict, tmp_path: Path) -> None:
+    """§11「增量重建要包含受修訂資料影響的下游範圍,並記錄可重現的 source snapshot」。
+
+    現行只有整年重建(無 --incr):修訂 D1 的 raw 後全鏈重建,D1 的 T4 v3 列必須變、
+    D2 的列不得變(D2 的 basket 看 D1——所以 D2 的 basket **會**變,這是正確的下游
+    範圍;其餘欄位不變),manifest 的 source_snapshot 必須不同。
+    """
+    src2, tables2 = tmp_path / "src2", tmp_path / "tables2"
+    shutil.copytree(universe["src"], src2)
+    tables2.mkdir()
+    dt1 = _utc_midnight_taipei(D1)
+    _write_broker_shard(src2, D1, [
+        dict(symbol_id="2330", date=dt1, broker="A1", broker_name="元大-台北",
+             price="100.00", buy=600_000, sell=200_000),
+        dict(symbol_id="2330", date=dt1, broker="8440", broker_name="摩根大通",
+             price="1,085.00", buy=400_000, sell=800_000),
+        dict(symbol_id="2330", date=dt1, broker="P1", broker_name="國泰-自營",
+             price="-", buy=1_000, sell=1_000),
+        # 修訂:1531@D1 元大買量從 21,501 改成 30,000
+        dict(symbol_id="1531", date=dt1, broker="A1", broker_name="元大-台北",
+             price="35.50", buy=30_000, sell=21_501),
+    ])
+    env = {"WS_DATA_ROOT": str(src2), "WS_BRANCH_DATA_DIR": str(tables2)}
+    for t in ["t1_broker_daily", "t3_official_daily", "t4_broker_measure"]:
+        _run(["build", "--table", t, "--year", "2026"], env)
+    before = pl.read_parquet(universe["tables"] / "t4_broker_measure" / "year=2026.parquet")
+    after = pl.read_parquet(tables2 / "t4_broker_measure" / "year=2026.parquet")
+    b1 = before.filter((pl.col("broker") == "A1") & (pl.col("date") == D1)).row(0, named=True)
+    a1 = after.filter((pl.col("broker") == "A1") & (pl.col("date") == D1)).row(0, named=True)
+    assert a1["gross_buy_amt"] > b1["gross_buy_amt"]                    # D1 受修訂影響
+    b2 = before.filter((pl.col("broker") == "A1") & (pl.col("date") == D2)).row(0, named=True)
+    a2 = after.filter((pl.col("broker") == "A1") & (pl.col("date") == D2)).row(0, named=True)
+    assert a2["gross_buy_amt"] == b2["gross_buy_amt"] and a2["n_symbols"] == b2["n_symbols"]
+    assert a2["basket_self_sim"] != b2["basket_self_sim"]               # 下游範圍:D2 的 basket 看 D1
+    m_before = json.loads((universe["tables"] / "t4_broker_measure" / "year=2026.manifest.json").read_text())
+    m_after = json.loads((tables2 / "t4_broker_measure" / "year=2026.manifest.json").read_text())
+    assert m_after["source_snapshot"]["t1_broker_daily"] != m_before["source_snapshot"]["t1_broker_daily"]
+    assert "available_at_basis" in m_after

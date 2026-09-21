@@ -249,6 +249,9 @@ def manifest(year: int) -> dict:
         "as_of": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
         "available_at_rule": f"每列 date 當天 {AVAILABLE_AT_TIME:%H:%M} {TAIPEI}"
                              "(broker_tx 21:35 + shareholding 21:43 落地後;audit A7)",
+        "available_at_basis": "規則,非逐檔實測:依 A7 三個連續日的落地 mtime 訂;歷史回補的分片"
+                              "(2021-2025)是一次拉回,其系統到達時間晚於此規則,規則描述的是"
+                              "市場公開時點。延遲/修訂資料「當時是否可得」無逐日證據(2026-09-21 外部審查)。",
         "window": None, "min_samples": None,
         "official_cosine_max_missing_share": OFFICIAL_MAX_MISSING_SHARE,
         "fallback": "無:本表不含滾動量;baseline/state 讀時以 measure.baseline 嚴格落後窗計算",

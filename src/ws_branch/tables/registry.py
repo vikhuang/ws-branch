@@ -26,6 +26,7 @@ class Table:
     first_year: int = FIRST_YEAR
     date_col: str = "date"
     manifest: Callable[[int], dict] | None = None   # §4.5:年 → manifest 內容(runner 寫檔)
+    frozen: bool = False   # Step F:退役的現行產出——仍可 build 供重現,但不隨年份更新
 
 
 def _verify_t1(n_samples: int, seed: int) -> None:
@@ -332,10 +333,13 @@ TABLES: dict[str, Table] = {
         verify=_verify_t3b,
         first_year=2021,
     ),
+    # T4 v2(rank 版指紋、multiplicity):Step F 退役(docs/STEP_F_INVENTORY_2026-09-21.md)
+    # ——舊檔保留、可重建供重現,不原地覆蓋語意;新消費端一律接 t4_broker_measure
     "t4_broker_features": Table(
         name="t4_broker_features",
         build_year=t4_broker_features.build_year,
         verify=_verify_t4,
+        frozen=True,
     ),
     # T4 v3(Step E):與 v2 並存,不原地覆蓋(§11);manifest 由 runner 寫
     "t4_broker_measure": Table(

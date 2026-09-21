@@ -74,3 +74,10 @@ def test_cli_arg_mapping(fake_table, monkeypatch) -> None:
     assert fake_table["built"] == [2025]
     cli.main(["verify", "--table", "fake", "--n", "9"])
     assert fake_table["verified"][-1][0] == 9
+
+def test_frozen_table_flag_marks_t4_v2_only() -> None:
+    """Step F:T4 v2 標 frozen(可重現、不更新);v3 與其他表不得被誤標。"""
+    from ws_branch.tables.registry import TABLES
+    assert TABLES["t4_broker_features"].frozen
+    assert not TABLES["t4_broker_measure"].frozen
+    assert not TABLES["t1_broker_daily"].frozen and not TABLES["t3b_accounting_bounds"].frozen

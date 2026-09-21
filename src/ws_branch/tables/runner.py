@@ -40,6 +40,8 @@ def build(name: str, year: int | None = None, force: bool = False) -> None:
             subprocess.run(cmd, check=True)
         return
     years = [year]
+    if t.frozen:
+        print(f"[frozen] {t.name} 已退役(Step F):此次建表僅供歷史重現,新消費端請接 v3 表")
     for y in years:
         out = io.year_path(t.name, y)
         # 存在即跳過(含當年)——當年的增量更新之後以明確的 --incr 語意提供,

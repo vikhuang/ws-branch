@@ -13,7 +13,7 @@
 >   個股讀本 `uv run python scripts/observatory/v3_readbook.py 3450 2026-09-14`;
 >   分點 profile `uv run python scripts/observatory/v3_broker_profile.py 8440 2026-09-14`
 > - 架構:`src/ws_branch/` 三色分層(純轉換/IO 殼/宣告);測試金字塔
->   (單元+e2e 合成小宇宙+真資料對帳),`uv run pytest`(216 tests)
+>   (單元+e2e 合成小宇宙+真資料對帳),`uv run pytest`(217 tests)
 > - **v1.1.0(2026-09-21)行動者層 v3 Phase 1-2**:universe gate、會計硬界限、
 >   trait/日效應/席位異常分解;規格在 ws-quant `docs/actor_layer_v3_*_2026-09-18.md`,
 >   結果在 `experiments/flow_lab/findings/v3_phase{1,2}_*.md`
@@ -37,6 +37,9 @@
 >   (讀本 + profile)到位;剩 Step F、`--incr`、A9 上游
 > - **以下舊 README 描述的 PNL/FIFO 系統已整包封存於 `pnl/`**,主線不維護;
 >   復用前置條件見 audit_ledger。
+> - **v1.4.1(2026-09-21)外部審查第二輪五點**:讀本缺值崩潰與歷史身分變更中止修復;
+>   rank_align/robustness 改讀物化表(全部校準路徑同一份公式);校準卡買賣分側、
+>   fund/prop 改「無席位真值、無法校準」;manifest 產物補 available_at_basis
 
 ---
 

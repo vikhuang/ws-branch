@@ -13,7 +13,9 @@
 > T4 v3 物化 ✅、as-of 測試 ✅、讀本 trait/規模/市況/state ✅(`measure/state.py`
 > 是讀時代理,非 §6 全樣本分解;席位特有 z 已扣規模/廣度變化)、分點 profile ✅
 > (`products/broker_profile.py`,唯一顯示 cosine 的產品,綁校準卡);Step F
-> 消費端遷移與 `--incr` 未做。校準 AUC 讀成「很可能低估」不說「下界」。新核心:
+> 消費端遷移與 `--incr` 未做。校準 AUC 讀成「很可能低估」不說「下界」;fund/prop
+> 三桶 unanchored 的理由是**無席位真值**(對外資 cohort 無區分力 ≠ 已證無辨識力);
+> 研究腳本一律讀 `t4_broker_measure`,不讀 /tmp 快取。新核心:
 > - CLI:`uv run python -m ws_branch build|verify [--table t1_broker_daily|
 >   t3_official_daily|t3b_accounting_bounds|t4_broker_features] [--year Y]`
 >   (factory.py=相容薄殼);讀本 `scripts/observatory/v3_readbook.py <股票> <日期>`、

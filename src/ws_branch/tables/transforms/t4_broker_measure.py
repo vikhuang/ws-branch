@@ -28,7 +28,7 @@ import polars as pl
 from ws_core import stock_attr, tradedays
 from ws_core.paths import fugle_dir, tej_dir
 
-from ws_branch.measure import allocation, universe
+from ws_branch.measure import allocation, calibration_card, universe
 from ws_branch.tables import io, windows
 
 TABLE = "t4_broker_measure"
@@ -49,6 +49,155 @@ NULL_RULES = {
     "cos_<bucket>_*": "在「當日有 T3 列」的股票支撐上計算(分子與兩側 norm 同支撐;T3 缺列是來源缺值,"
                       "不得視為 0,§4.2);official_missing_share > OFFICIAL_MAX_MISSING_SHARE、"
                       "席位該側 norm=0 或官方桶向量 norm=0 → null",
+    "official_missing_share": "席位當日 gross 中落在 universe 內但當日無 T3 列的股票之比例;0 = 參考向量完整觀測",
+    "basket_self_sim": "前一交易日無 T1 資料(如年初首日無前一年表)→ null;完整兩日但籃子不重疊 → 0",
+}
+
+
+_month_bounds = windows.month_bounds   # 舊名保留(verify/研究腳本引用)
+
+
+def compute_month(
+    t1: pl.DataFrame, t3: pl.DataFrame, uni: pl.DataFrame, cal: pl.DataFrame,
+    *, month_start: datetime.date,
+) -> pl.DataFrame:
+    """純函數:一個月(含前一交易日)的 T1 切片 → 該月分點日量測列。
+
+    t1:broker, broker_name, symbol_id, date, buy_dollar, sell_dollar(未 gate)
+    t3:symbol_id, date + OFFICIAL_BUCKETS 的金額欄(未 gate)
+    uni:逐日 (symbol_id, date) 普通股;cal:`prev_trading_day_map` 輸出
+    """
+    sl = universe.apply_universe(t1, uni).with_columns(
+        (pl.col("buy_dollar") + pl.col("sell_dollar")).alias("gross"))
+    in_month = sl.filter(pl.col("date") >= month_start)
+    if in_month.height == 0:
+        return pl.DataFrame()
+    traded = in_month.filter(pl.col("gross") > 0)
+    base = (traded.group_by("broker", "date").agg(
+        pl.col("broker_name").max().alias("broker_name"),   # 群內順序無關(確定性)
+        pl.col("buy_dollar").sum().alias("gross_buy_amt"),
+        pl.col("sell_dollar").sum().alias("gross_sell_amt"),
+        pl.col("gross").sum().alias("gross_amt"),
+        pl.col("symbol_id").n_unique().alias("n_symbols"),     # §4.2:gross>0 的股票數
+        pl.col("gross").max().alias("_t1"),
+        pl.col("gross").sort(descending=True).head(5).sum().alias("_t5"))
+        .with_columns(
+            (pl.col("gross_buy_amt") - pl.col("gross_sell_amt")).alias("net_amt"))
+        .with_columns(
+            (pl.col("net_amt").abs() / pl.col("gross_amt")).fill_nan(None)
+            .alias("directional_ratio"),
+            (pl.col("_t1") / pl.col("gross_amt")).fill_nan(None).alias("top1_share"),
+            (pl.col("_t5") / pl.col("gross_amt")).fill_nan(None).alias("top5_share"))
+        .drop("_t1", "_t5"))
+    mkt = traded.group_by("symbol_id", "date").agg(pl.col("gross").sum().alias("m"))
+    t3g = universe.apply_universe(t3, uni)
+    # 官方 cosine 的支撐 = universe ∩ 當日有 T3 列的股票:T3 缺列(2025 有 168 檔整年
+    # 缺、2026 同批 47 天缺,audit A9)是來源缺值,不能當 0 進參考向量;席位向量與
+    # 兩側 norm 都限制在同一支撐,並記錄被排除的 gross 比例
+    amt_cols = [c for pair in OFFICIAL_BUCKETS.values() for c in pair[:2]]
+    # 「觀測到」= 有 T3 列且八個金額欄皆非 null(任一 null 的列與缺列同視為來源缺值)
+    observed = (t3g.filter(pl.all_horizontal([pl.col(c).is_not_null() for c in amt_cols]))
+                .select("symbol_id", "date").unique())
+    in_obs = in_month.join(observed, on=["symbol_id", "date"], how="semi")
+    missing_share = (in_month.join(observed.with_columns(pl.lit(True).alias("_o")),
+                                   on=["symbol_id", "date"], how="left")
+                     .group_by("broker", "date")
+                     .agg((1 - pl.col("gross").filter(pl.col("_o")).sum() / pl.col("gross").sum())
+                          .fill_nan(None).alias("official_missing_share")))
+    out = base.join(missing_share, on=["broker", "date"], how="left")
+    too_missing = pl.col("official_missing_share") > OFFICIAL_MAX_MISSING_SHARE
+    for side, col in (("buy", "buy_dollar"), ("sell", "sell_dollar")):
+        out = out.join(allocation.amount_cosine(
+            in_month, mkt, amount_col=col, ref_col="m", out=f"cos_market_{side}"),
+            on=["broker", "date"], how="left")
+        for name, (bcol, scol, _) in OFFICIAL_BUCKETS.items():
+            ref = (t3g.join(observed, on=["symbol_id", "date"], how="semi")
+                   .select("symbol_id", "date", pl.col(bcol if side == "buy" else scol).alias("r")))
+            c = f"cos_{name}_{side}"
+            out = (out.join(allocation.amount_cosine(
+                in_obs, ref, amount_col=col, ref_col="r", out=c),
+                on=["broker", "date"], how="left")
+                .with_columns(pl.when(too_missing).then(None).otherwise(pl.col(c)).alias(c)))
+    out = out.join(
+        allocation.basket_self_similarity(sl, cal).filter(pl.col("date") >= month_start),
+        on=["broker", "date"], how="left")
+    return out.with_columns(
+        pl.col("date").cast(pl.Datetime("us")).dt.offset_by(
+            f"{AVAILABLE_AT_TIME.hour}h{AVAILABLE_AT_TIME.minute}m")
+        .dt.replace_time_zone(TAIPEI).alias("available_at"),
+    ).sort("date", "broker")
+
+
+def _calendar(year: int) -> pl.DataFrame:
+    cal_raw = tradedays(start=f"{year - 1}-12-01", end=f"{year}-12-31")
+    return allocation.prev_trading_day_map(
+        cal_raw.filter(pl.col("is_trading_day"))["zdate"].cast(pl.Date).to_list())
+
+
+def _inputs(year: int) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame]:
+    # universe 要涵蓋前一年最後一個交易日:1 月首個交易日的 basket 要看它,
+    # 只取當年會把前一日整段 gate 掉、首日 basket 全 null(Phase 1 快取即有此缺口)
+    uni = universe.stock_universe(stock_attr(
+        start=f"{year - 1}-12-01", end=f"{year}-12-31", columns=["coid", "mdate", "stktp_c"]))
+    t3 = (io.scan("t3_official_daily", start=f"{year}-01-01", end=f"{year}-12-31")
+          .select("symbol_id", "date",
+                  *[c for pair in OFFICIAL_BUCKETS.values() for c in pair[:2]])
+          .collect())
+    return uni, t3, _calendar(year)
+
+
+def build_year(year: int) -> pl.LazyFrame:
+    uni, t3, cal = _inputs(year)
+    parts = []
+    for m in range(1, 13):
+        month_start, month_end = _month_bounds(year, m)
+        read_from = windows.month_read_from(cal, month_start)
+        t1 = (io.scan("t1_broker_daily", start=str(read_from), end=str(month_end))
+              .select("broker", "broker_name", "symbol_id", "date",
+                      "buy_dollar", "sell_dollar").collect())
+        if t1.height == 0:
+            continue
+        part = compute_month(t1, t3, uni, cal, month_start=month_start)
+        if part.height:
+            parts.append(part)
+            print(f"  {TABLE} {year}-{m:02d}: {part.height:,} 分點日", flush=True)
+    if not parts:
+        raise ValueError(f"{TABLE} {year}:無任何分點日")
+    return pl.concat(parts).lazy()
+
+
+def _snapshot(path: Path) -> dict | None:
+    if not path.exists():
+        return None
+    st = path.stat()
+    return {"path": str(path), "bytes": st.st_size,
+            "mtime": datetime.datetime.fromtimestamp(st.st_mtime).isoformat(timespec="seconds")}
+
+
+def _dist(name: str) -> bool:
+    import importlib.metadata as md
+    try:
+        md.version(name)
+        return True
+    except md.PackageNotFoundError:
+        return False
+
+
+def _meta_updated_at(path: Path) -> str | None:
+    try:
+        return json.loads(path.read_text()).get("updated_at")
+    except (OSError, ValueError):
+        return None
+
+
+COLUMN_EPISTEMICS = {   # §4.5:標籤按欄位指定,不給整個分點單一身份等級
+    "gross_buy_amt/gross_sell_amt/gross_amt/net_amt/n_symbols": "observed(T1 加總,universe gate 後)",
+    "top1_share/top5_share/directional_ratio": "observed(席位當日配置的描述量)",
+    "basket_self_sim/cos_market_*": "observed(描述量;不是身份)",
+    "cos_foreign_*": "observed 描述量;作為**外資券商 cohort** 區分力已校準——數字見 manifest.calibration_card"
+                     "(measure/calibration_card.py,與 profile 校準卡同一份);**不是**投資人身份的 posterior",
+    "cos_fund_*/cos_prop_self_*/cos_prop_hedge_*": "observed 描述量;unanchored——**沒有席位真值**,無法校準;"
+                                                   "對外資 cohort 無區分力不等於已證無辨識力(見 calibration_card)",
     "official_missing_share": "席位當日 gross 中落在 universe 內但當日無 T3 列的股票之比例;0 = 參考向量完整觀測",
     "basket_self_sim": "前一交易日無 T1 資料(如年初首日無前一年表)→ null;完整兩日但籃子不重疊 → 0",
 }
@@ -244,6 +393,8 @@ def manifest(year: int) -> dict:
         "fit_start": str(dates[0, "lo"]), "fit_end": str(dates[0, "hi"]),
         "fit_note": "本表無模型擬合;fit_start/fit_end = 資料日期範圍(依 §4.5 欄名保留)",
         "column_epistemics": COLUMN_EPISTEMICS,
+        "calibration_card": {"data_version": calibration_card.DATA_VERSION,
+                             **calibration_card.CALIBRATION_CARD},
         "as_of": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
         "available_at_rule": f"每列 date 當天 {AVAILABLE_AT_TIME:%H:%M} {TAIPEI}"
                              "(broker_tx 21:35 + shareholding 21:43 落地後;audit A7)",

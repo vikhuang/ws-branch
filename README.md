@@ -49,6 +49,9 @@
 > - **v1.4.3(2026-09-22)SRP 分層 + e2e 補強**:cohort/verify/windows/_fmt/loaders 切出、runner 去表
 >   內部、CLI 薄殼、`test_architecture.py` 五條分層執法;e2e +8(CLI 正常/缺值/缺 T3 頁、profile、
 >   t3b 母體/T4 v3 不變量/重算恆等三種警報、frozen v2 重現)
+> - **v1.4.4(2026-09-22)A9 結案**:ws-admin 補拉 168 檔 2016→2026-03-19;T3/T3b/T4 v3 重建,
+>   t3b 可發布率 2025 91.2% → **99.99%**;Phase 4 重跑 年內 0.824/0.794、跨年 0.748/0.823;
+>   校準卡獨立成 `measure/calibration_card.py`(profile 與 T4 manifest 同一份數字)
 
 ---
 

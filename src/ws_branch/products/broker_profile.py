@@ -24,7 +24,7 @@ import datetime
 
 import polars as pl
 
-from ws_branch.measure import calibration, state, universe
+from ws_branch.measure import calibration, calibration_card, state, universe
 from ws_branch.products._fmt import num as _num, pct as _pct
 from ws_branch.products.stock_readbook import FOOTER
 
@@ -36,24 +36,8 @@ PRIM_LABEL = {"top5_share": "集中度 top5", "directional_ratio": "方向性",
 CONTROLS = {"buy": ["cos_market_buy", "log_gross", "log_n"],
             "sell": ["cos_market_sell", "log_gross", "log_n"]}
 
-CALIBRATION_CARD = {
-    # 來源:findings/v3_phase4_calibration.md §3.5、v3_crossyear_2025.md §4(m2 物化表重跑)。
-    # 所有檢定的標籤都是「外資券商 cohort」——fund/prop 三桶**沒有席位真值**,unanchored 的
-    # 理由是「無法校準」,不是「已證無辨識力」(2026-09-21 外部審查指正)。
-    "measurement_version": "m2-2026-09-21",
-    "foreign": {"status": "anchored",
-                "text": "殘差 AUC 對外資券商 cohort:年內 買 0.823 / 賣 0.789,跨年 買 0.737 / 賣 0.814;"
-                        "逐席位 refit 買 0.27-0.98 / 賣 0.16-0.98(大五家 買 0.88-0.98 / 賣 0.89-0.98,"
-                        "小額台 0.63-0.81,大和國泰 買 0.27 / 賣 0.16)。線性控規模/廣度/市場後的"
-                        "**行政 cohort 區分力**,很可能低估、非嚴格下界;**不是投資人身份的機率**"},
-    "fund": {"status": "unanchored",
-             "text": "無投信席位真值,**無法校準**;唯一做過的檢定是對外資券商 cohort 無區分力"
-                     "(殘差 AUC ≈0.52)——不能據此說它能或不能辨識投信"},
-    "prop_self": {"status": "unanchored",
-                  "text": "無自營席位真值,無法校準;對外資 cohort 殘差 AUC 0.40-0.48(不是自營辨識力)"},
-    "prop_hedge": {"status": "unanchored",
-                   "text": "無席位真值;權證發行商間接證據控規模後僅 +0.05-0.08(AUC 0.59-0.63)——弱"},
-}
+CALIBRATION_CARD = {**calibration_card.CALIBRATION_CARD,
+                    "measurement_version": calibration_card.DATA_VERSION}
 
 
 def residual_percentile(history: pl.DataFrame, *, date: datetime.date, bucket: str,

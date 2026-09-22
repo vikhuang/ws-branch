@@ -95,6 +95,28 @@
         "cos_prop_hedge_buy": "Float64:unanchored 描述量", "cos_prop_hedge_sell": "Float64:unanchored 描述量",
         "official_missing_share": "Float64", "available_at": "Datetime[Asia/Taipei]"
       }
+    },
+    "salience_pair": {
+      "description": "股票×分點×日的正式 salience 三問；由 provider 以完整分母、逐日普通股 universe 與嚴格落後窗計算",
+      "grain": ["broker", "symbol_id", "date"],
+      "source": "computed_operation", "physical_name": null,
+      "source_tables": ["t1_broker_daily", "t4_broker_measure"],
+      "lookback_days": 150, "window": 60, "min_periods": 20,
+      "date_column": "date", "symbol_column": "symbol_id", "broker_column": "broker",
+      "universe": "逐日普通股 universe v1；分子與 T4 分母使用同一 gate",
+      "availability": "依 T1、T4 與 stock_attr 到齊後使用；T 日只供 T+1 決策",
+      "missingness": "未交易但席位活躍為 0；席位未活動或股票不在 universe 為 null；歷史不足時 anomaly 為 null",
+      "columns": {
+        "broker": "String", "symbol_id": "String", "date": "Date",
+        "stock_gross": "Float64:該股買賣金額合計(元)", "stock_net": "Float64:該股買減賣金額(元)",
+        "branch_gross": "Float64:席位當日普通股總金額(元)", "salience": "Float64:stock_gross/branch_gross",
+        "signed_contrib": "Float64:stock_net/branch_gross", "two_sidedness": "Float64:min(buy,sell)/max(buy,sell)",
+        "traded": "Boolean", "sal_mean": "Float64:嚴格落後窗平均", "sal_sd": "Float64:嚴格落後窗標準差",
+        "gross_mean": "Float64:嚴格落後窗平均", "gross_sd": "Float64:嚴格落後窗標準差",
+        "participation_rate": "Float64:落後窗參與率", "history_n": "Int32",
+        "salience_cond_mean": "Float64:有交易日的條件平均", "salience_z": "Float64",
+        "stock_gross_z": "Float64", "salience_ratio": "Float64", "denominator_effect": "Boolean"
+      }
     }
   }
 }

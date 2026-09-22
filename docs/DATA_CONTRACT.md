@@ -24,6 +24,7 @@ uv run python -m ws_branch contract --dataset t2_broker_pricelevel
 | `t3_official_daily` | 股票×日 | 物化表 |
 | `t3b_accounting_bounds` | 股票×日×買賣側 | 物化表 |
 | `t4_broker_measure` | 分點×日 | 物化表與年度 manifest |
+| `salience_pair` | 分點×股票×日 | provider 端以完整母體與暖機窗計算的 salience 三問 |
 
 ## 匯出
 
@@ -35,9 +36,14 @@ uv run python -m ws_branch export \
   --output /tmp/3450_pricelevel.parquet
 ```
 
+`salience_pair` 是計算型資料集，同樣使用 `export`：必須給至少一個 `--symbol`。
+provider 會自行向前讀取 150 個日曆日，套用普通股 universe，並以 T4 的完整席位
+日總額作分母；consumer 不應在查詢子集內重算。
+
 每次匯出同時產生 `<output>.receipt.json`，記錄：
 
-- contract 版本、contract hash 與 provider commit；
+- contract 版本、內嵌 contract snapshot、contract hash 與 provider commit；
+- 所需年度是否齊全，以及可用時的上游年度 manifest、measurement version 與 source snapshot；
 - 完整查詢範圍；
 - 實際列數與日期範圍；
 - Parquet SHA-256；

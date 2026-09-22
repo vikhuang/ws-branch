@@ -44,9 +44,11 @@
 >   verify 謂詞下推——壓縮區才是真水位;**key 含分片鍵的聚合一律逐分片做**
 >   (事故 ④:T1 整年 group_by 8GB/月 → 逐 raw 日聚合 34 秒/4.5GB)
 > - `experiments/flow_lab/` — 研究區(家法:預期先行/紅隊/體檢先於使用)
-> - 體檢帳本 `docs/audit_ledger.md`(A1-A6 結案;未結:A7 available_at、A8 未觀測
->   交易 2025 達 0.3-1.7%/2026-05 起歸零、**A9 TEJ shareholding 168 檔 2025 整年缺列**
->   (疑 ws-admin 拉取漏一段 coid,補拉後 T3/T3b/T4 v3 要重建))
+> - 體檢帳本 `docs/audit_ledger.md`(A1-A6、**A9** 結案——A9 = TEJ shareholding 168 檔
+>   2026-03-20 前無列,ws-admin 09-22 補拉後 T3/T3b/T4 v3 已重建、t3b 可發布率 99.99%;
+>   未結:A7 available_at 逐檔實測、A8 未觀測交易 2025 達 0.3-1.7%/2026-05 起歸零)
+> - 校準數字唯一來源 `measure/calibration_card.py`(DATA_VERSION);profile 校準卡與
+>   T4 v3 manifest 共用,校準重跑只改這一檔
 > - **PNL/FIFO 層(etl.py、pnl_engine.py、聰明錢/conviction)封存**:
 >   不維護不重建;復用前置條件見 audit_ledger。以下舊文件僅供考古。
 

@@ -12,8 +12,10 @@
 > (研究腳本共用 `v3_common.py` 逐年快取;年份/as-of 為參數)。**Step E 進行中**:
 > T4 v3 物化 ✅、as-of 測試 ✅、讀本 trait/規模/市況/state ✅(`measure/state.py`
 > 是讀時代理,非 §6 全樣本分解;席位特有 z 已扣規模/廣度變化)、分點 profile ✅
-> (`products/broker_profile.py`,唯一顯示 cosine 的產品,綁校準卡);Step F
-> 消費端遷移與 `--incr` 未做。校準 AUC 讀成「很可能低估」不說「下界」;fund/prop
+> (`products/broker_profile.py`,唯一顯示 cosine 的產品,綁校準卡);Step F 盤點 ✅
+> (`docs/STEP_F_INVENTORY_2026-09-21.md`:**外部零引用**,無消費端要遷;T4 v2 標
+> `frozen`,新消費端一律接 t4_broker_measure);`--incr` 與排程未做(T1–T4 全手動,
+> `run.sh` 只跑封存 pnl 線且其資料目錄已不存在)。校準 AUC 讀成「很可能低估」不說「下界」;fund/prop
 > 三桶 unanchored 的理由是**無席位真值**(對外資 cohort 無區分力 ≠ 已證無辨識力);
 > 研究腳本一律讀 `t4_broker_measure`,不讀 /tmp 快取。新核心:
 > - CLI:`uv run python -m ws_branch build|verify [--table t1_broker_daily|

@@ -19,9 +19,11 @@
 > 三桶 unanchored 的理由是**無席位真值**(對外資 cohort 無區分力 ≠ 已證無辨識力);
 > 研究腳本一律讀 `t4_broker_measure`,不讀 /tmp 快取。新核心:
 > - CLI:`uv run python -m ws_branch build|verify [--table t1_broker_daily|
->   t3_official_daily|t3b_accounting_bounds|t4_broker_features] [--year Y]`
+>   t3_official_daily|t3b_accounting_bounds|t4_broker_features|t4_broker_measure] [--year Y]`
 >   (factory.py=相容薄殼);讀本 `scripts/observatory/v3_readbook.py <股票> <日期>`、
 >   profile `scripts/observatory/v3_broker_profile.py <席位> <日期>`
+> - 對外資料邊界:`docs/DATA_CONTRACT.md` + `ws-branch.datasets.v1`;`contract` 查詢、
+>   `export` 匯出有界 Parquet + receipt。ws-quant 不 import 本 repo，公式只在此維護
 > - `src/ws_branch/` 三色分層:tables(registry/runner/io/transforms/checks)
 >   / measure(identity+taxonomy+**universe/accounting/decompose/allocation/
 >   baseline/salience/calibration/guards/state/**cohort**,全純函數)/ products(**stock_readbook /

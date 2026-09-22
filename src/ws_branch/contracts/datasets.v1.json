@@ -1,0 +1,100 @@
+{
+  "contract_version": "ws-branch.datasets.v1",
+  "owner": "ws-branch",
+  "consumer_boundary": "file_exchange",
+  "datasets": {
+    "t1_broker_daily": {
+      "description": "分點×股票×日 canonical 買賣量與金額",
+      "grain": ["broker", "symbol_id", "date"],
+      "source": "materialized",
+      "physical_name": "t1_broker_daily",
+      "date_column": "date",
+      "symbol_column": "symbol_id",
+      "broker_column": "broker",
+      "universe": "原始 broker_tx 可觀測代號；研究普通股時必須另套逐日 universe gate",
+      "availability": "交易日約 21:35 Asia/Taipei；歷史逐日實際到達時間未保存，T 日訊號只供 T+1 決策",
+      "missingness": "無列可能是未交易或來源未觀測；不可自行補零，須依研究 panel 與 universe 定義",
+      "columns": {
+        "symbol_id": "String:股票代號", "date": "Date:交易日", "broker": "String:分點代碼",
+        "broker_name": "String:分點名稱", "buy_sh": "Int64:買進股數(股)",
+        "sell_sh": "Int64:賣出股數(股)", "buy_dollar": "Float64:有分價列的買進金額(元)",
+        "sell_dollar": "Float64:有分價列的賣出金額(元)", "has_dash": "Boolean:來源含無價位彙總列"
+      }
+    },
+    "t2_broker_pricelevel": {
+      "description": "分點×股票×日×價位買賣量；由 ws-core canonical lazy view 匯出",
+      "grain": ["broker", "symbol_id", "date", "price"],
+      "source": "ws_core_view",
+      "physical_name": "broker_tx_pricelevel_scan",
+      "date_column": "date", "symbol_column": "symbol_id", "broker_column": "broker",
+      "universe": "原始 broker_tx 可觀測代號；未套普通股 gate",
+      "availability": "交易日約 21:35 Asia/Taipei；T 日資料只供 T+1 決策",
+      "missingness": "price='-' 彙總列排除；dash-only 分點約 0.03% 不存在於此視圖，完整股數改用 T1",
+      "columns": {
+        "symbol_id": "String:股票代號", "date": "Date:交易日", "broker": "String:分點代碼",
+        "broker_name": "String:分點名稱", "price": "Float64:成交價(元)",
+        "buy": "Int64:該價位買進股數(股)", "sell": "Int64:該價位賣出股數(股)"
+      }
+    },
+    "t3_official_daily": {
+      "description": "股票×日官方 actor gross/net，統一為股與元",
+      "grain": ["symbol_id", "date"], "source": "materialized", "physical_name": "t3_official_daily",
+      "date_column": "date", "symbol_column": "symbol_id", "broker_column": null,
+      "universe": "官方原表代號；與分點研究 join 前必須套相同逐日 universe gate",
+      "availability": "交易日約 21:43 Asia/Taipei；歷史逐日實際到達時間未保存",
+      "missingness": "缺列與零交易不同；所有 actor 金額欄任一 null 時不可當零",
+      "columns": {
+        "symbol_id": "String", "date": "Date", "day_trade_sh": "Float64:股", "day_trade_pct": "Float64:百分比",
+        "foreign_buy_sh": "Float64:股", "foreign_sell_sh": "Float64:股", "foreign_net_sh": "Float64:股",
+        "foreign_buy_amt": "Float64:元", "foreign_sell_amt": "Float64:元", "fund_buy_sh": "Float64:股",
+        "fund_sell_sh": "Float64:股", "fund_net_sh": "Float64:股", "fund_buy_amt": "Float64:元", "fund_sell_amt": "Float64:元",
+        "prop_self_buy_sh": "Float64:股", "prop_self_sell_sh": "Float64:股",
+        "prop_self_net_sh": "Float64:股", "prop_self_buy_amt": "Float64:元", "prop_self_sell_amt": "Float64:元",
+        "prop_hedge_buy_sh": "Float64:股", "prop_hedge_sell_sh": "Float64:股",
+        "prop_hedge_net_sh": "Float64:股", "prop_hedge_buy_amt": "Float64:元", "prop_hedge_sell_amt": "Float64:元",
+        "official_total_buy_sh": "Float64:股", "official_total_sell_sh": "Float64:股",
+        "official_total_buy_amt": "Float64:元", "official_total_sell_amt": "Float64:元"
+      }
+    },
+    "t3b_accounting_bounds": {
+      "description": "股票×日×買賣側的會計硬界限與輸入品質旗標",
+      "grain": ["symbol_id", "date", "side"], "source": "materialized", "physical_name": "t3b_accounting_bounds",
+      "date_column": "date", "symbol_column": "symbol_id", "broker_column": null,
+      "universe": "逐日普通股 universe ∩ 有分點成交的股票日",
+      "availability": "依 T1、T3 與行情到齊後使用；T 日只供 T+1 決策",
+      "missingness": "只有 bounds_publishable=true 的界限可發布；缺輸入仍保留列並以旗標揭露",
+      "columns": {
+        "symbol_id": "String", "date": "Date", "side": "String:buy|sell", "market_total_sh": "Float64:股",
+        "observed_total_sh": "Int64:股", "unobserved_sh": "Float64:股", "unobserved_sh_ok": "Boolean",
+        "n_brokers": "UInt32", "cohort_sh": "Int64:股", "official_foreign_sh": "Float64:股",
+        "official_fund_sh": "Float64:股", "official_prop_self_sh": "Float64:股",
+        "official_prop_hedge_sh": "Float64:股", "other_actor_sh": "Float64:股", "other_actor_sh_ok": "Boolean",
+        "foreign_x_lo": "Float64:cohort 內外資股數下界", "foreign_x_hi": "Float64:cohort 內外資股數上界",
+        "foreign_x_width": "Float64:界限寬度", "foreign_y_lo": "Float64:cohort 外外資股數下界",
+        "foreign_y_hi": "Float64:cohort 外外資股數上界", "foreign_cov_lo": "Float64", "foreign_cov_hi": "Float64",
+        "foreign_bounds_ok": "Boolean", "t3_present": "Boolean", "vol_present": "Boolean",
+        "input_complete": "Boolean", "bounds_publishable": "Boolean", "cohort_id": "String",
+        "actor_bucket": "String", "universe_version": "String", "cohort_version": "String"
+      }
+    },
+    "t4_broker_measure": {
+      "description": "分點×日最小行為量測表；不含投資人身分 posterior",
+      "grain": ["broker", "date"], "source": "materialized", "physical_name": "t4_broker_measure",
+      "date_column": "date", "symbol_column": null, "broker_column": "broker",
+      "universe": "逐日普通股 universe v1",
+      "availability": "available_at 欄為 date 21:45 Asia/Taipei 的規則值；依三個近期落地日推定，非歷史逐檔實測",
+      "missingness": "cosine 零 norm、官方支撐缺漏過高、basket 無前日皆為 null；null 不等於 0",
+      "columns": {
+        "broker": "String", "date": "Date", "broker_name": "String", "gross_buy_amt": "Float64:元",
+        "gross_sell_amt": "Float64:元", "gross_amt": "Float64:元", "net_amt": "Float64:元",
+        "n_symbols": "UInt32", "directional_ratio": "Float64", "top1_share": "Float64", "top5_share": "Float64",
+        "basket_self_sim": "Float64", "cos_market_buy": "Float64", "cos_market_sell": "Float64",
+        "cos_foreign_buy": "Float64:描述量，非身份機率", "cos_foreign_sell": "Float64:描述量，非身份機率",
+        "cos_fund_buy": "Float64:unanchored 描述量", "cos_fund_sell": "Float64:unanchored 描述量",
+        "cos_prop_self_buy": "Float64:unanchored 描述量", "cos_prop_self_sell": "Float64:unanchored 描述量",
+        "cos_prop_hedge_buy": "Float64:unanchored 描述量", "cos_prop_hedge_sell": "Float64:unanchored 描述量",
+        "official_missing_share": "Float64", "available_at": "Datetime[Asia/Taipei]"
+      }
+    }
+  }
+}

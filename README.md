@@ -12,6 +12,8 @@
 > - CLI:`uv run python -m ws_branch build|verify --table <t> [--year Y]`;
 >   個股讀本 `uv run python scripts/observatory/v3_readbook.py 3450 2026-09-14`;
 >   分點 profile `uv run python scripts/observatory/v3_broker_profile.py 8440 2026-09-14`
+> - 對外契約:`docs/DATA_CONTRACT.md`;`uv run python -m ws_branch contract` 查 schema/
+>   單位/缺值/可用時間，`export` 產 Parquet + receipt，供 ws-quant 以檔案介面取用
 > - 架構:`src/ws_branch/` 三色分層(純轉換/IO 殼/宣告);測試金字塔
 >   (單元+e2e 合成小宇宙+真資料對帳),`uv run pytest`(231 tests;含 20 條 e2e 與分層執法 test_architecture)
 > - **現行版 v1.4.2(2026-09-22)**:v3 Phase 1-4 + 2025 + Step E 產品(T4 v3 / 讀本 v2 / profile)+ Step F 盤點;

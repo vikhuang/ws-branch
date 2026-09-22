@@ -32,7 +32,7 @@ soft allocation、無 actor 校準。
 | **HiddenForeign 下界 Y_lo** | 量加權 **37.6%**;逐股票日中位 **40.4%** | `identified`(下界) |
 | S/F(舊寫法) | 量加權 0.626 | **不是 coverage** |
 | 未觀測交易(V − T1) | 量加權 0.11% | 閉環實質成立(但見 A6) |
-| 可發布率 | **99.15%**(`bounds_publishable`) | 不可發布 = 輸入不自洽或當日 V 不可信 |
+| 可發布率 | **96.79%**(母體 = universe ∩ 有分點成交;09-21 起含缺 T3 列;首版 99.15% 是表內比率) | 不可發布 = 缺 T3/行情列、輸入不自洽或當日 V 不可信 |
 
 **三個結論**:
 
@@ -150,7 +150,7 @@ Spearman 0.79;log-log 斜率 0.320 → **gross 每漲 10 倍,碰股數只 ×2.1*
   尚未估。
 - cos_market 已用全 universe 定義,但 actor cosine(對四官方桶)尚未重算——
   O1 的 support-restricted 數字不可直接沿用(見 `o1_fingerprint_read.md` 末節)。
-- 界限的 cohort 為 foreign_seat_v2(11 家);換 cohort 定義會改變 S,界限跟著變。
+- 界限的 cohort 為 foreign_seat_v3(時變;2026 成員 11 家,數字與 v2 相同);換 cohort 定義會改變 S,界限跟著變。
 
 
 ## 5. 兩個施工期錯誤(2026-09-20 自我複查抓到,已修)

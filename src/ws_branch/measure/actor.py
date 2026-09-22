@@ -257,8 +257,9 @@ def rolling_identity_similarity(
 
     暖機期(前 < window 個活躍日)用不足窗口筆數的平均值(min_samples=1),
     越前段可信度越低,下游呈現時須連同活躍日數一併揭露。250D 版留待
-    之後(規格 §2);跨年 T4 尚未串接前一年資料時,每年開頭幾筆會因看不到
-    前一年的活躍日而暖機不足,這是已知限制,不在此函數內偽造前情。
+    之後(規格 §2);本函數服務 T4 v2(frozen),每年開頭幾筆因看不到前一年的
+    活躍日而暖機不足是 v2 的已知限制;v3 `t4_broker_measure._inputs` 已取前一年
+    12 月起的資料,不在此函數內偽造前情。
     """
     daily = daily.sort("broker", "date")
     cols = ["foreign_sim_buy", "foreign_sim_sell", "fund_sim_buy", "fund_sim_sell"]

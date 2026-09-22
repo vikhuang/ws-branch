@@ -1,5 +1,8 @@
 #!/bin/bash
-# ws-branch daily pipeline
+# ws-branch daily pipeline —— **封存的 pnl 產品線,2026-09-22 Step F 盤點確認空轉**:
+# 它寫入的 data/daily_summary、data/pnl_daily、data/pnl_daily_merged 已不存在,且不建 T1–T4。
+# v3 量測層(T1/T3/T3b/t4_broker_measure、讀本、profile)目前無排程,全部手動:
+#   uv run python -m ws_branch build --table <t> --year <Y>
 # 排程：週一~六 22:30+ (pull-evening 之後)
 # 前提：ws-admin pull 已完成
 #

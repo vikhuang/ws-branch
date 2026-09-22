@@ -14,6 +14,8 @@
 >   分點 profile `uv run python scripts/observatory/v3_broker_profile.py 8440 2026-09-14`
 > - 架構:`src/ws_branch/` 三色分層(純轉換/IO 殼/宣告);測試金字塔
 >   (單元+e2e 合成小宇宙+真資料對帳),`uv run pytest`(218 tests)
+> - **現行版 v1.4.2(2026-09-22)**:v3 Phase 1-4 + 2025 + Step E 產品(T4 v3 / 讀本 v2 / profile)+ Step F 盤點;
+>   未做 = 排程/`--incr`、A9 上游、ws-desk 接讀本。以下為版本史:
 > - **v1.1.0(2026-09-21)行動者層 v3 Phase 1-2**:universe gate、會計硬界限、
 >   trait/日效應/席位異常分解;規格在 ws-quant `docs/actor_layer_v3_*_2026-09-18.md`,
 >   結果在 `experiments/flow_lab/findings/v3_phase{1,2}_*.md`

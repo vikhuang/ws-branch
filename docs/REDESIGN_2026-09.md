@@ -102,8 +102,8 @@ broker_labels.parquet 上線且處置線改讀成功,才刪舊模組。不做大
 | P3 | T3/T4 建表;還債:★三案體檢 | 特徵表就緒;三案各一頁結論 | **✅ 2026-09-15(帳本 A1-A5 結案)** |
 | P4-P6 | **重心由觀測站取代**:四層維度(行動者/部位/執行/關係)分期 O1-O6,詳 `docs/OBSERVATORY_2026-09.md`(2026-09-16) | 各期驗收見該文件 |
 | ~~P4~~ | ~~搬遷+identity 重做~~(併入 O1) | |
-| P5 | broker_labels.parquet v1 上線 | schema 定稿;ws-quant 處置線試讀成功 |
-| P6 | 歸因研究開張(NNLS/籃子指紋/BuyLocation/主動ETF對帳),家法全套 | 每題先凍結預期;產出入 trial ledger |
+| P5 | broker_labels.parquet v1 上線 | **09-22:未實作,且 Step F 盤點證無消費端**(ws-quant 處置線不讀 ws-branch;dispo 線已 retired)——降為待需求 |
+| P6 | 歸因研究開張(NNLS/籃子指紋/BuyLocation/主動ETF對帳),家法全套 | 已歸 O6;席位歸因另立 v3.5(未開始)。**v3 Phase 1-4 已完成**(OBSERVATORY §10) |
 
 ## 9. 風險
 
@@ -136,11 +136,12 @@ user 審 v2 → 核准後 P1 開工(ws-core 另開 worktree/PR)。
 - 四張表落地:T1 8.5GB/6.8 億列、T3 91MB/470 萬列(2016+)、
   T4 61MB/120 萬分點日;T2=ws-core lazy 視圖。
 
-## 12. 待辦清單快照(2026-09-15 晚,v0.38.0/v1.0.0 ship 後)
+## 12. 待辦清單快照(2026-09-15 晚,v0.38.0/v1.0.0 ship 後;**09-22 逐條標註**)
 
-1. **T1 `--incr` 增量更新**(P5 前必需):現在當年更新只能 --force 整年重建
-2. P4:在 T4 重做分群、對 T3 官方錨驗證、標註有效期
-3. P5:broker_labels.parquet → ws-quant 處置線改讀 → 拆其凍結舊模組
+1. **T1 `--incr` 增量更新**:仍未做,但痛點變了——T1 逐日建表後整年重建 34 秒(事故 ④),
+   `--incr` 的價值在修訂資料的下游範圍與排程,不在時間
+2. ~~P4:在 T4 重做分群~~ → 由 v3 Phase 1-4 取代(t4_broker_measure + 校準卡;T4 v2 frozen)
+3. ~~P5:broker_labels → ws-quant 處置線改讀~~ → Step F 盤點:無消費端、無依賴(`docs/STEP_F_INVENTORY_2026-09-21.md`)
 4. P6:歸因研究(NNLS/籃子指紋/BuyLocation/主動ETF×投信對帳),家法全套
 5. T1 2021-2023 閉環 BQ 補驗(帳本 A5)
 6. ws-quant 側等 user 拍板:《生態圖鑑》要不要補 U1 散戶化章節;

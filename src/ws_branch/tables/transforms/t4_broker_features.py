@@ -1,4 +1,7 @@
-"""T4 特徵表:分點×日行為特徵(自 T1 聚合;分群重做/身分歸因的原料)。
+"""T4 **v2**(frozen,Step F 2026-09-22):分點×日行為特徵,rank 版指紋 + multiplicity。
+
+已退役的現行產出——可 `build` 重建供歷史重現(runner 印警語),不隨年份更新、
+不原地改語意(§11);新消費端一律接 `t4_broker_measure`(v3)。以下為原文。
 
 v1 特徵(金額口徑,dollar;股數版特徵留待需求):
 - gross_buy/sell_amt, net_amt, gross_amt

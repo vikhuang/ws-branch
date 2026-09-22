@@ -84,3 +84,8 @@ def build_year(year: int) -> pl.LazyFrame:
     if not parts:
         raise ValueError(f"t1_broker_daily {year}:raw 無任何交易日資料")
     return pl.concat([pl.scan_parquet(p) for p in parts])
+
+
+def cleanup_parts(year: int) -> None:
+    """年檔成功落地後清掉逐月 part(runner 的 after_sink hook;中途失敗則留著供檢視)。"""
+    shutil.rmtree(parts_dir(year), ignore_errors=True)

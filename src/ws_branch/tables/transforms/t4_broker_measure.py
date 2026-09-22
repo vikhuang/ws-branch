@@ -29,7 +29,7 @@ from ws_core import stock_attr, tradedays
 from ws_core.paths import fugle_dir, tej_dir
 
 from ws_branch.measure import allocation, universe
-from ws_branch.tables import io
+from ws_branch.tables import io, windows
 
 TABLE = "t4_broker_measure"
 SCHEMA_VERSION = "t4_broker_measure.v3.0"
@@ -54,11 +54,7 @@ NULL_RULES = {
 }
 
 
-def _month_bounds(year: int, month: int) -> tuple[datetime.date, datetime.date]:
-    start = datetime.date(year, month, 1)
-    end = (datetime.date(year + 1, 1, 1) if month == 12
-           else datetime.date(year, month + 1, 1)) - datetime.timedelta(days=1)
-    return start, end
+_month_bounds = windows.month_bounds   # 舊名保留(verify/研究腳本引用)
 
 
 def compute_month(
@@ -155,8 +151,7 @@ def build_year(year: int) -> pl.LazyFrame:
     parts = []
     for m in range(1, 13):
         month_start, month_end = _month_bounds(year, m)
-        prior = cal.filter(pl.col("date") >= month_start)["prev_date"].min()
-        read_from = min(prior, month_start) if prior is not None else month_start
+        read_from = windows.month_read_from(cal, month_start)
         t1 = (io.scan("t1_broker_daily", start=str(read_from), end=str(month_end))
               .select("broker", "broker_name", "symbol_id", "date",
                       "buy_dollar", "sell_dollar").collect())

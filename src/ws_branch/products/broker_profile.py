@@ -25,7 +25,8 @@ import datetime
 import polars as pl
 
 from ws_branch.measure import calibration, state, universe
-from ws_branch.products.stock_readbook import FOOTER, _num, _pct
+from ws_branch.products._fmt import num as _num, pct as _pct
+from ws_branch.products.stock_readbook import FOOTER
 
 PRIMITIVES = ("top5_share", "directional_ratio", "basket_self_sim",
               "cos_market_buy", "cos_market_sell")

@@ -203,3 +203,36 @@ def pair_anomaly(df: pl.DataFrame, *, min_sd: float = 1e-12) -> pl.DataFrame:
         .otherwise(None).alias("salience_ratio"),
         ((sal_up > 0) & (gross_up < 0)).alias("denominator_effect"),
     )
+
+
+def gate_numerator(t1: pl.DataFrame, universe_days: pl.DataFrame) -> tuple[pl.DataFrame, pl.DataFrame]:
+    """分子套逐日 universe;回傳 (gated, excluded)。excluded 供呼叫端揭露,不得靜默丟。
+
+    中途上市/類型變更的日子是「無定義」不是「未交易」(8102 於 2025-12-22 上櫃,之前
+    興櫃期間有成交但不在 universe;2026-09-21 兩支 CLI 各自實作、其中一支漏了)。
+    """
+    from ws_branch.measure.universe import apply_universe
+    gated = apply_universe(t1, universe_days)
+    excluded = t1.join(universe_days, on=["symbol_id", "date"], how="anti")
+    return gated, excluded
+
+
+def pair_pipeline(
+    t1: pl.DataFrame, branch_day: pl.DataFrame, *, symbols: list[str],
+    universe_days: pl.DataFrame, window: int = 60, min_periods: int = 20,
+) -> pl.DataFrame:
+    """gate → daily_salience → 逐股 build_pair_panel → pair_history → pair_anomaly。
+
+    讀本、profile、Phase 3 三處原本各寫一遍(2026-09-22 SRP 合併)。t1 需已 gate
+    (用 `gate_numerator`);沒有任何股票有列時回傳空表。
+    """
+    daily = daily_salience(t1.filter(pl.col("symbol_id").is_in(symbols)), branch_day,
+                           universe=universe_days)
+    parts = []
+    for s in symbols:
+        if daily.filter(pl.col("symbol_id") == s).height == 0:
+            continue
+        panel = build_pair_panel(daily, branch_day, symbol_id=s, universe=universe_days)
+        hist = pair_history(panel, window=window, min_periods=min_periods)
+        parts.append(pair_anomaly(hist))
+    return pl.concat(parts) if parts else pl.DataFrame()

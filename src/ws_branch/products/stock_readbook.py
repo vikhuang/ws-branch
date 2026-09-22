@@ -32,22 +32,12 @@ import datetime
 import polars as pl
 
 from ws_branch.measure import universe
+from ws_branch.products._fmt import lots, num, pct
 
 FOOTER = "本頁為描述性觀測,非交易訊號。(docs/OBSERVATORY_2026-09.md §6)"
 
 
-def _pct(x: float | None) -> str:
-    return "—" if x is None else f"{x * 100:.2f}%"
-
-
-def _num(x: float | None, fmt: str = "+.1f") -> str:
-    return "—" if x is None else format(x, fmt)
-
-
-def _lots(sh: float | None, signed: bool = False) -> str:
-    if sh is None:
-        return "—"
-    return f"{sh / 1000:+,.0f}" if signed else f"{sh / 1000:,.0f}"
+_pct, _num, _lots = pct, num, lots   # 舊名保留給既有呼叫端
 
 
 def render(

@@ -441,3 +441,84 @@ def test_e2e_revision_changes_only_affected_rows_and_snapshot(universe: dict, tm
     m_after = json.loads((tables2 / "t4_broker_measure" / "year=2026.manifest.json").read_text())
     assert m_after["source_snapshot"]["t1_broker_daily"] != m_before["source_snapshot"]["t1_broker_daily"]
     assert "available_at_basis" in m_after
+
+
+# ── CLI(IO 殼)e2e:兩支 CLI 在小宇宙上真的跑得動 ─────────────────────────
+# 2026-09-21 外部審查抓到的兩個 P1/P2 崩潰都在 CLI 層(產品純函數有測、IO 殼沒測)。
+
+
+def _run_script(name: str, args: list[str], env: dict) -> str:
+    r = subprocess.run([sys.executable, str(REPO / "scripts" / "observatory" / name), *args],
+                       capture_output=True, text=True, cwd=REPO, env={**os.environ, **env}, timeout=300)
+    assert r.returncode == 0, f"{name} {args} failed:\n{r.stdout}\n{r.stderr}"
+    assert "Traceback" not in r.stderr
+    return r.stdout
+
+
+def test_e2e_readbook_cli_renders_from_tables(universe: dict) -> None:
+    out = _run_script("v3_readbook.py", ["2330", str(D2), "--top", "3"], universe["env"])
+    assert f"2330 — {D2} 一頁讀本" in out
+    assert "官方外資" in out and "本頁為描述性觀測" in out
+    assert "席位性格 / 市況 / 狀態" in out            # T4 v3 有 D2 的列 → 性格區塊出現
+    assert "—" in out                                # 兩天歷史不足 → z 顯示 —,不是數字也不是崩潰
+
+
+def test_e2e_readbook_cli_unpublishable_bounds_and_missing_t3(universe: dict) -> None:
+    """1531@D2:有成交、有行情、無 T3 列 → 界限區塊講清楚不可發布,頁面照出。"""
+    out = _run_script("v3_readbook.py", ["1531", str(D2), "--top", "3"], universe["env"])
+    assert "會計界限:本日不可發布" in out
+    assert "元大-台北" in out
+
+
+def test_e2e_readbook_cli_survives_null_day_trade_pct(universe: dict, tmp_path: Path) -> None:
+    env = _tampered_copy(universe, tmp_path, "t3_official_daily",
+                         lambda df: df.with_columns(
+                             pl.when((pl.col("symbol_id") == "2330") & (pl.col("date") == D1))
+                             .then(None).otherwise(pl.col("day_trade_pct")).alias("day_trade_pct")))
+    out = _run_script("v3_readbook.py", ["2330", str(D1), "--top", "3"], env)
+    assert "當沖佔比 缺資料" in out and "至少" in out
+
+
+def test_e2e_profile_cli_renders_and_reports_unknown_seat(universe: dict) -> None:
+    out = _run_script("v3_broker_profile.py", ["A1", str(D2), "--top", "3"], universe["env"])
+    assert "元大-台北(A1)" in out and "席位 profile" in out
+    assert "校準卡" in out and "身份界線" in out
+    assert "本子裡最重的股票" in out and "2330" in out
+    assert "推定" in out                              # available_at 標為推定,不是實測
+    miss = _run_script("v3_broker_profile.py", ["ZZZZ", str(D2)], universe["env"])
+    assert "無此席位日" in miss
+
+
+# ── 警報器 e2e:新表的 verify 必須會 FAIL ────────────────────────────────
+
+
+def test_e2e_alarm_fires_when_t3b_loses_population(universe: dict, tmp_path: Path) -> None:
+    """t3b 母體覆蓋:刪掉 1531@D2(缺 T3 的那筆)→ verify 必須報「無聲消失」。"""
+    env = _tampered_copy(universe, tmp_path, "t3b_accounting_bounds",
+                         lambda df: df.filter(~((pl.col("symbol_id") == "1531") & (pl.col("date") == D2))))
+    out = _run(["verify", "--table", "t3b_accounting_bounds", "--n", "40"], env, expect_ok=False)
+    assert "FAIL" in out and "無聲消失" in out
+
+
+def test_e2e_alarm_fires_on_t4v3_invariant_break(universe: dict, tmp_path: Path) -> None:
+    env = _tampered_copy(universe, tmp_path, "t4_broker_measure",
+                         lambda df: df.with_columns(pl.lit(2.0).alias("cos_foreign_buy")))
+    out = _run(["verify", "--table", "t4_broker_measure", "--n", "40"], env, expect_ok=False)
+    assert "FAIL" in out
+
+
+def test_e2e_alarm_fires_when_t4v3_drifts_from_formula(universe: dict, tmp_path: Path) -> None:
+    """表內數字被改但仍在合法範圍 → 「一月重算恆等」要抓到。"""
+    # basket_self_sim 縮 0.9 仍在 [0,1]、不牽動 top1≤top5 等不變量 → 只有重算恆等能抓
+    env = _tampered_copy(universe, tmp_path, "t4_broker_measure",
+                         lambda df: df.with_columns((pl.col("basket_self_sim") * 0.9).alias("basket_self_sim")))
+    out = _run(["verify", "--table", "t4_broker_measure", "--n", "40"], env, expect_ok=False)
+    assert "FAIL" in out and "不恆等" in out
+
+
+def test_e2e_frozen_v2_build_warns_but_still_reproduces(universe: dict, tmp_path: Path) -> None:
+    tables2 = tmp_path / "t2"
+    shutil.copytree(universe["tables"], tables2)
+    env = {**universe["env"], "WS_BRANCH_DATA_DIR": str(tables2)}
+    out = _run(["build", "--table", "t4_broker_features", "--year", "2026", "--force"], env)
+    assert "[frozen]" in out and "rows" in out

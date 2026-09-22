@@ -27,13 +27,11 @@ import polars as pl
 from ws_core import prices, stock_attr
 
 from ws_branch.measure import accounting, universe
-from ws_branch.tables import io
+from ws_branch.tables import io, windows
 
 def _t1_stock_day(year: int, month: int) -> pl.DataFrame:
     """T1 逐月 → 股票日 × (全市場, 外資 cohort) 的買賣股數。"""
-    start = datetime.date(year, month, 1)
-    end = (datetime.date(year + 1, 1, 1) if month == 12
-           else datetime.date(year, month + 1, 1)) - datetime.timedelta(days=1)
+    start, end = windows.month_bounds(year, month)
     lf = io.scan("t1_broker_daily", start=str(start), end=str(end))
     is_cohort = universe.cohort_expr()   # 時變 cohort:按 (broker, date) 解析
     return (lf.group_by("symbol_id", "date")

@@ -41,30 +41,18 @@ def _branch_day() -> pl.DataFrame:
 
 
 def _pairs_for(symbols: list[str], bd: pl.DataFrame, start: str,
-               end: str, uni: pl.DataFrame | None = None) -> pl.DataFrame:
-    """對指定股票清單建 pair panel + 歷史 + 異常(逐股,不做全交叉)。"""
+               end: str, uni: pl.DataFrame) -> pl.DataFrame:
+    """對指定股票清單建 pair panel + 歷史 + 異常(measure.salience.pair_pipeline,與讀本/profile 同一份)。"""
     t1 = (io.scan("t1_broker_daily", start=start, end=end)
           .filter(pl.col("symbol_id").is_in(symbols))
           .select("broker", "symbol_id", "date", "buy_dollar", "sell_dollar")
           .collect())
-    if uni is not None:
-        # 分子與分母同一個 gate:該股不在 universe 的日子(中途上市/類型變更)
-        # 不是「未交易」,是無定義——先排除並揭露,再交給 build_pair_panel 留 null
-        gated = universe.apply_universe(t1, uni)
-        if gated.height != t1.height:
-            ex = t1.join(uni, on=["symbol_id", "date"], how="anti")
-            print(f"  [gate] 排除 {t1.height - gated.height:,} 列 T1(不在 universe 的股票日):"
-                  f"{ex.group_by('symbol_id').agg(pl.col('date').min().alias('from'), pl.col('date').max().alias('to'), pl.len()).rows()}")
-        t1 = gated
-    daily = salience.daily_salience(t1, bd, universe=uni)
-    out = []
-    for s in symbols:
-        panel = salience.build_pair_panel(daily, bd, symbol_id=s, universe=uni)
-        if panel.height == 0:
-            continue
-        h = salience.pair_history(panel, window=WINDOW, min_periods=MIN_PERIODS)
-        out.append(salience.pair_anomaly(h))
-    return pl.concat(out) if out else pl.DataFrame()
+    gated, ex = salience.gate_numerator(t1, uni)
+    if ex.height:
+        print(f"  [gate] 排除 {ex.height:,} 列 T1(不在 universe 的股票日):"
+              f"{ex.group_by('symbol_id').agg(pl.col('date').min().alias('from'), pl.col('date').max().alias('to'), pl.len()).rows()}")
+    return salience.pair_pipeline(gated, bd, symbols=symbols, universe_days=uni,
+                                  window=WINDOW, min_periods=MIN_PERIODS)
 
 
 def main() -> None:

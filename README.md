@@ -13,7 +13,7 @@
 >   個股讀本 `uv run python scripts/observatory/v3_readbook.py 3450 2026-09-14`;
 >   分點 profile `uv run python scripts/observatory/v3_broker_profile.py 8440 2026-09-14`
 > - 架構:`src/ws_branch/` 三色分層(純轉換/IO 殼/宣告);測試金字塔
->   (單元+e2e 合成小宇宙+真資料對帳),`uv run pytest`(218 tests)
+>   (單元+e2e 合成小宇宙+真資料對帳),`uv run pytest`(231 tests;含 20 條 e2e 與分層執法 test_architecture)
 > - **現行版 v1.4.2(2026-09-22)**:v3 Phase 1-4 + 2025 + Step E 產品(T4 v3 / 讀本 v2 / profile)+ Step F 盤點;
 >   未做 = 排程/`--incr`、A9 上游、ws-desk 接讀本。以下為版本史:
 > - **v1.1.0(2026-09-21)行動者層 v3 Phase 1-2**:universe gate、會計硬界限、
@@ -46,6 +46,9 @@
 >   **零程式引用**,沒有消費端要遷(`docs/STEP_F_INVENTORY_2026-09-21.md`);T4 v2
 >   `t4_broker_features` 標 frozen(可重建供重現、不更新);待決:ws-admin 登記 dataset、
 >   ws-desk 接讀本、排程 + `--incr`、A9 上游
+> - **v1.4.3(2026-09-22)SRP 分層 + e2e 補強**:cohort/verify/windows/_fmt/loaders 切出、runner 去表
+>   內部、CLI 薄殼、`test_architecture.py` 五條分層執法;e2e +8(CLI 正常/缺值/缺 T3 頁、profile、
+>   t3b 母體/T4 v3 不變量/重算恆等三種警報、frozen v2 重現)
 
 ---
 

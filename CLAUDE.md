@@ -24,7 +24,10 @@
 >   profile `scripts/observatory/v3_broker_profile.py <席位> <日期>`
 > - `src/ws_branch/` 三色分層:tables(registry/runner/io/transforms/checks)
 >   / measure(identity+taxonomy+**universe/accounting/decompose/allocation/
->   baseline/salience/calibration/guards/state**,全純函數)/ products(**stock_readbook / broker_profile**);表:T1 物化、
+>   baseline/salience/calibration/guards/state/**cohort**,全純函數)/ products(**stock_readbook /
+>   broker_profile** 純渲染 + **loaders** 唯一 IO 組裝點 + _fmt)/ tables(registry 純宣告、
+>   **verify.py** 對帳、**windows.py** 月窗算術、runner 不認識任何表內部——`tests/test_architecture.py`
+>   五條執法);CLI 為 <40 行薄殼。表:T1 物化、
 >   T2=ws-core lazy 視圖、T3 官方對齊(v2 含自營金額)、**T3b 會計硬界限**
 >   (股票×日×側)、T4 v2 分點日特徵(rank 版,凍結)、**T4 v3 `t4_broker_measure`**
 >   (§4.2 最小量測表 + `year=Y.manifest.json`;`available_at` = date 21:45 台北;

@@ -1,3 +1,11 @@
+
+
+> **歷史盤點，2026-09-23 更新**：下文「外部零引用」只代表 09-21 當時。
+> ws-quant 現已透過 BranchDataClient 消費版本化資料契約，外部不再是空集合。
+> 正式檔案交換契約已存在（`docs/DATA_CONTRACT.md`）；ws-admin catalog 登記是
+> 另一項待確認的整合，不可再以「未登記 = 沒有正式契約」概括現況。
+> 本文保留舊盤點證據；新增消費端現況與未完事項見 DATA_CONTRACT。
+
 # Step F 消費端盤點(2026-09-21)
 
 規格:ws-quant `docs/actor_layer_v3_architecture_alignment_2026-09-18.md` §11 F「消費端

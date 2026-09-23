@@ -9,11 +9,11 @@
 > 校準錨)+ `docs/actor_layer_v3_architecture_alignment_2026-09-18.md`
 > (工程契約、Phase 1-5)。**Phase 1-4 已完成並納入 2025**,findings 在
 > `experiments/flow_lab/findings/v3_phase{1,2,3,4}_*.md` + `v3_crossyear_2025.md`
-> (研究腳本共用 `v3_common.py` 逐年快取;年份/as-of 為參數)。**Step E 進行中**:
+> (研究腳本共用 `v3_common.py` 逐年快取;年份/as-of 為參數)。**Step E 產品已交付（營運與跨入口一致性待補）**:
 > T4 v3 物化 ✅、as-of 測試 ✅、讀本 trait/規模/市況/state ✅(`measure/state.py`
 > 是讀時代理,非 §6 全樣本分解;席位特有 z 已扣規模/廣度變化)、分點 profile ✅
 > (`products/broker_profile.py`,唯一顯示 cosine 的產品,綁校準卡);Step F 盤點 ✅
-> (`docs/STEP_F_INVENTORY_2026-09-21.md`:**外部零引用**,無消費端要遷;T4 v2 標
+> (`docs/STEP_F_INVENTORY_2026-09-21.md`:**09-21 當時外部零引用；09-23 ws-quant 已接正式契約**;T4 v2 標
 > `frozen`,新消費端一律接 t4_broker_measure);`--incr` 與排程未做(T1–T4 全手動,
 > `run.sh` 只跑封存 pnl 線且其資料目錄已不存在)。校準 AUC 讀成「很可能低估」不說「下界」;fund/prop
 > 三桶 unanchored 的理由是**無席位真值**(對外資 cohort 無區分力 ≠ 已證無辨識力);
@@ -54,7 +54,15 @@
 > - **PNL/FIFO 層(etl.py、pnl_engine.py、聰明錢/conviction)封存**:
 >   不維護不重建;復用前置條件見 audit_ledger。以下舊文件僅供考古。
 
-## Build & Run
+> **2026-09-23 現況**：ws-quant 已是正式消費端，透過 `ws-branch.datasets.v1`
+> 匯出八類 dataset（含分價量、universe、state、salience），不互相 import。
+> 研究與治理由 quant 發起；探索最近一週用其 `BranchDataClient(purpose="exploration")`。
+> 未完成：T4 新鮮度（09-23 測試缺 09-16～18）、增量／排程、export 與讀本/profile
+> 的歷史範圍一致性（P2）、完整研究案例驗收。A9 已於 09-22 結案。
+> 契約及限制見 `docs/DATA_CONTRACT.md`；全局現況見 ws-quant
+> `docs/research_platform_status_2026-09-23.md`。
+
+## Build & Run（以下封存 PNL 線，非現行 T1–T4 更新流程）
 
 ```bash
 uv run python etl.py                        # Step 1: ETL full rebuild

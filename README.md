@@ -15,9 +15,9 @@
 > - 對外契約:`docs/DATA_CONTRACT.md`;`uv run python -m ws_branch contract` 查 schema/
 >   單位/缺值/可用時間，`export` 產 Parquet + receipt，供 ws-quant 以檔案介面取用
 > - 架構:`src/ws_branch/` 三色分層(純轉換/IO 殼/宣告);測試金字塔
->   (單元+e2e 合成小宇宙+真資料對帳),`uv run pytest`(231 tests;含 20 條 e2e 與分層執法 test_architecture)
-> - **現行版 v1.4.2(2026-09-22)**:v3 Phase 1-4 + 2025 + Step E 產品(T4 v3 / 讀本 v2 / profile)+ Step F 盤點;
->   未做 = 排程/`--incr`、A9 上游、ws-desk 接讀本。以下為版本史:
+>   (單元+e2e 合成小宇宙+真資料對帳),`uv run pytest`（含合成 e2e 與分層執法；測試數依當次執行為準）
+> - **09-22 階段快照 v1.4.2（後續更新見下方）**:v3 Phase 1-4 + 2025 + Step E 產品(T4 v3 / 讀本 v2 / profile)+ Step F 盤點;
+>   目前未做 = 排程/`--incr`、P2、資料更新與研究驗收、ws-desk 接讀本；A9 已結案。以下為版本史:
 > - **v1.1.0(2026-09-21)行動者層 v3 Phase 1-2**:universe gate、會計硬界限、
 >   trait/日效應/席位異常分解;規格在 ws-quant `docs/actor_layer_v3_*_2026-09-18.md`,
 >   結果在 `experiments/flow_lab/findings/v3_phase{1,2}_*.md`
@@ -54,6 +54,14 @@
 > - **v1.4.4(2026-09-22)A9 結案**:ws-admin 補拉 168 檔 2016→2026-03-19;T3/T3b/T4 v3 重建,
 >   t3b 可發布率 2025 91.2% → **99.99%**;Phase 4 重跑 年內 0.824/0.794、跨年 0.748/0.823;
 >   校準卡獨立成 `measure/calibration_card.py`(profile 與 T4 manifest 同一份數字)
+
+> **2026-09-23 現況**：ws-quant 已是正式消費端，透過 `ws-branch.datasets.v1`
+> 匯出八類 dataset（含分價量、universe、state、salience），不互相 import。
+> 研究與治理由 quant 發起；探索最近一週用其 `BranchDataClient(purpose="exploration")`。
+> 未完成：T4 新鮮度（09-23 測試缺 09-16～18）、增量／排程、export 與讀本/profile
+> 的歷史範圍一致性（P2）、完整研究案例驗收。A9 已於 09-22 結案。
+> 契約及限制見 `docs/DATA_CONTRACT.md`；全局現況見 ws-quant
+> `docs/research_platform_status_2026-09-23.md`。
 
 ---
 

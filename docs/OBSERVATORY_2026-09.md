@@ -205,12 +205,12 @@ O2 拆成 O2a 流量軌跡(可獨立推進)與 O2b 模型成本狀態(不作 v3 
 O4 先交行為 profile 與讀本,labels 另做相容遷移,**不承諾身份機率**;
 O3 可沿 T2 推進,不等 actor 身份辨識。
 
-### 10.1 實際進度(2026-09-21 更正:Phase 1-3 已交付)
+### 10.1 實際進度（2026-09-23 同步跨專案契約）
 
 > 本節初稿誤寫「Phase 1 尚未開工」。實情是 v3 施工由**另一個 session**
 > (`session_01NH2aCrVjBXYz5B48JpWiZC`)在本 repo 推進,09-18~09-22 已交付
 > Phase 1-4、納入 2025、Step E(T4 v3 + 讀本 v2 + profile)與 Step F 盤點,ship 至 v1.4.2。
-> 以下為現況(數字皆為 m2 物化表版)。
+> 09-23 已補正式資料契約與 ws-quant 消費端；數字為原 m2 歷史測量快照，不代表近期資料已更新。
 
 | Phase | 狀態 | 交付 | 頭條結果 |
 |---|---|---|---|
@@ -219,8 +219,8 @@ O3 可沿 T2 推進,不等 actor 身份辨識。
 | 3 stock salience | ✅ 2026-09-21 | `measure/salience.py`、`findings/v3_phase3_salience.md`、讀本接上 | **零不是缺值**:未交易日是真實的零、必須入 baseline(只用有交易日會有 pair 內倖存者偏誤,實測某 pair 高 20 倍);salience 拆成**參與率 × 條件規模**兩個可讀量,相乘還原無條件均值 |
 | 4 actor calibration | ✅ 2026-09-21 | `measure/calibration.py`、`findings/v3_phase4_calibration.md`(+robustness/rank_align 腳本) | 外資桶殘差 AUC 年內 **0.824/0.794**(m2 + A9 補拉,09-22;11/11 留一、剔 2330/前五、逐月皆成立;refit 逐席位 買 0.27-0.98 / 賣 0.16-0.98,大和國泰離群);fund/prop **無席位真值、無法校準**(對外資 cohort 殘差 AUC 0.40-0.53,不等於已證無辨識力);prop_hedge 發行商證據控規模後僅 +0.05-0.08(三分之二是規模);`log_gross+log_n` 單獨 AUC 0.993 = 外資席位就是最大席位,所有 AUC 只讀成「線性控規模後的行政 cohort 區分力」 |
 | 跨年(納入 2025) | ✅ 2026-09-21 | cohort v3 時變、T1 逐日建表、`findings/v3_crossyear_2025.md` | 外資殘差 AUC 跨年 **0.748/0.823**(m2 + A9 補拉,09-22;係數 2025→2026;CI 下界 0.61/0.71),買側比年內掉 0.08,截距隨市況移;α_b 跨年穩、γ_t 吸收年份;暖機讓年初 pair 的 z 為 null 64%→25%;HiddenForeign 下界 37.6%→30.7%(**9A81 永豐金-匯立不入 cohort,user 拍板**);未觀測 2025 達 0.3-1.7%(A8) |
-| E 產品遷移(T4 v3 + 讀本 + profile) | ✅ 產品面完成 2026-09-21(營運面:排程/`--incr` 未做) | `tables/transforms/t4_broker_measure.py`(+manifest)、`measure/state.py`、讀本 v2、`tests/test_asof.py` | T4 v3 物化(2026 139,341 / 2025 199,625 分點日,39 秒/年);as-of 契約有測試(追加未來日既有列凍結);讀本能區分 raw / trait / 市況 / state / salience / 身份界線;複查抓到 **A9**(TEJ shareholding 168 檔 2026-03-20 前無列)→ 官方 cosine 改在 T3 觀測支撐上算;**09-22 上游補拉完成、A9 結案**,t3b 可發布率 2025 99.99% / 2026 99.96%。外部審查(09-21)四點已修:t3b 缺列母體補回(可發布率改讀母體口徑 91.2% / 96.8%)、state 加規模/廣度條件化、撤回「AUC 下界」+ refit LOO(大和國泰單席位 0.27)、available_at 依據標明。分點 profile ✅(席位頁;cosine 殘差百分位 + 校準卡;9A81 foreign 殘差百分位 0.98/0.91)。第二輪審查五點已修(讀本崩潰 ×2、校準單一來源、校準卡分側/措辭、manifest 產物同步)。未做:Step F 消費端遷移、`--incr`、A9 上游補拉 |
-| F 切換與退役 | 📋 2026-09-21 盤點完成 | `docs/STEP_F_INVENTORY_2026-09-21.md` | **T1–T4 在 ws-quant/ws-mcp/ws-desk/ws-admin/ws-core 零程式引用**——沒有消費端要遷;`src/broker_taxonomy` 是平行舊實作(不讀 ws-branch);ws-mcp L2 由 ws-broker-flow 自 raw 算。T4 v2 標 frozen(可重現不更新);O2b 不靠 multiplicity ✅、O4 不承諾身份機率 ✅。待 user 決定:ws-admin 登記 T4 v3/T3b 為 dataset、ws-desk 接讀本、排程 + `--incr` |
+| E 產品遷移(T4 v3 + 讀本 + profile) | ✅ 產品面完成 2026-09-21(營運面:排程/`--incr` 未做) | `tables/transforms/t4_broker_measure.py`(+manifest)、`measure/state.py`、讀本 v2、`tests/test_asof.py` | T4 v3 物化(2026 139,341 / 2025 199,625 分點日,39 秒/年);as-of 契約有測試(追加未來日既有列凍結);讀本能區分 raw / trait / 市況 / state / salience / 身份界線;複查抓到 **A9**(TEJ shareholding 168 檔 2026-03-20 前無列)→ 官方 cosine 改在 T3 觀測支撐上算;**09-22 上游補拉完成、A9 結案**,t3b 可發布率 2025 99.99% / 2026 99.96%。外部審查(09-21)四點已修:t3b 缺列母體補回(可發布率改讀母體口徑 91.2% / 96.8%)、state 加規模/廣度條件化、撤回「AUC 下界」+ refit LOO(大和國泰單席位 0.27)、available_at 依據標明。分點 profile ✅(席位頁;cosine 殘差百分位 + 校準卡;9A81 foreign 殘差百分位 0.98/0.91)。第二輪審查五點已修(讀本崩潰 ×2、校準單一來源、校準卡分側/措辭、manifest 產物同步)。未做:增量／排程、近期資料更新、export／讀本歷史範圍一致性（P2）；A9 已結案 |
+| F 切換與退役 | 📋 2026-09-21 盤點完成 | `docs/STEP_F_INVENTORY_2026-09-21.md` | **09-21 盤點時外部零引用；09-23 ws-quant 已透過正式契約接入**，新增消費端讀取已驗證，完整研究案例尚未驗收;`src/broker_taxonomy` 是平行舊實作(不讀 ws-branch);ws-mcp L2 由 ws-broker-flow 自 raw 算。T4 v2 標 frozen(可重現不更新);O2b 不靠 multiplicity ✅、O4 不承諾身份機率 ✅。待 user 決定:ws-admin 登記 T4 v3/T3b 為 dataset、ws-desk 接讀本、排程 + `--incr` |
 | v3.5 inverse attribution | ⏸ 未開始 | — | 輸入 = Phase 1 的 feasible set;不以官方總量閉環宣稱席位歸因正確 |
 
 **複查文化有效的證據**(Phase 3,`3170025`):複查用模組外方法手算後抓到真 bug

@@ -1,5 +1,15 @@
 # ws-branch
 
+> **2026-09-23 現況**：ws-quant 已是正式消費端，透過 `ws-branch.datasets.v1`
+> 匯出八類 dataset（含分價量、universe、state、salience），不互相 import。
+> 研究與治理由 quant 發起；探索最近一週用其 `BranchDataClient(purpose="exploration")`。
+> 未完成：T4 新鮮度（09-23 測試缺 09-16～18）、增量／排程、export 與讀本/profile
+> 的歷史範圍一致性（P2）、完整研究案例驗收。A9 已於 09-22 結案。
+> 契約及限制見 `docs/DATA_CONTRACT.md`；全局現況見 ws-quant
+> `docs/research_platform_status_2026-09-23.md`。
+
+**以下是封存 PNL 線的歷史 roadmap，不是現行任務清單。**
+
 ```
 ████ ████ ████ ████ ████ ████ ████ ████ ████ ████ ████ ████ ████ ░░░░ ░░░░ ░░░░ ░░░░
 管線 分析 大單 加速 整合 預設 時區 增量 增量 掃描 探索 滾動 偏差 信號 回測 共現 集中

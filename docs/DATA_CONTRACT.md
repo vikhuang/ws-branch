@@ -1,3 +1,14 @@
+
+
+> **2026-09-23 現況**：ws-quant 已是正式消費端，透過 `ws-branch.datasets.v1`
+> 匯出八類 dataset（含分價量、universe、state、salience），不互相 import。
+> 研究與治理由 quant 發起；探索最近一週用其 `BranchDataClient(purpose="exploration")`。
+> 未完成：T4 新鮮度（09-23 測試缺 09-16～18）、增量／排程、export 與讀本/profile
+> 的歷史範圍一致性（P2）、完整研究案例驗收。A9 已於 09-22 結案。
+> 全局現況見 ws-quant
+> `docs/research_platform_status_2026-09-23.md`。
+
+
 # ws-branch 對外資料契約
 
 ws-branch 是分點資料與通用量測的 provider。研究問題、報酬檢驗與資料 tier
@@ -66,3 +77,13 @@ T4 的完整席位日總額作分母；輸出仍只含查詢區間。這使同�
   ws-branch 計算後輸出，不讓 consumer 用查詢子集重算。
 - receipt 描述目前重建所得的資料。若沒有歷史版本快照，不能宣稱它證明資料在
   當時確實已經到達；`availability` 會保留這項限制。
+
+## 目前使用限制（2026-09-23）
+
+- `export` 的 salience/state 固定從 2025-01-02 讀歷史；讀本/profile 仍用 150 日曆日。
+  稀疏席位可能有不同 baseline／pair 清單；P2 尚未統一，不能宣稱所有入口結果相同。
+- 全歷史依賴照實交由 consumer 治理；quant 的 exploration 允許接觸並記帳，
+  validation 仍可能因依賴包含 holdout 被擋。
+- 近期查詢須先通過 source coverage；09-23 測試發現 T4 缺 09-16～18，尚未補建。
+- 非所有 source_manifests 都有內容 hash；部分資料以 path/size/mtime 識別。
+  receipt 不是歷史資料版本已封存或當時實際到達時間的證明。

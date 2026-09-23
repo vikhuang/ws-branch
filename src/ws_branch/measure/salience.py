@@ -234,5 +234,10 @@ def pair_pipeline(
             continue
         panel = build_pair_panel(daily, branch_day, symbol_id=s, universe=universe_days)
         hist = pair_history(panel, window=window, min_periods=min_periods)
-        parts.append(pair_anomaly(hist))
+        # baseline 需要 first trade 前的真零；公開輸出則只能從該 pair 首次交易日起
+        # 出現，否則追加未來新席位會回寫過去列，破壞 as-of invariance。
+        first_trade = (daily.filter(pl.col("symbol_id") == s)
+                       .group_by("broker").agg(pl.col("date").min().alias("_first_trade")))
+        parts.append(pair_anomaly(hist).join(first_trade, on="broker", how="left")
+                     .filter(pl.col("date") >= pl.col("_first_trade")).drop("_first_trade"))
     return pl.concat(parts) if parts else pl.DataFrame()

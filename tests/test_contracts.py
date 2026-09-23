@@ -11,6 +11,7 @@ from ws_branch.contracts import (
     contract_document,
     dataset_contract,
 )
+from ws_branch.products import loaders
 from ws_branch.tables import exchange, io
 
 
@@ -19,7 +20,8 @@ def test_contract_covers_public_datasets() -> None:
     assert document["contract_version"] == CONTRACT_VERSION
     assert set(document["datasets"]) == {
         "t1_broker_daily", "t2_broker_pricelevel", "t3_official_daily",
-        "t3b_accounting_bounds", "t4_broker_measure", "salience_pair",
+        "t3b_accounting_bounds", "t4_broker_measure", "universe_daily",
+        "seat_state", "salience_pair",
     }
     assert dataset_contract("t2_broker_pricelevel")["columns"]["buy"].endswith("(股)")
 
@@ -47,6 +49,8 @@ def test_export_writes_bounded_data_and_receipt(tmp_path: Path, monkeypatch: pyt
     assert len(receipt["contract_sha256"]) == 64
     assert receipt["contract"]["name"] == "t1_broker_daily"
     assert receipt["source_coverage"]["tables"]["t1_broker_daily"]["missing_years"] == []
+    assert receipt["source_manifests"]
+    assert receipt["source_manifests"][0]["table"] == "t1_broker_daily"
 
 
 @pytest.mark.parametrize("problem", ["dtype", "duplicate"])
@@ -106,3 +110,55 @@ def test_export_refuses_wrong_dimension(tmp_path: Path, monkeypatch: pytest.Monk
             "t3_official_daily", start="2026-09-14", end="2026-09-14",
             output=tmp_path / "bad.parquet", brokers=("8440",),
         )
+
+
+def test_salience_target_is_independent_of_query_start(monkeypatch: pytest.MonkeyPatch) -> None:
+    contract = dataset_contract("salience_pair")
+    days = [datetime.date(2025, 1, 2) + datetime.timedelta(days=i) for i in range(90)]
+    t1 = pl.DataFrame({
+        "broker": ["A"] * len(days), "symbol_id": ["3450"] * len(days),
+        "date": days, "buy_dollar": [float(i + 1) for i in range(len(days))],
+        "sell_dollar": [0.0] * len(days),
+    })
+    t4 = pl.DataFrame({
+        "broker": ["A"] * len(days), "date": days, "gross_amt": [1_000.0] * len(days),
+    })
+    universe = pl.DataFrame({"symbol_id": ["3450"] * len(days), "date": days})
+
+    def scan(name: str, *, start: str, end: str) -> pl.LazyFrame:
+        source = t1 if name == "t1_broker_daily" else t4
+        return source.lazy().filter(
+            pl.col("date").is_between(datetime.date.fromisoformat(start),
+                                      datetime.date.fromisoformat(end))
+        )
+
+    monkeypatch.setattr(io, "scan", scan)
+    monkeypatch.setattr(loaders, "universe_days", lambda _start, _end: universe)
+    target = str(days[-1])
+    single = exchange._salience_source(target, target, ("3450",), contract).collect()
+    ranged = exchange._salience_source(str(days[-20]), target, ("3450",), contract).collect()
+    assert single.equals(ranged.filter(pl.col("date") == days[-1]))
+
+
+def test_salience_empty_result_preserves_public_schema(monkeypatch: pytest.MonkeyPatch) -> None:
+    contract = dataset_contract("salience_pair")
+    empty_t1 = pl.DataFrame(schema={
+        "broker": pl.String, "symbol_id": pl.String, "date": pl.Date,
+        "buy_dollar": pl.Float64, "sell_dollar": pl.Float64,
+    })
+    empty_t4 = pl.DataFrame(schema={"broker": pl.String, "date": pl.Date,
+                                    "gross_amt": pl.Float64})
+    monkeypatch.setattr(
+        io, "scan", lambda name, **_kwargs: (empty_t1 if name == "t1_broker_daily"
+                                              else empty_t4).lazy(),
+    )
+    monkeypatch.setattr(
+        loaders, "universe_days",
+        lambda _start, _end: pl.DataFrame(schema={"symbol_id": pl.String, "date": pl.Date}),
+    )
+    result = exchange._salience_source(
+        "2025-01-02", "2025-01-02", ("NO-SUCH",), contract,
+    ).collect()
+    assert result.height == 0
+    assert result.schema == {name: exchange._expected_dtype(spec)
+                             for name, spec in contract["columns"].items()}

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime
 import hashlib
+import importlib.metadata as metadata
 import json
 import subprocess
 import tempfile
@@ -86,7 +87,7 @@ def _validate_values(output: Path, contract: dict) -> None:
 
 
 def _effective_start(contract: dict, start: str) -> datetime.date:
-    return datetime.date.fromisoformat(start) - datetime.timedelta(days=contract.get("lookback_days", 0))
+    return datetime.date.fromisoformat(contract.get("history_start", start))
 
 
 def _requested_years(contract: dict, start: str, end: str) -> list[int]:
@@ -140,6 +141,16 @@ def _source_manifests(contract: dict, start: str, end: str) -> list[dict[str, An
     for table in _source_tables(contract):
         for year in _requested_years(contract, start, end):
             path = io.table_dir(table) / f"year={year}.manifest.json"
+            data_path = io.year_path(table, year)
+            if not path.exists() and data_path.exists():
+                stat = data_path.stat()
+                records.append({
+                    "table": table, "year": year, "path": str(data_path.resolve()),
+                    "sha256": None, "size_bytes": stat.st_size,
+                    "mtime_ns": stat.st_mtime_ns, "identity": "path+size+mtime_ns",
+                    "manifest_missing": True,
+                })
+                continue
             if not path.exists():
                 continue
             raw = json.loads(path.read_text(encoding="utf-8"))
@@ -148,6 +159,34 @@ def _source_manifests(contract: dict, start: str, end: str) -> list[dict[str, An
                 "sha256": _sha256_file(path), "schema_version": raw.get("schema_version"),
                 "measurement_version": raw.get("measurement_version"),
                 "source_snapshot": raw.get("source_snapshot"), "as_of": raw.get("as_of"),
+            })
+    if contract["source"] == "ws_core_view":
+        from ws_core.paths import fugle_dir
+
+        meta = Path(fugle_dir()) / "broker_tx_meta.json"
+        try:
+            ws_core_version = metadata.version("ws-core")
+        except metadata.PackageNotFoundError:
+            ws_core_version = None
+        record: dict[str, Any] = {
+            "table": "broker_tx", "view": contract["physical_name"],
+            "ws_core_version": ws_core_version,
+        }
+        if meta.exists():
+            stat = meta.stat()
+            record.update(path=str(meta.resolve()), sha256=_sha256_file(meta),
+                          size_bytes=stat.st_size, mtime_ns=stat.st_mtime_ns)
+        records.append(record)
+    if contract["name"] in {"salience_pair", "universe_daily"}:
+        from ws_core.paths import tej_dir
+
+        stock_attr = Path(tej_dir()) / "stock_attr.parquet"
+        if stock_attr.exists():
+            stat = stock_attr.stat()
+            records.append({
+                "table": "tej_stock_attr", "path": str(stock_attr.resolve()),
+                "sha256": None, "size_bytes": stat.st_size,
+                "mtime_ns": stat.st_mtime_ns, "identity": "path+size+mtime_ns",
             })
     return records
 
@@ -175,9 +214,9 @@ def _salience_source(start: str, end: str, symbols: tuple[str, ...], contract: d
     if not symbols:
         raise ValueError("salience_pair requires at least one --symbol")
     from ws_branch.measure import salience
-    from ws_branch.products.loaders import LOOKBACK_DAYS, T1_COLS, universe_days
+    from ws_branch.products.loaders import T1_COLS, universe_days
 
-    lo = datetime.date.fromisoformat(start) - datetime.timedelta(days=LOOKBACK_DAYS)
+    lo = _effective_start(contract, start)
     hi = datetime.date.fromisoformat(end)
     universe = universe_days(lo, hi)
     branch_day = (io.scan("t4_broker_measure", start=str(lo), end=end)
@@ -187,8 +226,49 @@ def _salience_source(start: str, end: str, symbols: tuple[str, ...], contract: d
     gated, _ = salience.gate_numerator(t1, universe)
     result = salience.pair_pipeline(
         gated, branch_day, symbols=list(symbols), universe_days=universe,
-    ).filter(pl.col("date").is_between(datetime.date.fromisoformat(start), hi))
+    )
+    if result.height == 0:
+        return pl.DataFrame(
+            schema={name: _expected_dtype(spec) for name, spec in contract["columns"].items()}
+        ).lazy()
+    result = result.filter(pl.col("date").is_between(datetime.date.fromisoformat(start), hi))
     return result.select(contract["columns"].keys()).lazy()
+
+
+def _universe_source(start: str, end: str, contract: dict) -> pl.LazyFrame:
+    from ws_branch.products.loaders import universe_days
+
+    result = universe_days(datetime.date.fromisoformat(start), datetime.date.fromisoformat(end))
+    return result.select(contract["columns"].keys()).lazy()
+
+
+def _state_source(start: str, end: str, contract: dict) -> pl.LazyFrame:
+    from ws_branch.measure import state
+
+    lo = _effective_start(contract, start)
+    hi = datetime.date.fromisoformat(end)
+    history = io.scan("t4_broker_measure", start=str(lo), end=end).collect()
+    targets = (history.filter(pl.col("date").is_between(datetime.date.fromisoformat(start), hi))
+               .select("date").unique().sort("date")["date"].to_list())
+    parts = [state.seat_state(history.filter(pl.col("date") <= day), date=day)
+             .with_columns(pl.lit(day).alias("date")) for day in targets]
+    if not parts:
+        return pl.DataFrame(
+            schema={name: _expected_dtype(spec) for name, spec in contract["columns"].items()}
+        ).lazy()
+    return pl.concat(parts).select(contract["columns"].keys()).lazy()
+
+
+def _computed_source(
+    name: str, start: str, end: str, symbols: tuple[str, ...], contract: dict,
+) -> pl.LazyFrame:
+    if name == "salience_pair":
+        return _salience_source(start, end, symbols, contract)
+    if name == "universe_daily":
+        return _universe_source(start, end, contract)
+    if name == "seat_state":
+        return _state_source(start, end, contract)
+    raise ValueError(f"unsupported computed exchange source: {name}")
 
 
 def export_dataset(
@@ -202,7 +282,7 @@ def export_dataset(
     if output.exists() and not force:
         raise FileExistsError(f"output exists: {output}; pass --force to replace")
     coverage = _source_coverage(contract, start, end)
-    frame = (_salience_source(start, end, symbols, contract)
+    frame = (_computed_source(name, start, end, symbols, contract)
              if contract["source"] == "computed_operation" else _source(start, end, contract))
     _validate_view_coverage(frame, contract, start, end, coverage)
     if symbols:
@@ -244,7 +324,11 @@ def export_dataset(
         "provider_git_commit": _git_commit(),
         "source_coverage": coverage,
         "source_manifests": _source_manifests(contract, start, end),
-        "query": {"start": start, "end": end, "symbols": list(symbols), "brokers": list(brokers)},
+        "query": {
+            "start": start, "end": end,
+            "dependency_start": str(_effective_start(contract, start)),
+            "symbols": list(symbols), "brokers": list(brokers),
+        },
         "result": {**summary, "path": str(output.resolve()), "sha256": digest},
         "availability": contract["availability"],
         "universe": contract["universe"],

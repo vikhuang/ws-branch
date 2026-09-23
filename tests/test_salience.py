@@ -10,7 +10,6 @@ import datetime
 
 import polars as pl
 import pytest
-
 from ws_branch.measure import salience
 
 D0 = datetime.date(2026, 1, 5)
@@ -161,6 +160,25 @@ def test_insufficient_history_returns_null_not_max_anomaly() -> None:
         salience.pair_history(panel, window=60, min_periods=20)).sort("date")
     assert out["salience_z"].drop_nulls().len() == 0
     assert out["history_n"].to_list()[-1] == 2           # 歷史筆數要揭露
+
+
+def test_future_first_trade_does_not_add_broker_to_past_output() -> None:
+    """追加未來才首次交易的席位，不得回寫先前日期的公開 pair panel。"""
+    t1 = _t1([
+        ("A", "3450", 0, 100.0, 0.0),
+        ("A", "3450", 2, 100.0, 0.0),
+        ("B", "3450", 2, 100.0, 0.0),
+    ])
+    bd = _branch_day([(broker, day, 1_000.0) for broker in ("A", "B") for day in range(3)])
+    uni = pl.DataFrame({
+        "symbol_id": ["3450"] * 3,
+        "date": [D0 + datetime.timedelta(days=i) for i in range(3)],
+    })
+    gated, _ = salience.gate_numerator(t1, uni)
+    out = salience.pair_pipeline(
+        gated, bd, symbols=["3450"], universe_days=uni, window=2, min_periods=1,
+    )
+    assert out.filter(pl.col("date") < D0 + datetime.timedelta(days=2))["broker"].unique().to_list() == ["A"]
 
 
 def test_denominator_effect_flags_shrinking_branch() -> None:

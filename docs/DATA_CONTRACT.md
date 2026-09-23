@@ -24,7 +24,9 @@ uv run python -m ws_branch contract --dataset t2_broker_pricelevel
 | `t3_official_daily` | 股票×日 | 物化表 |
 | `t3b_accounting_bounds` | 股票×日×買賣側 | 物化表 |
 | `t4_broker_measure` | 分點×日 | 物化表與年度 manifest |
-| `salience_pair` | 分點×股票×日 | provider 端以完整母體與暖機窗計算的 salience 三問 |
+| `universe_daily` | 股票×日 | 與 T4 相同的普通股研究母體 |
+| `seat_state` | 分點×日 | provider 端用完整 T4 歷史計算 trait/day/state |
+| `salience_pair` | 分點×股票×日 | provider 端以完整母體與固定歷史範圍計算的 salience 三問 |
 
 ## 匯出
 
@@ -37,8 +39,9 @@ uv run python -m ws_branch export \
 ```
 
 `salience_pair` 是計算型資料集，同樣使用 `export`：必須給至少一個 `--symbol`。
-provider 會自行向前讀取 150 個日曆日，套用普通股 universe，並以 T4 的完整席位
-日總額作分母；consumer 不應在查詢子集內重算。
+provider 會從已公告的 `history_start` 讀到查詢終日，套用普通股 universe，並以
+T4 的完整席位日總額作分母；輸出仍只含查詢區間。這使同一目標日不因查詢起日
+不同而改變。consumer 不應在查詢子集內重算。
 
 每次匯出同時產生 `<output>.receipt.json`，記錄：
 

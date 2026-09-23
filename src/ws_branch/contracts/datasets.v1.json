@@ -96,12 +96,41 @@
         "official_missing_share": "Float64", "available_at": "Datetime[Asia/Taipei]"
       }
     },
+    "universe_daily": {
+      "description": "逐日普通股研究母體；供 consumer 對 T1/T2/T3 使用與 T4 相同 gate",
+      "grain": ["symbol_id", "date"],
+      "source": "computed_operation", "physical_name": null,
+      "date_column": "date", "symbol_column": "symbol_id", "broker_column": null,
+      "universe": "ws-branch 普通股 universe v1",
+      "availability": "依 stock_attr 到齊後使用；T 日只供 T+1 決策",
+      "missingness": "沒有列代表該代號當日不在普通股母體；不等同來源缺檔",
+      "columns": {"symbol_id": "String", "date": "Date"}
+    },
+    "seat_state": {
+      "description": "分點×日的因果 trait、規模廣度效應、共同日效應與席位特有 state",
+      "grain": ["broker", "date"],
+      "source": "computed_operation", "physical_name": null,
+      "source_tables": ["t4_broker_measure"],
+      "history_mode": "all_available_through_end", "history_start": "2025-01-02",
+      "window": 60, "min_periods": 20,
+      "date_column": "date", "symbol_column": null, "broker_column": "broker",
+      "universe": "T4 逐日普通股 universe v1 的全席位橫斷面",
+      "availability": "依 T4 到齊後使用；T 日只供 T+1 決策",
+      "missingness": "歷史不足、零變異或當日有效席位不足時 state 為 null",
+      "columns": {
+        "broker": "String", "date": "Date",
+        "top5_share": "Float64", "top5_share_trait": "Float64", "top5_share_size": "Float64", "top5_share_day": "Float64", "top5_share_state": "Float64", "top5_share_n": "Int32",
+        "directional_ratio": "Float64", "directional_ratio_trait": "Float64", "directional_ratio_size": "Float64", "directional_ratio_day": "Float64", "directional_ratio_state": "Float64", "directional_ratio_n": "Int32",
+        "cos_market_buy": "Float64", "cos_market_buy_trait": "Float64", "cos_market_buy_size": "Float64", "cos_market_buy_day": "Float64", "cos_market_buy_state": "Float64", "cos_market_buy_n": "Int32"
+      }
+    },
     "salience_pair": {
       "description": "股票×分點×日的正式 salience 三問；由 provider 以完整分母、逐日普通股 universe 與嚴格落後窗計算",
       "grain": ["broker", "symbol_id", "date"],
       "source": "computed_operation", "physical_name": null,
       "source_tables": ["t1_broker_daily", "t4_broker_measure"],
-      "lookback_days": 150, "window": 60, "min_periods": 20,
+      "history_mode": "all_available_through_end", "history_start": "2025-01-02",
+      "window": 60, "min_periods": 20,
       "date_column": "date", "symbol_column": "symbol_id", "broker_column": "broker",
       "universe": "逐日普通股 universe v1；分子與 T4 分母使用同一 gate",
       "availability": "依 T1、T4 與 stock_attr 到齊後使用；T 日只供 T+1 決策",
